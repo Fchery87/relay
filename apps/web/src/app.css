@@ -1,0 +1,45 @@
+:root {
+  color: #e7e4dc;
+  background: #171816;
+  font-family: ui-sans-serif, "Noto Sans", sans-serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; min-width: 320px; }
+
+a { color: inherit; text-decoration: none; }
+
+.app-shell { min-height: 100vh; display: grid; grid-template-columns: 256px minmax(0, 1fr); }
+
+.sidebar { background: #20211f; border-right: 1px solid #353632; padding: 20px 12px; }
+
+.wordmark { color: #f3d785; font-size: 19px; font-weight: 700; line-height: 28px; padding: 0 10px 18px; }
+
+.machine-list, .project-list { list-style: none; margin: 0; padding: 0; }
+
+.machine { border-top: 1px solid #353632; padding: 12px 0; }
+
+.machine-row { align-items: center; display: grid; gap: 8px; grid-template-columns: 9px minmax(0, 1fr) auto; padding: 0 10px; }
+
+.presence { background: #9a6060; border-radius: 50%; height: 7px; width: 7px; }
+.presence-online { background: #49a774; }
+.machine-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-status { color: #a9aaa4; font-size: 12px; }
+
+.project-list { padding: 7px 0 0 27px; }
+.project-link { color: #cac9c2; display: block; font-size: 14px; overflow: hidden; padding: 5px 8px; text-overflow: ellipsis; white-space: nowrap; }
+.project-link:hover, .project-link:focus-visible { background: #30312d; color: #fff9e8; outline: none; }
+
+.workspace { background: #171816; padding: 24px 28px; }
+.workspace-header { border-bottom: 1px solid #353632; padding-bottom: 16px; }
+h1 { font-size: 20px; font-weight: 650; margin: 0; }
+.workspace-state { color: #b7b7af; font-size: 14px; margin: 20px 0; }
+
+@media (max-width: 700px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { border-bottom: 1px solid #353632; border-right: 0; }
+  .machine-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .machine { border: 1px solid #353632; }
+}
