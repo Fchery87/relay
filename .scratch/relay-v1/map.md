@@ -17,10 +17,11 @@ A finalized, build-ready Relay v1 spec (PRD published to this tracker, `Status: 
 
 <!-- one line per closed ticket: gist + link -->
 
+- [Context management strategy for the own loop](issues/05-context-management.md) — summarization compaction at 80%→40% with pinned invariants; tool results cap-and-spill to artifacts; append-only, cache-breakpointed request contract.
+
 ## Not yet specified
 
 - Review-mode UX — how the reviewer subagents surface as a one-click diff review (Codex review mode / Bugbot equivalent); sharpens after the subagent and event-schema decisions land.
-- Default role roster — which of the 13 Thanos roles ship as Relay defaults vs. get pruned; depends on context-management and subagent decisions.
 - UI design language — layout, density, theming for the SPA; a `/design-system` effort once the feature surface is settled.
 - Installer signing/notarization and auto-update channel details; sharpens when the distribution phase nears.
 - Automation scheduling design (v2 feature, but the spec must mark the boundary cleanly — e.g. whether Convex crons reserve schema space now).
