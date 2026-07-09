@@ -1,6 +1,6 @@
 # Tickets: Relay v1
 
-Tracer-bullet slices building the Relay v1 browser-based agentic coding platform, per the spec at `.scratch/relay-v1/PRD.md`. Open decisions on the wayfinder map (`.scratch/relay-v1/map.md`) amend the spec and these tickets when their tickets close; where they disagree, the closed map ticket wins.
+Tracer-bullet slices building the Relay v1 browser-based agentic coding platform, per the spec at `.scratch/relay-v1/PRD.md`. All wayfinder-map decisions are resolved (see the PRD's Amendments section and `.scratch/relay-v1/issues/`); the closed tickets are the binding detail.
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
 
@@ -105,7 +105,7 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 ## Steering and message queue
 
-**What to build:** While a thread is running, the user can queue follow-up messages and steer the current run; queued messages process in order after the active turn. (Semantics gated by the open steering wayfinder ticket — implement per its resolution.)
+**What to build:** While a thread is running, the user can queue follow-up messages and steer the current run. Resolved semantics: queued messages inject at the next turn boundary (after the in-flight tool call resolves); an explicit Stop aborts the in-flight turn safely; approvals never auto-resolve from queued messages.
 
 **Blocked by:** First conversation streams end-to-end.
 
@@ -115,7 +115,7 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 ## Per-turn checkpoints and revert
 
-**What to build:** Every mutating agent turn snapshots the worktree; the user can revert the thread to any prior turn with one click. (Mechanics gated by the open checkpointing wayfinder ticket.)
+**What to build:** Every mutating agent turn snapshots the worktree; the user can revert the thread to any prior turn with one click. Resolved mechanics: commits under `refs/relay/checkpoints/<thread>/<turn>`, restore-not-destroy revert, refs GC with the thread.
 
 **Blocked by:** Threads run on disposable worktrees.
 

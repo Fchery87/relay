@@ -83,8 +83,21 @@ All decisions below were grilled and individually approved.
 - Interactive PTY terminal — deferred; would require a second transport.
 - Productization: pricing, billing, multi-tenant hardening beyond basic multi-user auth.
 
-## Further Notes
+## Amendments (2026-07-09)
 
-- Eight open decisions remain on the wayfinder map for this effort (`.scratch/relay-v1/map.md`) and are **unresolved in this spec**: Convex first-party component adoption, MCP 2026-07-28 client target, AG-UI event-schema alignment, OS-level exec sandboxing tiers, context management (compaction/caching), per-turn checkpointing mechanics, steering/queue semantics, and usage/cost tracking shape. This PRD was published ahead of those resolutions at the founder's direction; each resolution should be folded in as an amendment when its ticket closes. Where this spec and a closed ticket disagree, the ticket wins.
+Every open decision from the wayfinder map is now resolved; the "unresolved" caveat from initial publication is void. The binding answers live on the tickets under `.scratch/relay-v1/issues/`; gists:
+
+- **Convex components** — hand-rolled tables; borrow Agent-component schema shapes and persistent-text-streaming write patterns (batched, ordered, deduped, resumable); Workpool earmarked for v2 automations.
+- **MCP** — target `2026-07-28` exclusively: stateless-first, streamable HTTP + stdio, Tasks extension yes, MCP Apps no, native-app OAuth with daemon-only token custody, bounded JSON Schema 2020-12 validation.
+- **Event schema** — custom typed events, AG-UI-aligned naming where concepts overlap.
+- **Sandboxing** — unix-first: landlock/bubblewrap + seatbelt confine exec to worktree+tmp, secrets denied; unsandboxed runs always require approval; Windows chokepoint-only until v1.x; Convex-relayed input is untrusted.
+- **Context management** — summarization compaction 80%→~40% with pinned invariants; tool-result cap-and-spill to artifacts; append-only cache-breakpointed request contract.
+- **Checkpoints** — per-mutating-turn commits under a hidden ref namespace; restore-not-destroy revert; GC with the thread.
+- **Steering** — queue + turn-boundary inject + explicit Stop; approvals independent of the queue.
+- **Usage** — per-LLM-call records with cache metrics, thread rollups incl. subagents, soft budgets.
+- **Role roster** — nine seeded roles (explore, plan, researcher, oracle, reviewer, reviewer-security, evaluator, build, worker); designer deferred, scout and the two focused reviewers merged away.
+- **Review mode** — jury (reviewer + reviewer-security, different models) → P0–P3 inline diff comments → "address findings" feeds the agent.
+
+## Further Notes
 - Layout/UX north star: the Codex Desktop app (projects sidebar → threads, diff review with inline comments, approval flow). The governance/subagent mental model ports from Thanos (`~/.pi`): its glossary, ADRs, and role files are the design reference.
 - Standing quality bar: extremely lightweight, fast, powerful. Every dependency and UI choice should be weighed against bundle size and latency; CodeMirror-over-Monaco is the canonical example of the standard to hold.

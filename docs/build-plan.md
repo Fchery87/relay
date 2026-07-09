@@ -19,6 +19,21 @@ All architectural decisions below were grilled and approved one-by-one by the us
 9. **Daemon: Bun + TypeScript.** Git via the `git` CLI. Single-file executable via `bun build --compile` eventually.
 10. **Frontend: Vite + React 19 SPA** (no meta-framework/SSR). TanStack Router, Convex React client, Tailwind + shadcn/ui, **CodeMirror 6** for code/diff rendering (never Monaco), virtualized message lists.
 
+## Resolved design decisions (wayfinder map, 2026-07-09)
+
+All nine open questions from the standards review are resolved; full detail lives on each ticket under `.scratch/relay-v1/issues/`:
+
+11. **Convex components**: hand-rolled tables; borrow Agent-component schema shapes and persistent-text-streaming's batched/ordered/resumable write patterns; Workpool earmarked for v2 automations dispatch.
+12. **MCP**: target the `2026-07-28` spec exclusively — stateless-first client, streamable HTTP + stdio, Tasks extension supported, MCP Apps declined in v1, native-app OAuth with daemon-only token custody, JSON Schema 2020-12 validation.
+13. **Events**: custom typed events in the shared zod package, AG-UI-aligned naming/lifecycle where concepts overlap so an adapter stays cheap.
+14. **Sandboxing**: unix-first tiers in v1 — landlock/bubblewrap (Linux) + seatbelt (macOS) confining exec to worktree+tmp with secrets denied; "run unsandboxed" always needs approval; Windows chokepoint-only until v1.x; Convex-relayed input treated as untrusted.
+15. **Context management**: summarization compaction at 80%→~40% with pinned invariants (system prompt, plan, unresolved comments, last 10 turns); tool results cap-and-spill to artifacts; append-only, cache-breakpointed request contract with per-turn cache metrics.
+16. **Checkpoints**: per-mutating-turn commits to `refs/relay/checkpoints/<thread>/<turn>`; revert restores without destroying later checkpoints; refs GC with the thread.
+17. **Steering**: mid-run messages queue visibly and inject at the next turn boundary; explicit Stop aborts the in-flight turn; approvals never auto-resolve from queued messages.
+18. **Usage**: one usage record per LLM call (tokens, cache read/write, thinking, cost, model, role); live thread rollups including subagents; per-thread soft budget warnings.
+19. **Roster**: nine seeded roles — explore, plan, researcher, oracle, reviewer, reviewer-security, evaluator, build, worker; scout/reviewer-correctness/reviewer-tests merged away, designer deferred to v1.x.
+20. **Review mode**: one-click Review runs the reviewer + reviewer-security jury; P0–P3 findings land as inline diff comments feeding the agent's next turn.
+
 ## Reference material (read before implementing each area)
 
 - `~/.pi/CONTEXT.md` — ubiquitous-language glossary; the authors' mental model.
