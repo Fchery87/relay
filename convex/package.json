@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test --pass-with-no-tests"
+    "test": "bun test machine_summaries.test.ts",
+    "test:convex": "vitest run -c vitest.config.ts"
   },
   "dependencies": {
     "@relay/shared": "workspace:*",

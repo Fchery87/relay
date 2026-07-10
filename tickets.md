@@ -21,11 +21,11 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Walking skeleton: paired daemon shows up in the browser.
 
-- [ ] Threads and messages tables; daemon subscribes to new user messages as its work queue
-- [ ] Agent loop with a ModelProvider interface; one real provider adapter plus a deterministic scripted provider
-- [ ] Streaming text lands in the browser via batched Convex writes (flush ≤ 200 ms)
-- [ ] Thread history survives daemon restart and browser refresh
-- [ ] End-to-end test at the Convex document boundary using the scripted provider
+- [x] Threads and messages tables; daemon subscribes to new user messages as its work queue
+- [x] Agent loop with a ModelProvider interface; one real provider adapter plus a deterministic scripted provider
+- [x] Streaming text lands in the browser via batched Convex writes (flush ≤ 200 ms)
+- [x] Thread history survives daemon restart and browser refresh
+- [x] End-to-end test at the Convex document boundary using the scripted provider
 
 ## Agent acts: tools, events, command stream
 
