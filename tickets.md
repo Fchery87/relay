@@ -33,11 +33,11 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** First conversation streams end-to-end.
 
-- [ ] read/edit/bash tools wired into the loop with a typed events table
-- [ ] Activity view renders tool calls; terminal panel streams command output chunks live
-- [ ] One-off user commands run in the project and stream output
-- [ ] Shell abstraction works on unix (bash) and Windows (PowerShell)
-- [ ] End-to-end test: prompt causes a file edit on disk plus matching event documents
+- [x] read/edit/bash tools wired into the loop with a typed events table
+- [x] Activity view renders tool calls; terminal panel streams command output chunks live
+- [x] One-off user commands run in the project and stream output
+- [x] Shell abstraction works on unix (bash) and Windows (PowerShell)
+- [x] End-to-end test: prompt causes a file edit on disk plus matching event documents
 
 ## Threads run on disposable worktrees
 

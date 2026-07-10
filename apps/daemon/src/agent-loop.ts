@@ -1,25 +1,40 @@
 import type { ModelProvider } from "./model-provider";
+import type { MachinePlatform } from "@relay/shared";
+import { executeToolCall } from "./tool-executor";
 
 export interface ConversationGateway {
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
-  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; threadId: string } | null>;
+  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; projectPath: string; threadId: string } | null>;
   completeAssistantMessage(input: { messageId: string; threadId: string }): Promise<unknown>;
+  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }): Promise<unknown>;
 }
 
 export async function runQueuedTurn({
   deviceToken,
   gateway,
   provider,
+  platform = "linux",
 }: {
   deviceToken: string;
   gateway: ConversationGateway;
   provider: ModelProvider;
+  platform?: MachinePlatform;
 }): Promise<boolean> {
   const queued = await gateway.claimQueuedMessage({ deviceToken });
   if (!queued) return false;
 
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
+  if (provider.toolCalls) {
+    for await (const call of provider.toolCalls({ prompt: queued.content })) {
+      await executeToolCall({
+        call,
+        onCompleted: async (event) => { await gateway.recordToolCompleted?.({ ...event, threadId: queued.threadId }); },
+        platform,
+        root: queued.projectPath,
+      });
+    }
+  }
   let content = "";
   let lastFlushAt = Date.now();
   for await (const chunk of provider.streamReply({ prompt: queued.content })) {

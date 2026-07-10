@@ -40,7 +40,7 @@ export const claimQueuedMessage = mutationGeneric({
       if (!project || project.machineId !== machine._id) continue;
       await ctx.db.patch(message._id, { status: "complete" });
       await ctx.db.patch(thread._id, { status: "running" });
-      return { content: message.content, threadId: thread._id };
+      return { content: message.content, projectPath: project.path, threadId: thread._id };
     }
     return null;
   },

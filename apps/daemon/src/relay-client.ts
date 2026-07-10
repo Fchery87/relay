@@ -9,13 +9,14 @@ const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: strin
 const registerMachineMutation = makeFunctionReference<"mutation", MachineRegistration>(
   "machines:registerMachine",
 );
-const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceToken: string }, { content: string; threadId: string } | null>("conversations:claimQueuedMessage");
+const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceToken: string }, { content: string; projectPath: string; threadId: string } | null>("conversations:claimQueuedMessage");
 const beginAssistantMessageMutation = makeFunctionReference<"mutation", { threadId: string }, string>("conversations:beginAssistantMessage");
 const appendAssistantTextMutation = makeFunctionReference<"mutation", { content: string; messageId: string }>("conversations:appendAssistantText");
 const completeAssistantMessageMutation = makeFunctionReference<"mutation", { messageId: string; threadId: string; status: "done" }>("conversations:completeAssistantMessage");
 const claimCommandMutation = makeFunctionReference<"mutation", Record<string, never>, { command: string; commandId: string; projectPath: string; threadId: string } | null>("commands:claim");
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; status: "complete" | "failed" }>("commands:complete");
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
+const appendToolCompletedMutation = makeFunctionReference<"mutation", { summary: string; threadId: string; tool: "bash" | "edit" | "read" }>("events:appendToolCompleted");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -56,6 +57,7 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     beginAssistantMessage: ({ threadId }: { threadId: string }) => client.mutation(beginAssistantMessageMutation, { threadId }),
     claimQueuedMessage: ({ deviceToken }: { deviceToken: string }) => client.mutation(claimQueuedMessageMutation, { deviceToken }),
     completeAssistantMessage: ({ messageId, threadId }: { messageId: string; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, status: "done", threadId }),
+    recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
   };
 }
 

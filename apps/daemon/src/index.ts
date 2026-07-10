@@ -33,6 +33,7 @@ setInterval(() => {
     deviceToken: config.registration.deviceToken,
     gateway: conversationGateway,
     provider,
+    platform: config.registration.platform,
   }).catch((error: unknown) => console.error("Relay turn failed", error));
 }, 200);
 

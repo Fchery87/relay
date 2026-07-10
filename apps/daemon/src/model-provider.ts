@@ -1,17 +1,22 @@
 export interface ModelProvider {
   streamReply(input: { prompt: string }): AsyncIterable<string>;
+  toolCalls?(input: { prompt: string }): AsyncIterable<import("./tool-executor").ToolCall>;
 }
 
 export class ScriptedModelProvider implements ModelProvider {
   readonly #chunks: readonly string[];
+  readonly #toolCalls: readonly import("./tool-executor").ToolCall[];
 
-  constructor({ chunks }: { chunks: readonly string[] }) {
+  constructor({ chunks, toolCalls = [] }: { chunks: readonly string[]; toolCalls?: readonly import("./tool-executor").ToolCall[] }) {
     this.#chunks = chunks;
+    this.#toolCalls = toolCalls;
   }
 
   async *streamReply(): AsyncIterable<string> {
     yield* this.#chunks;
   }
+
+  async *toolCalls(): AsyncIterable<import("./tool-executor").ToolCall> { yield* this.#toolCalls; }
 }
 
 export class OpenAIResponsesProvider implements ModelProvider {
