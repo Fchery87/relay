@@ -1,7 +1,7 @@
 import { mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
 
-import { toProjectSummary } from "./machine-summaries";
+import { toProjectSummary } from "./machine_summaries";
 
 const platformValidator = v.union(v.literal("darwin"), v.literal("linux"), v.literal("win32"));
 const projectValidator = v.object({ name: v.string(), path: v.string() });

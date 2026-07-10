@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { toProjectSummary } from "./machine-summaries";
+import { toProjectSummary } from "./machine_summaries";
 
 test("maps a Convex project document id into the browser contract", () => {
   expect(
