@@ -21,10 +21,15 @@ export async function runQueuedTurn({
 
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   let content = "";
+  let lastFlushAt = Date.now();
   for await (const chunk of provider.streamReply({ prompt: queued.content })) {
     content += chunk;
-    await gateway.appendAssistantText({ content, messageId });
+    if (Date.now() - lastFlushAt >= 200) {
+      await gateway.appendAssistantText({ content, messageId });
+      lastFlushAt = Date.now();
+    }
   }
+  await gateway.appendAssistantText({ content, messageId });
   await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
   return true;
 }

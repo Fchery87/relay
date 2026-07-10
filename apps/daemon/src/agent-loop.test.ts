@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { runQueuedTurn } from "./agent-loop";
 import { ScriptedModelProvider } from "./model-provider";
 
-test("persists each scripted response prefix before completing a turn", async () => {
+test("coalesces rapid scripted chunks into a final persisted response", async () => {
   const updates: string[] = [];
   const handled = await runQueuedTurn({
     deviceToken: "device",
@@ -17,5 +17,5 @@ test("persists each scripted response prefix before completing a turn", async ()
   });
 
   expect(handled).toBe(true);
-  expect(updates).toEqual(["Hello", "Hello world"]);
+  expect(updates).toEqual(["Hello world"]);
 });
