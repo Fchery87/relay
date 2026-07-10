@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 
 import { loadDaemonConfig } from "./config";
 import { runQueuedTurn } from "./agent-loop";
-import { OpenAIResponsesProvider, ScriptedModelProvider } from "./model-provider";
+import { DeepSeekChatProvider, OpenAIResponsesProvider, ScriptedModelProvider } from "./model-provider";
 import { createConvexConversationGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
 
 const config = loadDaemonConfig({ env: Bun.env, hostname });
@@ -21,7 +21,9 @@ setInterval(() => {
 }, config.heartbeatIntervalMs);
 
 const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl });
-const provider = Bun.env.RELAY_OPENAI_API_KEY
+const provider = Bun.env.RELAY_DEEPSEEK_API_KEY
+  ? new DeepSeekChatProvider({ apiKey: Bun.env.RELAY_DEEPSEEK_API_KEY, model: Bun.env.RELAY_DEEPSEEK_MODEL ?? "deepseek-chat" })
+  : Bun.env.RELAY_OPENAI_API_KEY
   ? new OpenAIResponsesProvider({ apiKey: Bun.env.RELAY_OPENAI_API_KEY, model: Bun.env.RELAY_OPENAI_MODEL ?? "gpt-4.1-mini" })
   : new ScriptedModelProvider({ chunks: ["Relay received your message."] });
 
