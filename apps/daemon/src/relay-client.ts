@@ -13,6 +13,9 @@ const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceTok
 const beginAssistantMessageMutation = makeFunctionReference<"mutation", { threadId: string }, string>("conversations:beginAssistantMessage");
 const appendAssistantTextMutation = makeFunctionReference<"mutation", { content: string; messageId: string }>("conversations:appendAssistantText");
 const completeAssistantMessageMutation = makeFunctionReference<"mutation", { messageId: string; threadId: string; status: "done" }>("conversations:completeAssistantMessage");
+const claimCommandMutation = makeFunctionReference<"mutation", Record<string, never>, { command: string; commandId: string; projectPath: string; threadId: string } | null>("commands:claim");
+const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; status: "complete" | "failed" }>("commands:complete");
+const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -53,5 +56,14 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     beginAssistantMessage: ({ threadId }: { threadId: string }) => client.mutation(beginAssistantMessageMutation, { threadId }),
     claimQueuedMessage: ({ deviceToken }: { deviceToken: string }) => client.mutation(claimQueuedMessageMutation, { deviceToken }),
     completeAssistantMessage: ({ messageId, threadId }: { messageId: string; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, status: "done", threadId }),
+  };
+}
+
+export function createConvexCommandGateway({ deploymentUrl }: { deploymentUrl: string }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    appendOutput: (input: { output: string; threadId: string }) => client.mutation(appendCommandOutputMutation, input),
+    claim: () => client.mutation(claimCommandMutation, {}),
+    complete: (input: { commandId: string; status: "complete" | "failed" }) => client.mutation(completeCommandMutation, input),
   };
 }

@@ -2,8 +2,9 @@ import { hostname } from "node:os";
 
 import { loadDaemonConfig } from "./config";
 import { runQueuedTurn } from "./agent-loop";
+import { runQueuedCommand } from "./command-worker";
 import { DeepSeekChatProvider, OpenAIResponsesProvider, ScriptedModelProvider } from "./model-provider";
-import { createConvexConversationGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
+import { createConvexCommandGateway, createConvexConversationGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
 
 const config = loadDaemonConfig({ env: Bun.env, hostname });
 const reporter = new MachineReporter({
@@ -33,4 +34,9 @@ setInterval(() => {
     gateway: conversationGateway,
     provider,
   }).catch((error: unknown) => console.error("Relay turn failed", error));
+}, 200);
+
+const commandGateway = createConvexCommandGateway({ deploymentUrl: config.deploymentUrl });
+setInterval(() => {
+  void runQueuedCommand({ gateway: commandGateway, platform: config.registration.platform }).catch((error: unknown) => console.error("Relay command failed", error));
 }, 200);

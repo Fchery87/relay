@@ -25,4 +25,16 @@ export default defineSchema({
     status: v.union(v.literal("complete"), v.literal("queued"), v.literal("streaming")),
     threadId: v.id("threads"),
   }).index("by_thread", ["threadId"]).index("by_status", ["status"]),
+  events: defineTable({
+    kind: v.union(v.literal("command.output"), v.literal("tool.completed")),
+    output: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    threadId: v.id("threads"),
+    tool: v.optional(v.union(v.literal("bash"), v.literal("edit"), v.literal("read"))),
+  }).index("by_thread", ["threadId"]),
+  commands: defineTable({
+    command: v.string(),
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("complete"), v.literal("failed")),
+    threadId: v.id("threads"),
+  }).index("by_status", ["status"]).index("by_thread", ["threadId"]),
 });

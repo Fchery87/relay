@@ -15,3 +15,4 @@ export {
   type MessageRole,
   type MessageStatus,
 } from "./conversations";
+export { toolEventSchema, type ToolEvent } from "./tools";
