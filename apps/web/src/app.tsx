@@ -3,6 +3,7 @@ import { useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 
 import { MachineSidebar, type MachineSummary } from "./machine-sidebar";
+import { ThreadView } from "./thread-view";
 
 const listMachinesAndProjects = makeFunctionReference<"query", Record<string, never>, MachineSummary[]>(
   "machines:listMachinesAndProjects",
@@ -37,6 +38,7 @@ function Workspace({
 }) {
   const now = useCurrentTime();
   const machineCount = machines?.length ?? 0;
+  const firstProject = machines?.[0]?.projects[0];
 
   return (
     <div className="app-shell">
@@ -52,7 +54,7 @@ function Workspace({
         ) : machineCount === 0 ? (
           <p className="workspace-state">No machines connected.</p>
         ) : (
-          <p className="workspace-state">Select a project to start a thread.</p>
+          <ThreadView projectId={firstProject!.id} />
         )}
       </main>
     </div>

@@ -36,6 +36,15 @@ a { color: inherit; text-decoration: none; }
 .workspace-header { border-bottom: 1px solid #353632; padding-bottom: 16px; }
 h1 { font-size: 20px; font-weight: 650; margin: 0; }
 .workspace-state { color: #b7b7af; font-size: 14px; margin: 20px 0; }
+.thread-view { display: grid; gap: 16px; padding-top: 20px; }
+.thread-toolbar { display: flex; justify-content: flex-end; }
+button, textarea { background: #252622; border: 1px solid #454640; color: inherit; font: inherit; padding: 8px 10px; }
+button { cursor: pointer; }
+.messages { display: grid; gap: 8px; min-height: 240px; }
+.message { margin: 0; max-width: 72ch; white-space: pre-wrap; }
+.message-user { color: #f3d785; }
+.composer { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
+.composer textarea { min-height: 42px; resize: vertical; }
 
 @media (max-width: 700px) {
   .app-shell { grid-template-columns: 1fr; }

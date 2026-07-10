@@ -1,7 +1,9 @@
 import { hostname } from "node:os";
 
 import { loadDaemonConfig } from "./config";
-import { createConvexMachineGateway, MachineReporter } from "./relay-client";
+import { runQueuedTurn } from "./agent-loop";
+import { OpenAIResponsesProvider, ScriptedModelProvider } from "./model-provider";
+import { createConvexConversationGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
 
 const config = loadDaemonConfig({ env: Bun.env, hostname });
 const reporter = new MachineReporter({
@@ -17,3 +19,16 @@ setInterval(() => {
     console.error("Relay heartbeat failed", error);
   });
 }, config.heartbeatIntervalMs);
+
+const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl });
+const provider = Bun.env.RELAY_OPENAI_API_KEY
+  ? new OpenAIResponsesProvider({ apiKey: Bun.env.RELAY_OPENAI_API_KEY, model: Bun.env.RELAY_OPENAI_MODEL ?? "gpt-4.1-mini" })
+  : new ScriptedModelProvider({ chunks: ["Relay received your message."] });
+
+setInterval(() => {
+  void runQueuedTurn({
+    deviceToken: config.registration.deviceToken,
+    gateway: conversationGateway,
+    provider,
+  }).catch((error: unknown) => console.error("Relay turn failed", error));
+}, 200);

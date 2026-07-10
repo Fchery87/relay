@@ -3,3 +3,5 @@ dist/
 .env
 .env.local
 .convex/
+convex/*.js
+convex/*.js.map

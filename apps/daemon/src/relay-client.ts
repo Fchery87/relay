@@ -9,6 +9,10 @@ const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: strin
 const registerMachineMutation = makeFunctionReference<"mutation", MachineRegistration>(
   "machines:registerMachine",
 );
+const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceToken: string }, { content: string; threadId: string } | null>("conversations:claimQueuedMessage");
+const beginAssistantMessageMutation = makeFunctionReference<"mutation", { threadId: string }, string>("conversations:beginAssistantMessage");
+const appendAssistantTextMutation = makeFunctionReference<"mutation", { content: string; messageId: string }>("conversations:appendAssistantText");
+const completeAssistantMessageMutation = makeFunctionReference<"mutation", { messageId: string; threadId: string; status: "done" }>("conversations:completeAssistantMessage");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -39,5 +43,15 @@ export function createConvexMachineGateway({ deploymentUrl }: { deploymentUrl: s
   return {
     heartbeat: ({ deviceToken }) => client.mutation(heartbeatMutation, { deviceToken }),
     registerMachine: (registration) => client.mutation(registerMachineMutation, registration),
+  };
+}
+
+export function createConvexConversationGateway({ deploymentUrl }: { deploymentUrl: string }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    appendAssistantText: ({ content, messageId }: { content: string; messageId: string }) => client.mutation(appendAssistantTextMutation, { content, messageId }),
+    beginAssistantMessage: ({ threadId }: { threadId: string }) => client.mutation(beginAssistantMessageMutation, { threadId }),
+    claimQueuedMessage: ({ deviceToken }: { deviceToken: string }) => client.mutation(claimQueuedMessageMutation, { deviceToken }),
+    completeAssistantMessage: ({ messageId, threadId }: { messageId: string; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, status: "done", threadId }),
   };
 }
