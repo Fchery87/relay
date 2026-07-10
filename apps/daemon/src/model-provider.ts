@@ -25,17 +25,27 @@ export class OpenAIResponsesProvider implements ModelProvider {
 
   async *streamReply({ prompt }: { prompt: string }): AsyncIterable<string> {
     const response = await fetch("https://api.openai.com/v1/responses", {
-      body: JSON.stringify({ input: prompt, model: this.#model }),
+      body: JSON.stringify({ input: prompt, model: this.#model, stream: true }),
       headers: { Authorization: `Bearer ${this.#apiKey}`, "Content-Type": "application/json" },
       method: "POST",
     });
     if (!response.ok) throw new Error(`OpenAI response failed: ${response.status}`);
-    const payload: unknown = await response.json();
-    if (!isResponsePayload(payload)) throw new Error("OpenAI response had no output text");
-    yield payload.output_text;
+    if (!response.body) throw new Error("OpenAI response did not stream a body");
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for await (const bytes of response.body) {
+      buffer += decoder.decode(bytes, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload: unknown = JSON.parse(line.slice(6));
+        if (isTextDelta(payload)) yield payload.delta;
+      }
+    }
   }
 }
 
-function isResponsePayload(value: unknown): value is { output_text: string } {
-  return typeof value === "object" && value !== null && "output_text" in value && typeof value.output_text === "string";
+function isTextDelta(value: unknown): value is { delta: string; type: "response.output_text.delta" } {
+  return typeof value === "object" && value !== null && "delta" in value && "type" in value && value.type === "response.output_text.delta" && typeof value.delta === "string";
 }
