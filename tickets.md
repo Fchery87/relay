@@ -10,10 +10,10 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** None — can start immediately.
 
-- [ ] Monorepo scaffolded (daemon app, web app, shared schema package, Convex functions) with typecheck/test scripts
-- [ ] Daemon connects outbound-only to Convex, registers in the machines table, heartbeats
-- [ ] Web SPA (Vite + React + TanStack Router + Convex client) renders machines and projects reactively
-- [ ] Machine online/offline state visibly updates live in the browser
+- [x] Monorepo scaffolded (daemon app, web app, shared schema package, Convex functions) with typecheck/test scripts
+- [x] Daemon connects outbound-only to Convex, registers in the machines table, heartbeats
+- [x] Web SPA (Vite + React + TanStack Router + Convex client) renders machines and projects reactively
+- [x] Machine online/offline state visibly updates live in the browser
 
 ## First conversation streams end-to-end
 
