@@ -59,6 +59,16 @@ button { cursor: pointer; }
 .diff-editor .cm-editor { background: #111210; color: #d7d5cc; font-size: 12px; }
 .diff-editor .cm-deletedChunk { background: #402626; }
 .diff-editor .cm-changedLine { background: #243a2c; }
+.diff-comment-toolbar { display: flex; justify-content: flex-end; margin-top: 5px; }
+.diff-comment-toolbar button { font-size: 12px; padding: 5px 8px; }
+.diff-comment-form { display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr) auto; margin-top: 6px; }
+.diff-comment-form textarea { min-height: 54px; resize: vertical; }
+.diff-comments { display: grid; gap: 6px; list-style: none; margin: 8px 0 0; padding: 0; }
+.diff-comment { border-left: 2px solid #d2b85f; display: grid; gap: 4px; grid-template-columns: auto minmax(0, 1fr) auto; padding: 6px 8px; }
+.diff-comment span, .diff-comment strong { color: #c7c5bc; font-size: 11px; }
+.diff-comment p { font-size: 13px; margin: 0; white-space: pre-wrap; }
+.diff-comment-resolved { border-left-color: #4f765f; opacity: 0.7; }
+.address-comments { margin-top: 10px; }
 .ship-controls { display: grid; gap: 8px; grid-template-columns: auto minmax(140px, 1fr) auto auto; margin-top: 10px; }
 .ship-controls input { background: #252622; border: 1px solid #454640; color: inherit; min-width: 0; padding: 8px; }
 .ship-status { color: #b7b7af; font-size: 12px; margin: 8px 0 0; }
@@ -69,5 +79,7 @@ button { cursor: pointer; }
   .machine-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .machine { border: 1px solid #353632; }
   .activity-layout { grid-template-columns: 1fr; }
+  .diff-comment { grid-template-columns: 1fr auto; }
+  .diff-comment p { grid-column: 1 / -1; grid-row: 2; }
   .ship-controls { grid-template-columns: 1fr; }
 }

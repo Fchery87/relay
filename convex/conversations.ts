@@ -36,6 +36,7 @@ export const removeThread = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     for await (const message of ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(message._id);
+    for await (const comment of ctx.db.query("diffComments").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comment._id);
     await ctx.db.delete(args.threadId);
   },
 });
@@ -51,9 +52,24 @@ export const claimQueuedMessage = mutationGeneric({
       if (!thread) continue;
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id) continue;
+      const reviewComments = await ctx.db.query("diffComments")
+        .withIndex("by_thread", (q) => q.eq("threadId", thread._id))
+        .filter((q) => q.eq(q.field("resolved"), false))
+        .collect();
       await ctx.db.patch(message._id, { status: "complete" });
       await ctx.db.patch(thread._id, { status: "running" });
-      return { content: message.content, projectPath: project.path, threadId: thread._id };
+      return {
+        content: message.content,
+        projectPath: project.path,
+        reviewComments: reviewComments.map((comment) => ({
+          commentId: comment._id,
+          content: comment.content,
+          endLine: comment.endLine,
+          filePath: comment.filePath,
+          startLine: comment.startLine,
+        })),
+        threadId: thread._id,
+      };
     }
     return null;
   },
@@ -70,8 +86,14 @@ export const appendAssistantText = mutationGeneric({
 });
 
 export const completeAssistantMessage = mutationGeneric({
-  args: { messageId: v.id("messages"), threadId: v.id("threads"), status: threadStatus },
+  args: { messageId: v.id("messages"), resolvedCommentIds: v.optional(v.array(v.id("diffComments"))), threadId: v.id("threads"), status: threadStatus },
   handler: async (ctx, args) => {
+    if (args.status === "done") {
+      for (const commentId of args.resolvedCommentIds ?? []) {
+        const comment = await ctx.db.get("diffComments", commentId);
+        if (comment?.threadId === args.threadId) await ctx.db.patch(commentId, { resolved: true });
+      }
+    }
     await ctx.db.patch(args.messageId, { status: "complete" });
     await ctx.db.patch(args.threadId, { status: args.status });
   },

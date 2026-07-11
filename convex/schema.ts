@@ -41,6 +41,14 @@ export default defineSchema({
     content: v.string(),
     threadId: v.id("threads"),
   }).index("by_thread", ["threadId"]),
+  diffComments: defineTable({
+    content: v.string(),
+    endLine: v.number(),
+    filePath: v.string(),
+    resolved: v.boolean(),
+    startLine: v.number(),
+    threadId: v.id("threads"),
+  }).index("by_thread", ["threadId"]),
   gitActions: defineTable({
     action: v.union(v.literal("stage"), v.literal("commit"), v.literal("push")),
     message: v.optional(v.string()),

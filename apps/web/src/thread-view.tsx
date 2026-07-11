@@ -13,6 +13,8 @@ const enqueueCommand = makeFunctionReference<"mutation", { command: string; thre
 const latestDiff = makeFunctionReference<"query", { threadId: string }, { content: string } | null>("diffs:latest");
 const enqueueGitAction = makeFunctionReference<"mutation", { action: "stage" | "commit" | "push"; message?: string; threadId: string }, string>("git_actions:enqueue");
 const listGitActions = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; action: "stage" | "commit" | "push"; status: "queued" | "running" | "complete" | "failed" }>>("git_actions:listForThread");
+const listDiffComments = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; content: string; endLine: number; filePath: string; resolved: boolean; startLine: number }>>("diff_comments:listForThread");
+const createDiffComment = makeFunctionReference<"mutation", { content: string; endLine: number; filePath: string; startLine: number; threadId: string }, string>("diff_comments:create");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
@@ -20,6 +22,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const send = useMutation(sendUserMessage);
   const enqueue = useMutation(enqueueCommand);
   const enqueueGit = useMutation(enqueueGitAction);
+  const createComment = useMutation(createDiffComment);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
@@ -29,6 +32,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const events = useQuery(listEvents, activeThreadId ? { threadId: activeThreadId } : "skip");
   const diff = useQuery(latestDiff, activeThreadId ? { threadId: activeThreadId } : "skip");
   const gitActions = useQuery(listGitActions, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const diffComments = useQuery(listDiffComments, activeThreadId ? { threadId: activeThreadId } : "skip");
 
   async function startThread() {
     setThreadId(await create({ projectId, title: "New conversation" }));
@@ -56,7 +60,8 @@ export function ThreadView({ projectId }: { projectId: string }) {
           <form className="command-form" onSubmit={(event) => void submitCommand(event)}><input aria-label="Command" onChange={(event) => setCommand(event.target.value)} value={command} /><button type="submit">Run</button></form>
         </section>
       </div>
-      <section className="diff-panel"><h2>Changes</h2><DiffView content={diff?.content ?? "No changes."} />
+      <section className="diff-panel"><h2>Changes</h2><DiffView comments={diffComments ?? []} content={diff?.content ?? "No changes."} onCreateComment={(input) => createComment({ ...input, threadId: activeThreadId })} />
+        {diffComments?.some((comment) => !comment.resolved) ? <button className="address-comments" onClick={() => void send({ content: "Address the unresolved review comments.", threadId: activeThreadId })} type="button">Address comments</button> : null}
         <div className="ship-controls"><button onClick={() => void enqueueGit({ action: "stage", threadId: activeThreadId })} type="button">Stage all</button><input aria-label="Commit message" onChange={(event) => setCommitMessage(event.target.value)} value={commitMessage} /><button disabled={!commitMessage.trim()} onClick={() => void enqueueGit({ action: "commit", message: commitMessage.trim(), threadId: activeThreadId })} type="button">Commit</button><button onClick={() => void enqueueGit({ action: "push", threadId: activeThreadId })} type="button">Push</button></div>
         <p className="ship-status" aria-live="polite">{gitActions?.at(-1) ? `${gitActions.at(-1)?.action}: ${gitActions.at(-1)?.status}` : "No Git actions yet."}</p>
       </section>

@@ -67,9 +67,9 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Diff review and ship.
 
-- [ ] Comments anchored to file + line range, stored with resolved state
-- [ ] Pending comments are injected into the agent's next turn as structured review feedback
-- [ ] Agent resolution updates comment state visibly in the diff view
+- [x] Comments anchored to file + line range, stored with resolved state
+- [x] Pending comments are injected into the agent's next turn as structured review feedback
+- [x] Agent resolution updates comment state visibly in the diff view
 
 ## Governance: chokepoint, approval cards, audit log
 

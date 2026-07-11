@@ -9,10 +9,10 @@ const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: strin
 const registerMachineMutation = makeFunctionReference<"mutation", MachineRegistration>(
   "machines:registerMachine",
 );
-const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceToken: string }, { content: string; projectPath: string; threadId: string } | null>("conversations:claimQueuedMessage");
+const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceToken: string }, { content: string; projectPath: string; reviewComments: Array<{ commentId: string; content: string; endLine: number; filePath: string; startLine: number }>; threadId: string } | null>("conversations:claimQueuedMessage");
 const beginAssistantMessageMutation = makeFunctionReference<"mutation", { threadId: string }, string>("conversations:beginAssistantMessage");
 const appendAssistantTextMutation = makeFunctionReference<"mutation", { content: string; messageId: string }>("conversations:appendAssistantText");
-const completeAssistantMessageMutation = makeFunctionReference<"mutation", { messageId: string; threadId: string; status: "done" }>("conversations:completeAssistantMessage");
+const completeAssistantMessageMutation = makeFunctionReference<"mutation", { messageId: string; resolvedCommentIds?: string[]; threadId: string; status: "done" }>("conversations:completeAssistantMessage");
 const claimCommandMutation = makeFunctionReference<"mutation", Record<string, never>, { command: string; commandId: string; projectPath: string; threadId: string } | null>("commands:claim");
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; status: "complete" | "failed" }>("commands:complete");
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
@@ -60,7 +60,7 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     appendAssistantText: ({ content, messageId }: { content: string; messageId: string }) => client.mutation(appendAssistantTextMutation, { content, messageId }),
     beginAssistantMessage: ({ threadId }: { threadId: string }) => client.mutation(beginAssistantMessageMutation, { threadId }),
     claimQueuedMessage: ({ deviceToken }: { deviceToken: string }) => client.mutation(claimQueuedMessageMutation, { deviceToken }),
-    completeAssistantMessage: ({ messageId, threadId }: { messageId: string; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, status: "done", threadId }),
+    completeAssistantMessage: ({ messageId, resolvedCommentIds, threadId }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, resolvedCommentIds, status: "done", threadId }),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),
     snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
