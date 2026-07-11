@@ -17,6 +17,7 @@ const claimCommandMutation = makeFunctionReference<"mutation", Record<string, ne
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; status: "complete" | "failed" }>("commands:complete");
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
 const appendToolCompletedMutation = makeFunctionReference<"mutation", { summary: string; threadId: string; tool: "bash" | "edit" | "read" }>("events:appendToolCompleted");
+const listThreadIdsQuery = makeFunctionReference<"query", Record<string, never>, string[]>("conversations:listThreadIds");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -58,6 +59,7 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     claimQueuedMessage: ({ deviceToken }: { deviceToken: string }) => client.mutation(claimQueuedMessageMutation, { deviceToken }),
     completeAssistantMessage: ({ messageId, threadId }: { messageId: string; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, status: "done", threadId }),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
+    listThreadIds: () => client.query(listThreadIdsQuery, {}),
   };
 }
 

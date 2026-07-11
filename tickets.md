@@ -45,10 +45,10 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Agent acts: tools, events, command stream.
 
-- [ ] Worktree created per thread; all tools and commands execute inside it
-- [ ] Worktree GC on thread deletion and on daemon startup for orphans
-- [ ] git presence is a checked prerequisite with a clear error
-- [ ] End-to-end test: two threads mutate the same repo concurrently without conflict
+- [x] Worktree created per thread; all tools and commands execute inside it
+- [x] Worktree GC on thread deletion and on daemon startup for orphans
+- [x] git presence is a checked prerequisite with a clear error
+- [x] End-to-end test: two threads mutate the same repo concurrently without conflict
 
 ## Diff review and ship
 

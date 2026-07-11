@@ -27,6 +27,19 @@ export const listProjectThreads = queryGeneric({
   handler: (ctx, args) => ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", args.projectId)).collect(),
 });
 
+export const listThreadIds = queryGeneric({
+  args: {},
+  handler: async (ctx) => (await ctx.db.query("threads").collect()).map((thread) => thread._id),
+});
+
+export const removeThread = mutationGeneric({
+  args: { threadId: v.id("threads") },
+  handler: async (ctx, args) => {
+    for await (const message of ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(message._id);
+    await ctx.db.delete(args.threadId);
+  },
+});
+
 export const claimQueuedMessage = mutationGeneric({
   args: { deviceToken: v.string() },
   handler: async (ctx, args) => {

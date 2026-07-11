@@ -8,10 +8,11 @@ export interface CommandGateway {
   complete(input: { commandId: string; status: "complete" | "failed" }): Promise<unknown>;
 }
 
-export async function runQueuedCommand({ gateway, platform }: { gateway: CommandGateway; platform: MachinePlatform }): Promise<boolean> {
+export async function runQueuedCommand({ gateway, platform, resolveProjectRoot }: { gateway: CommandGateway; platform: MachinePlatform; resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string> }): Promise<boolean> {
   const queued = await gateway.claim();
   if (!queued) return false;
-  const result = await runCommand({ command: queued.command, platform, root: queued.projectPath });
+  const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
+  const result = await runCommand({ command: queued.command, platform, root });
   await gateway.appendOutput({ output: `${result.stdout}${result.stderr}`, threadId: queued.threadId });
   await gateway.complete({ commandId: queued.commandId, status: result.exitCode === 0 ? "complete" : "failed" });
   return true;

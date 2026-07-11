@@ -15,15 +15,18 @@ export async function runQueuedTurn({
   gateway,
   provider,
   platform = "linux",
+  resolveProjectRoot,
 }: {
   deviceToken: string;
   gateway: ConversationGateway;
   provider: ModelProvider;
   platform?: MachinePlatform;
+  resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
 }): Promise<boolean> {
   const queued = await gateway.claimQueuedMessage({ deviceToken });
   if (!queued) return false;
 
+  const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   if (provider.toolCalls) {
     for await (const call of provider.toolCalls({ prompt: queued.content })) {
@@ -31,7 +34,7 @@ export async function runQueuedTurn({
         call,
         onCompleted: async (event) => { await gateway.recordToolCompleted?.({ ...event, threadId: queued.threadId }); },
         platform,
-        root: queued.projectPath,
+        root,
       });
     }
   }
