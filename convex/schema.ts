@@ -37,4 +37,14 @@ export default defineSchema({
     status: v.union(v.literal("queued"), v.literal("running"), v.literal("complete"), v.literal("failed")),
     threadId: v.id("threads"),
   }).index("by_status", ["status"]).index("by_thread", ["threadId"]),
+  diffs: defineTable({
+    content: v.string(),
+    threadId: v.id("threads"),
+  }).index("by_thread", ["threadId"]),
+  gitActions: defineTable({
+    action: v.union(v.literal("stage"), v.literal("commit"), v.literal("push")),
+    message: v.optional(v.string()),
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("complete"), v.literal("failed")),
+    threadId: v.id("threads"),
+  }).index("by_status", ["status"]).index("by_thread", ["threadId"]),
 });

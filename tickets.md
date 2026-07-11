@@ -56,10 +56,10 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Threads run on disposable worktrees.
 
-- [ ] Daemon computes and snapshots diffs to Convex after mutating turns
-- [ ] CodeMirror 6 merge/diff view renders the thread diff per file
-- [ ] Stage, commit (with message), and push actions from the UI execute in the worktree
-- [ ] End-to-end test: agent edit → diff document appears → commit lands in the fixture repo
+- [x] Daemon computes and snapshots diffs to Convex after mutating turns
+- [x] CodeMirror 6 merge/diff view renders the thread diff per file
+- [x] Stage, commit (with message), and push actions from the UI execute in the worktree
+- [x] End-to-end test: agent edit → diff document appears → commit lands in the fixture repo
 
 ## Inline diff comments feed the agent
 

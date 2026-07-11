@@ -5,6 +5,8 @@ import { ScriptedModelProvider } from "./model-provider";
 import { join } from "node:path";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { commitChanges, stageAll } from "./git-review";
+import { runCommand } from "./tools";
 
 test("coalesces rapid scripted chunks into a final persisted response", async () => {
   const updates: string[] = [];
@@ -23,9 +25,12 @@ test("coalesces rapid scripted chunks into a final persisted response", async ()
   expect(updates).toEqual(["Hello world"]);
 });
 
-test("a scripted prompt edits a project file and records the tool event", async () => {
+test("an agent edit produces a diff document and commits in the fixture repo", async () => {
   const root = await mkdtemp(join(tmpdir(), "relay-agent-turn-"));
   const events: string[] = [];
+  const diffs: string[] = [];
+  await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test", platform: "linux", root });
+  await runCommand({ command: "git commit --allow-empty -m base", platform: "linux", root });
   await runQueuedTurn({
     deviceToken: "device",
     gateway: {
@@ -34,9 +39,17 @@ test("a scripted prompt edits a project file and records the tool event", async 
       claimQueuedMessage: async () => ({ content: "create result", projectPath: root, threadId: "thread" }),
       completeAssistantMessage: async () => undefined,
       recordToolCompleted: async ({ summary }) => { events.push(summary); },
+      snapshotDiff: async ({ content }) => { diffs.push(content); },
     },
     provider: new ScriptedModelProvider({ chunks: ["Done"], toolCalls: [{ content: "agent edit", kind: "edit", path: "result.txt" }] }),
   });
   expect(await readFile(join(root, "result.txt"), "utf8")).toBe("agent edit");
   expect(events).toEqual(["Edited result.txt"]);
+  expect(diffs).toHaveLength(1);
+  expect(diffs[0]).toContain("+agent edit");
+
+  await stageAll({ root });
+  const commit = await commitChanges({ message: "Apply agent edit", root });
+  const head = await runCommand({ command: "git rev-parse HEAD", platform: "linux", root });
+  expect(head.stdout.trim()).toBe(commit);
 });

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
+import { DiffView } from "./diff-view";
 
 const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; title: string }>>("conversations:listProjectThreads");
 const listMessages = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; content: string; role: "assistant" | "user"; status: string }>>("conversations:listThreadMessages");
@@ -9,18 +10,25 @@ const createThread = makeFunctionReference<"mutation", { projectId: string; titl
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
 const listEvents = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; kind: string; output?: string; summary?: string; tool?: string }>>("events:list");
 const enqueueCommand = makeFunctionReference<"mutation", { command: string; threadId: string }, string>("commands:enqueue");
+const latestDiff = makeFunctionReference<"query", { threadId: string }, { content: string } | null>("diffs:latest");
+const enqueueGitAction = makeFunctionReference<"mutation", { action: "stage" | "commit" | "push"; message?: string; threadId: string }, string>("git_actions:enqueue");
+const listGitActions = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; action: "stage" | "commit" | "push"; status: "queued" | "running" | "complete" | "failed" }>>("git_actions:listForThread");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
   const create = useMutation(createThread);
   const send = useMutation(sendUserMessage);
   const enqueue = useMutation(enqueueCommand);
+  const enqueueGit = useMutation(enqueueGitAction);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
+  const [commitMessage, setCommitMessage] = useState("");
   const activeThreadId = threadId ?? threads?.[0]?._id;
   const messages = useQuery(listMessages, activeThreadId ? { threadId: activeThreadId } : "skip");
   const events = useQuery(listEvents, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const diff = useQuery(latestDiff, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const gitActions = useQuery(listGitActions, activeThreadId ? { threadId: activeThreadId } : "skip");
 
   async function startThread() {
     setThreadId(await create({ projectId, title: "New conversation" }));
@@ -48,6 +56,10 @@ export function ThreadView({ projectId }: { projectId: string }) {
           <form className="command-form" onSubmit={(event) => void submitCommand(event)}><input aria-label="Command" onChange={(event) => setCommand(event.target.value)} value={command} /><button type="submit">Run</button></form>
         </section>
       </div>
+      <section className="diff-panel"><h2>Changes</h2><DiffView content={diff?.content ?? "No changes."} />
+        <div className="ship-controls"><button onClick={() => void enqueueGit({ action: "stage", threadId: activeThreadId })} type="button">Stage all</button><input aria-label="Commit message" onChange={(event) => setCommitMessage(event.target.value)} value={commitMessage} /><button disabled={!commitMessage.trim()} onClick={() => void enqueueGit({ action: "commit", message: commitMessage.trim(), threadId: activeThreadId })} type="button">Commit</button><button onClick={() => void enqueueGit({ action: "push", threadId: activeThreadId })} type="button">Push</button></div>
+        <p className="ship-status" aria-live="polite">{gitActions?.at(-1) ? `${gitActions.at(-1)?.action}: ${gitActions.at(-1)?.status}` : "No Git actions yet."}</p>
+      </section>
       <form className="composer" onSubmit={(event) => void submit(event)}><textarea aria-label="Message" onChange={(event) => setContent(event.target.value)} value={content} /><button type="submit">Send</button></form>
     </> : <p className="workspace-state">Create a thread to begin.</p>}
   </section>;

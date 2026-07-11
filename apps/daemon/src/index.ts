@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { loadDaemonConfig } from "./config";
 import { runQueuedTurn } from "./agent-loop";
 import { runQueuedCommand } from "./command-worker";
+import { runQueuedGitAction } from "./git-worker";
 import { DeepSeekChatProvider, OpenAIResponsesProvider, ScriptedModelProvider } from "./model-provider";
-import { createConvexCommandGateway, createConvexConversationGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
+import { createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
 import { ThreadWorktrees } from "./worktrees";
 
 const config = loadDaemonConfig({ env: Bun.env, hostname });
@@ -46,6 +47,15 @@ setInterval(() => {
     platform: config.registration.platform,
     resolveProjectRoot: (input) => worktrees.resolve(input),
   }).catch((error: unknown) => console.error("Relay turn failed", error));
+}, 200);
+const gitGateway = createConvexGitGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
+let gitActionRunning = false;
+setInterval(() => {
+  if (gitActionRunning) return;
+  gitActionRunning = true;
+  void runQueuedGitAction({ gateway: gitGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
+    .catch((error: unknown) => console.error("Relay git action failed", error))
+    .finally(() => { gitActionRunning = false; });
 }, 200);
 
 const commandGateway = createConvexCommandGateway({ deploymentUrl: config.deploymentUrl });

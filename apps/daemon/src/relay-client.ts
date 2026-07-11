@@ -18,6 +18,9 @@ const completeCommandMutation = makeFunctionReference<"mutation", { commandId: s
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
 const appendToolCompletedMutation = makeFunctionReference<"mutation", { summary: string; threadId: string; tool: "bash" | "edit" | "read" }>("events:appendToolCompleted");
 const listThreadIdsQuery = makeFunctionReference<"query", Record<string, never>, string[]>("conversations:listThreadIds");
+const snapshotDiffMutation = makeFunctionReference<"mutation", { content: string; threadId: string }>("diffs:snapshot");
+const claimGitActionMutation = makeFunctionReference<"mutation", { deviceToken: string }, { action: "stage" | "commit" | "push"; actionId: string; message?: string; projectPath: string; threadId: string } | null>("git_actions:claim");
+const completeGitActionMutation = makeFunctionReference<"mutation", { actionId: string; status: "complete" | "failed" }>("git_actions:complete");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -60,6 +63,15 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     completeAssistantMessage: ({ messageId, threadId }: { messageId: string; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, status: "done", threadId }),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),
+    snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
+  };
+}
+
+export function createConvexGitGateway({ deploymentUrl, deviceToken }: { deploymentUrl: string; deviceToken: string }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    claim: () => client.mutation(claimGitActionMutation, { deviceToken }),
+    complete: (input: { actionId: string; status: "complete" | "failed" }) => client.mutation(completeGitActionMutation, input),
   };
 }
 

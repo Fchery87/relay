@@ -10,6 +10,9 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@codemirror/merge": "^6.12.2",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
     "@relay/shared": "workspace:*",
     "@tanstack/react-router": "^1.132.0",
     "convex": "^1.31.0",

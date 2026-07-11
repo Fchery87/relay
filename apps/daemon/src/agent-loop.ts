@@ -1,6 +1,7 @@
 import type { ModelProvider } from "./model-provider";
 import type { MachinePlatform } from "@relay/shared";
 import { executeToolCall } from "./tool-executor";
+import { computeDiff } from "./git-review";
 
 export interface ConversationGateway {
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
@@ -8,6 +9,7 @@ export interface ConversationGateway {
   claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; projectPath: string; threadId: string } | null>;
   completeAssistantMessage(input: { messageId: string; threadId: string }): Promise<unknown>;
   recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }): Promise<unknown>;
+  snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
 }
 
 export async function runQueuedTurn({
@@ -29,6 +31,7 @@ export async function runQueuedTurn({
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   if (provider.toolCalls) {
+    let mutated = false;
     for await (const call of provider.toolCalls({ prompt: queued.content })) {
       await executeToolCall({
         call,
@@ -36,7 +39,9 @@ export async function runQueuedTurn({
         platform,
         root,
       });
+      if (call.kind === "edit" || call.kind === "bash") mutated = true;
     }
+    if (mutated) await gateway.snapshotDiff?.({ content: await computeDiff({ root, startCommit: "HEAD" }), threadId: queued.threadId });
   }
   let content = "";
   let lastFlushAt = Date.now();
