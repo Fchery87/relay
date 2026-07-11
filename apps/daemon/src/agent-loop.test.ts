@@ -92,3 +92,26 @@ test("a denied tool call returns a structured refusal to the agent", async () =>
   expect(decisions).toEqual(["deny"]);
   expect(access(join(root, "blocked.txt"))).rejects.toThrow();
 });
+
+test("resolves the model provider from the claimed thread selection", async () => {
+  const selections: Array<{ modelId: string; thinkingLevel: string }> = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "hello", modelId: "openai/gpt-5-mini", projectPath: "/tmp", thinkingLevel: "high", threadId: "thread" }),
+      completeAssistantMessage: async () => undefined,
+    },
+    governance,
+    policy,
+    provider: {
+      kind: "model-router",
+      resolve: ({ modelId, thinkingLevel }) => {
+        selections.push({ modelId, thinkingLevel });
+        return new ScriptedModelProvider({ chunks: ["resolved"] });
+      },
+    },
+  });
+  expect(selections).toEqual([{ modelId: "openai/gpt-5-mini", thinkingLevel: "high" }]);
+});

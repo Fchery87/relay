@@ -89,10 +89,10 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** First conversation streams end-to-end.
 
-- [ ] Catalog supports anthropic-messages and openai-responses/completions API kinds with fallbacks
-- [ ] Thinking levels selectable per thread; model picker in the UI
-- [ ] Keys never appear in Convex documents or the browser bundle
-- [ ] Unit tests for catalog resolution and fallback ordering
+- [x] Catalog supports anthropic-messages and openai-responses/completions API kinds with fallbacks
+- [x] Thinking levels selectable per thread; model picker in the UI
+- [x] Keys never appear in Convex documents or the browser bundle
+- [x] Unit tests for catalog resolution and fallback ordering
 
 ## Usage and cost tracking
 

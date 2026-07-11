@@ -15,9 +15,11 @@ export default defineSchema({
     path: v.string(),
   }).index("by_machine", ["machineId"]).index("by_machine_path", ["machineId", "path"]),
   threads: defineTable({
+    modelId: v.optional(v.string()),
     projectId: v.id("projects"),
     status: v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("done"), v.literal("failed")),
     title: v.string(),
+    thinkingLevel: v.optional(v.union(v.literal("none"), v.literal("low"), v.literal("medium"), v.literal("high"))),
   }).index("by_project", ["projectId"]),
   messages: defineTable({
     content: v.string(),

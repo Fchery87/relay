@@ -1,0 +1,41 @@
+{
+  "defaultModelId": "deepseek/deepseek-chat",
+  "models": [
+    {
+      "id": "deepseek/deepseek-chat",
+      "name": "DeepSeek Chat",
+      "provider": "deepseek",
+      "apiKind": "openai-completions",
+      "thinking": { "none": null },
+      "cost": { "input": 0.14, "output": 0.28, "cacheRead": 0.0028 },
+      "fallbacks": ["openai/gpt-5-mini", "anthropic/claude-sonnet-4-5"]
+    },
+    {
+      "id": "deepseek/deepseek-reasoner",
+      "name": "DeepSeek Reasoner",
+      "provider": "deepseek",
+      "apiKind": "openai-completions",
+      "thinking": { "high": null },
+      "cost": { "input": 0.14, "output": 0.28, "cacheRead": 0.0028 },
+      "fallbacks": ["openai/gpt-5-mini", "anthropic/claude-sonnet-4-5"]
+    },
+    {
+      "id": "openai/gpt-5-mini",
+      "name": "GPT-5 mini",
+      "provider": "openai",
+      "apiKind": "openai-responses",
+      "thinking": { "none": null, "low": "low", "medium": "medium", "high": "high" },
+      "cost": { "input": 0.25, "output": 2, "cacheRead": 0.025 },
+      "fallbacks": ["deepseek/deepseek-chat", "anthropic/claude-sonnet-4-5"]
+    },
+    {
+      "id": "anthropic/claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "provider": "anthropic",
+      "apiKind": "anthropic-messages",
+      "thinking": { "none": null, "low": "1024", "medium": "4096", "high": "16384" },
+      "cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
+      "fallbacks": ["openai/gpt-5-mini", "deepseek/deepseek-chat"]
+    }
+  ]
+}

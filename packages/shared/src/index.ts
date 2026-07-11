@@ -24,3 +24,17 @@ export {
   type QueuedCommand,
   type QueuedMessage,
 } from "./transport";
+export {
+  apiKindSchema,
+  catalogModelSchema,
+  DEFAULT_MODEL_ID,
+  listThinkingLevels,
+  MODEL_CATALOG,
+  modelCatalogSchema,
+  resolveCatalogModel,
+  resolveThinkingValue,
+  thinkingLevelSchema,
+  type CatalogModel,
+  type ModelCatalog,
+  type ThinkingLevel,
+} from "./model-catalog";

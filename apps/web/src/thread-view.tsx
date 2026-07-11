@@ -4,8 +4,10 @@ import { useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { DiffView } from "./diff-view";
 import { GovernancePanel, type Approval, type AuditEntry } from "./governance-panel";
+import { DEFAULT_MODEL_ID, type ThinkingLevel } from "@relay/shared";
+import { ModelControls } from "./model-controls";
 
-const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; title: string }>>("conversations:listProjectThreads");
+const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; modelId?: string; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
 const listMessages = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; content: string; role: "assistant" | "user"; status: string }>>("conversations:listThreadMessages");
 const createThread = makeFunctionReference<"mutation", { projectId: string; title: string }, string>("conversations:createThread");
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
@@ -19,6 +21,7 @@ const createDiffComment = makeFunctionReference<"mutation", { content: string; e
 const listApprovals = makeFunctionReference<"query", { threadId: string }, Approval[]>("approvals:listForThread");
 const resolveApproval = makeFunctionReference<"mutation", { approvalId: string; decision: "allow" | "deny" }, null>("approvals:resolve");
 const listAudit = makeFunctionReference<"query", { threadId: string }, AuditEntry[]>("audit_log:listForThread");
+const updateModelSelection = makeFunctionReference<"mutation", { modelId: string; thinkingLevel: ThinkingLevel; threadId: string }, null>("conversations:updateModelSelection");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
@@ -28,11 +31,13 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const enqueueGit = useMutation(enqueueGitAction);
   const createComment = useMutation(createDiffComment);
   const resolve = useMutation(resolveApproval);
+  const updateSelection = useMutation(updateModelSelection);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
   const activeThreadId = threadId ?? threads?.[0]?._id;
+  const activeThread = threads?.find((thread) => thread._id === activeThreadId);
   const messages = useQuery(listMessages, activeThreadId ? { threadId: activeThreadId } : "skip");
   const events = useQuery(listEvents, activeThreadId ? { threadId: activeThreadId } : "skip");
   const diff = useQuery(latestDiff, activeThreadId ? { threadId: activeThreadId } : "skip");
@@ -58,7 +63,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
   }
 
   return <section className="thread-view">
-    <div className="thread-toolbar"><button onClick={() => void startThread()} type="button">New thread</button></div>
+    <div className="thread-toolbar">{activeThreadId ? <ModelControls modelId={activeThread?.modelId ?? DEFAULT_MODEL_ID} onChange={(selection) => updateSelection({ ...selection, threadId: activeThreadId })} thinkingLevel={activeThread?.thinkingLevel ?? "none"} /> : null}<button onClick={() => void startThread()} type="button">New thread</button></div>
     {activeThreadId ? <>
       <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
       <div className="messages">{messages?.map((message) => <p className={`message message-${message.role}`} key={message._id}>{message.content || "..."}</p>)}</div>

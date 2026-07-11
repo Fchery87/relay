@@ -1,5 +1,5 @@
-import type { ModelProvider } from "./model-provider";
-import type { MachinePlatform } from "@relay/shared";
+import type { ModelProvider, ModelProviderRouter } from "./model-provider";
+import { DEFAULT_MODEL_ID, type MachinePlatform } from "@relay/shared";
 import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
 import type { Policy } from "./policy";
@@ -7,7 +7,7 @@ import type { Policy } from "./policy";
 export interface ConversationGateway {
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
-  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; projectPath: string; reviewComments?: ReviewComment[]; threadId: string } | null>;
+  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; threadId: string }): Promise<unknown>;
   recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
@@ -40,21 +40,24 @@ export async function runQueuedTurn({
   gateway: ConversationGateway;
   governance: GovernanceGateway;
   policy: Policy;
-  provider: ModelProvider;
+  provider: ModelProvider | ModelProviderRouter;
   platform?: MachinePlatform;
   resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
 }): Promise<boolean> {
   const queued = await gateway.claimQueuedMessage({ deviceToken });
   if (!queued) return false;
+  const turnProvider = isModelProviderRouter(provider)
+    ? provider.resolve({ modelId: queued.modelId ?? DEFAULT_MODEL_ID, thinkingLevel: queued.thinkingLevel ?? "none" })
+    : provider;
   const reviewComments = queued.reviewComments ?? [];
   const prompt = buildTurnPrompt({ content: queued.content, reviewComments });
 
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   const toolResults: string[] = [];
-  if (provider.toolCalls) {
+  if (turnProvider.toolCalls) {
     let mutated = false;
-    for await (const call of provider.toolCalls({ prompt })) {
+    for await (const call of turnProvider.toolCalls({ prompt })) {
       const toolResult = await executeGovernedToolCall({
         call,
         governance,
@@ -72,7 +75,7 @@ export async function runQueuedTurn({
   let content = "";
   let lastFlushAt = Date.now();
   const responsePrompt = toolResults.length === 0 ? prompt : `${prompt}\n\n<tool_results>\n${toolResults.map(escapeXml).join("\n")}\n</tool_results>`;
-  for await (const chunk of provider.streamReply({ prompt: responsePrompt })) {
+  for await (const chunk of turnProvider.streamReply({ prompt: responsePrompt })) {
     content += chunk;
     if (Date.now() - lastFlushAt >= 200) {
       await gateway.appendAssistantText({ content, messageId });
@@ -82,4 +85,8 @@ export async function runQueuedTurn({
   await gateway.appendAssistantText({ content, messageId });
   await gateway.completeAssistantMessage({ messageId, resolvedCommentIds: reviewComments.map((comment) => comment.commentId), threadId: queued.threadId });
   return true;
+}
+
+function isModelProviderRouter(provider: ModelProvider | ModelProviderRouter): provider is ModelProviderRouter {
+  return "kind" in provider && provider.kind === "model-router";
 }

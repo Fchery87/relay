@@ -6,10 +6,11 @@ import { loadDaemonConfig } from "./config";
 import { runQueuedTurn } from "./agent-loop";
 import { runQueuedCommand } from "./command-worker";
 import { runQueuedGitAction } from "./git-worker";
-import { DeepSeekChatProvider, OpenAIResponsesProvider, ScriptedModelProvider } from "./model-provider";
+import { ScriptedModelProvider } from "./model-provider";
 import { createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
 import { ThreadWorktrees } from "./worktrees";
 import { loadPolicy } from "./policy";
+import { LocalModelRouter } from "./catalog-provider-router";
 
 const config = loadDaemonConfig({ env: Bun.env, hostname });
 const reporter = new MachineReporter({
@@ -36,11 +37,7 @@ async function collectOrphanedWorktrees() {
 }
 await collectOrphanedWorktrees();
 setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
-const provider = Bun.env.RELAY_DEEPSEEK_API_KEY
-  ? new DeepSeekChatProvider({ apiKey: Bun.env.RELAY_DEEPSEEK_API_KEY, model: Bun.env.RELAY_DEEPSEEK_MODEL ?? "deepseek-chat" })
-  : Bun.env.RELAY_OPENAI_API_KEY
-  ? new OpenAIResponsesProvider({ apiKey: Bun.env.RELAY_OPENAI_API_KEY, model: Bun.env.RELAY_OPENAI_MODEL ?? "gpt-4.1-mini" })
-  : new ScriptedModelProvider({ chunks: ["Relay received your message."] });
+const provider = new LocalModelRouter({ env: Bun.env, fallbackProvider: new ScriptedModelProvider({ chunks: ["Relay received your message."] }) });
 
 setInterval(() => {
   void runQueuedTurn({

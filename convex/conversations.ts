@@ -1,11 +1,22 @@
 import { mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
+import { DEFAULT_MODEL_ID, MODEL_CATALOG, listThinkingLevels } from "@relay/shared";
 
 const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("done"), v.literal("failed"));
 
 export const createThread = mutationGeneric({
   args: { projectId: v.id("projects"), title: v.string() },
-  handler: (ctx, args) => ctx.db.insert("threads", { ...args, status: "idle" }),
+  handler: (ctx, args) => ctx.db.insert("threads", { ...args, modelId: DEFAULT_MODEL_ID, status: "idle", thinkingLevel: "none" }),
+});
+
+export const updateModelSelection = mutationGeneric({
+  args: { modelId: v.string(), thinkingLevel: v.union(v.literal("none"), v.literal("low"), v.literal("medium"), v.literal("high")), threadId: v.id("threads") },
+  handler: async (ctx, args) => {
+    const model = MODEL_CATALOG.models.find((entry) => entry.id === args.modelId);
+    if (!model) throw new Error("Model is not in the catalog");
+    if (!listThinkingLevels(model).includes(args.thinkingLevel)) throw new Error("Thinking level is not supported by this model");
+    await ctx.db.patch(args.threadId, { modelId: args.modelId, thinkingLevel: args.thinkingLevel });
+  },
 });
 
 export const sendUserMessage = mutationGeneric({
@@ -63,6 +74,7 @@ export const claimQueuedMessage = mutationGeneric({
       await ctx.db.patch(thread._id, { status: "running" });
       return {
         content: message.content,
+        modelId: thread.modelId ?? DEFAULT_MODEL_ID,
         projectPath: project.path,
         reviewComments: reviewComments.map((comment) => ({
           commentId: comment._id,
@@ -72,6 +84,7 @@ export const claimQueuedMessage = mutationGeneric({
           startLine: comment.startLine,
         })),
         threadId: thread._id,
+        thinkingLevel: thread.thinkingLevel ?? "none",
       };
     }
     return null;

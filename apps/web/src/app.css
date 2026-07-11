@@ -37,7 +37,9 @@ a { color: inherit; text-decoration: none; }
 h1 { font-size: 20px; font-weight: 650; margin: 0; }
 .workspace-state { color: #b7b7af; font-size: 14px; margin: 20px 0; }
 .thread-view { display: grid; gap: 16px; padding-top: 20px; }
-.thread-toolbar { display: flex; justify-content: flex-end; }
+.thread-toolbar { display: flex; gap: 8px; justify-content: flex-end; }
+.model-controls { display: flex; gap: 6px; }
+.model-controls select { background: #252622; border: 1px solid #454640; color: inherit; font: inherit; min-width: 132px; padding: 8px; }
 .governance-panel { display: grid; gap: 12px; }
 .approval-card { background: #20211f; border: 1px solid #5c5540; display: grid; gap: 12px; grid-template-columns: minmax(150px, auto) minmax(0, 1fr) auto; padding: 12px; }
 .approval-card h2, .audit-log h2 { font-size: 14px; margin: 0; }
@@ -92,6 +94,8 @@ button { cursor: pointer; }
   .machine-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .machine { border: 1px solid #353632; }
   .activity-layout { grid-template-columns: 1fr; }
+  .thread-toolbar { align-items: stretch; flex-direction: column; }
+  .model-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, auto); }
   .approval-card { grid-template-columns: 1fr; }
   .approval-actions { justify-content: flex-end; }
   .audit-log li { grid-template-columns: 42px minmax(0, 1fr); }

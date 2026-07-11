@@ -13,9 +13,11 @@ export const reviewCommentTransportSchema = z.object({
 
 export const queuedMessageSchema = z.object({
   content: z.string().min(1).max(1_000_000),
+  modelId: z.string().min(1).max(256),
   projectPath,
   reviewComments: z.array(reviewCommentTransportSchema).max(1_000),
   threadId: id,
+  thinkingLevel: z.enum(["none", "low", "medium", "high"]),
 });
 
 export const queuedCommandSchema = z.object({
