@@ -7,8 +7,9 @@ import { runQueuedTurn } from "./agent-loop";
 import { runQueuedCommand } from "./command-worker";
 import { runQueuedGitAction } from "./git-worker";
 import { DeepSeekChatProvider, OpenAIResponsesProvider, ScriptedModelProvider } from "./model-provider";
-import { createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
+import { createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
 import { ThreadWorktrees } from "./worktrees";
+import { loadPolicy } from "./policy";
 
 const config = loadDaemonConfig({ env: Bun.env, hostname });
 const reporter = new MachineReporter({
@@ -26,6 +27,8 @@ setInterval(() => {
 }, config.heartbeatIntervalMs);
 
 const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl });
+const governance = createConvexGovernanceGateway({ deploymentUrl: config.deploymentUrl });
+const policy = await loadPolicy({ path: Bun.env.RELAY_POLICY_PATH ?? join(import.meta.dir, "..", "policy.json") });
 const worktrees = new ThreadWorktrees({ daemonHome: Bun.env.RELAY_DAEMON_HOME ?? join(homedir(), ".relay") });
 async function collectOrphanedWorktrees() {
   const activeThreadIds = new Set(await conversationGateway.listThreadIds());
@@ -43,6 +46,8 @@ setInterval(() => {
   void runQueuedTurn({
     deviceToken: config.registration.deviceToken,
     gateway: conversationGateway,
+    governance,
+    policy,
     provider,
     platform: config.registration.platform,
     resolveProjectRoot: (input) => worktrees.resolve(input),
@@ -58,7 +63,12 @@ setInterval(() => {
     .finally(() => { gitActionRunning = false; });
 }, 200);
 
-const commandGateway = createConvexCommandGateway({ deploymentUrl: config.deploymentUrl });
+const commandGateway = createConvexCommandGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
+let commandRunning = false;
 setInterval(() => {
-  void runQueuedCommand({ gateway: commandGateway, platform: config.registration.platform, resolveProjectRoot: (input) => worktrees.resolve(input) }).catch((error: unknown) => console.error("Relay command failed", error));
+  if (commandRunning) return;
+  commandRunning = true;
+  void runQueuedCommand({ gateway: commandGateway, governance, platform: config.registration.platform, policy, resolveProjectRoot: (input) => worktrees.resolve(input) })
+    .catch((error: unknown) => console.error("Relay command failed", error))
+    .finally(() => { commandRunning = false; });
 }, 200);

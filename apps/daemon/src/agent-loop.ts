@@ -1,7 +1,8 @@
 import type { ModelProvider } from "./model-provider";
 import type { MachinePlatform } from "@relay/shared";
-import { executeToolCall } from "./tool-executor";
+import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
+import type { Policy } from "./policy";
 
 export interface ConversationGateway {
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
@@ -29,12 +30,16 @@ function escapeXml(value: string): string {
 export async function runQueuedTurn({
   deviceToken,
   gateway,
+  governance,
+  policy,
   provider,
   platform = "linux",
   resolveProjectRoot,
 }: {
   deviceToken: string;
   gateway: ConversationGateway;
+  governance: GovernanceGateway;
+  policy: Policy;
   provider: ModelProvider;
   platform?: MachinePlatform;
   resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
@@ -46,22 +51,28 @@ export async function runQueuedTurn({
 
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
+  const toolResults: string[] = [];
   if (provider.toolCalls) {
     let mutated = false;
     for await (const call of provider.toolCalls({ prompt })) {
-      await executeToolCall({
+      const toolResult = await executeGovernedToolCall({
         call,
+        governance,
         onCompleted: async (event) => { await gateway.recordToolCompleted?.({ ...event, threadId: queued.threadId }); },
         platform,
+        policy,
         root,
+        threadId: queued.threadId,
       });
+      toolResults.push(toolResult.output);
       if (call.kind === "edit" || call.kind === "bash") mutated = true;
     }
     if (mutated) await gateway.snapshotDiff?.({ content: await computeDiff({ root, startCommit: "HEAD" }), threadId: queued.threadId });
   }
   let content = "";
   let lastFlushAt = Date.now();
-  for await (const chunk of provider.streamReply({ prompt })) {
+  const responsePrompt = toolResults.length === 0 ? prompt : `${prompt}\n\n<tool_results>\n${toolResults.map(escapeXml).join("\n")}\n</tool_results>`;
+  for await (const chunk of provider.streamReply({ prompt: responsePrompt })) {
     content += chunk;
     if (Date.now() - lastFlushAt >= 200) {
       await gateway.appendAssistantText({ content, messageId });

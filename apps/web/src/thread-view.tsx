@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { DiffView } from "./diff-view";
+import { GovernancePanel, type Approval, type AuditEntry } from "./governance-panel";
 
 const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; title: string }>>("conversations:listProjectThreads");
 const listMessages = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; content: string; role: "assistant" | "user"; status: string }>>("conversations:listThreadMessages");
@@ -15,6 +16,9 @@ const enqueueGitAction = makeFunctionReference<"mutation", { action: "stage" | "
 const listGitActions = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; action: "stage" | "commit" | "push"; status: "queued" | "running" | "complete" | "failed" }>>("git_actions:listForThread");
 const listDiffComments = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; content: string; endLine: number; filePath: string; resolved: boolean; startLine: number }>>("diff_comments:listForThread");
 const createDiffComment = makeFunctionReference<"mutation", { content: string; endLine: number; filePath: string; startLine: number; threadId: string }, string>("diff_comments:create");
+const listApprovals = makeFunctionReference<"query", { threadId: string }, Approval[]>("approvals:listForThread");
+const resolveApproval = makeFunctionReference<"mutation", { approvalId: string; decision: "allow" | "deny" }, null>("approvals:resolve");
+const listAudit = makeFunctionReference<"query", { threadId: string }, AuditEntry[]>("audit_log:listForThread");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
@@ -23,6 +27,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const enqueue = useMutation(enqueueCommand);
   const enqueueGit = useMutation(enqueueGitAction);
   const createComment = useMutation(createDiffComment);
+  const resolve = useMutation(resolveApproval);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
@@ -33,6 +38,8 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const diff = useQuery(latestDiff, activeThreadId ? { threadId: activeThreadId } : "skip");
   const gitActions = useQuery(listGitActions, activeThreadId ? { threadId: activeThreadId } : "skip");
   const diffComments = useQuery(listDiffComments, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const approvals = useQuery(listApprovals, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const audit = useQuery(listAudit, activeThreadId ? { threadId: activeThreadId } : "skip");
 
   async function startThread() {
     setThreadId(await create({ projectId, title: "New conversation" }));
@@ -53,6 +60,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
   return <section className="thread-view">
     <div className="thread-toolbar"><button onClick={() => void startThread()} type="button">New thread</button></div>
     {activeThreadId ? <>
+      <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
       <div className="messages">{messages?.map((message) => <p className={`message message-${message.role}`} key={message._id}>{message.content || "..."}</p>)}</div>
       <div className="activity-layout">
         <section><h2>Activity</h2>{events?.filter((event) => event.kind === "tool.completed").map((event) => <p className="activity-line" key={event._id}>{event.tool}: {event.summary}</p>)}</section>

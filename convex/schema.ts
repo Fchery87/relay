@@ -16,7 +16,7 @@ export default defineSchema({
   }).index("by_machine", ["machineId"]).index("by_machine_path", ["machineId", "path"]),
   threads: defineTable({
     projectId: v.id("projects"),
-    status: v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("done"), v.literal("failed")),
+    status: v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("done"), v.literal("failed")),
     title: v.string(),
   }).index("by_project", ["projectId"]),
   messages: defineTable({
@@ -47,6 +47,21 @@ export default defineSchema({
     filePath: v.string(),
     resolved: v.boolean(),
     startLine: v.number(),
+    threadId: v.id("threads"),
+  }).index("by_thread", ["threadId"]),
+  approvals: defineTable({
+    capability: v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task")),
+    decision: v.union(v.literal("pending"), v.literal("allow"), v.literal("deny")),
+    risk: v.union(v.literal("low"), v.literal("high"), v.literal("critical")),
+    resumeStatus: v.optional(v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("done"), v.literal("failed"))),
+    summary: v.string(),
+    threadId: v.id("threads"),
+  }).index("by_thread", ["threadId"]),
+  auditLog: defineTable({
+    capability: v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task")),
+    decision: v.union(v.literal("allow"), v.literal("deny"), v.literal("ask")),
+    risk: v.union(v.literal("low"), v.literal("high"), v.literal("critical")),
+    summary: v.string(),
     threadId: v.id("threads"),
   }).index("by_thread", ["threadId"]),
   gitActions: defineTable({

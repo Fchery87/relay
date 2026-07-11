@@ -77,11 +77,11 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Agent acts: tools, events, command stream.
 
-- [ ] Policy file with allow/deny/ask rules over capabilities (read/edit/exec/task) and risk tiers (low/high/critical)
-- [ ] Thread status becomes awaiting-approval; approval card resolves from any signed-in browser
-- [ ] Denied calls return a structured refusal to the agent; audit log records every decision
-- [ ] Commands and messages arriving via Convex are treated as untrusted input
-- [ ] Unit tests for policy evaluation; end-to-end test: risky command → card → deny blocks, audit entry exists
+- [x] Policy file with allow/deny/ask rules over capabilities (read/edit/exec/task) and risk tiers (low/high/critical)
+- [x] Thread status becomes awaiting-approval; approval card resolves from any signed-in browser
+- [x] Denied calls return a structured refusal to the agent; audit log records every decision
+- [x] Commands and messages arriving via Convex are treated as untrusted input
+- [x] Unit tests for policy evaluation; end-to-end test: risky command → card → deny blocks, audit entry exists
 
 ## Model catalog and routing
 

@@ -16,3 +16,11 @@ export {
   type MessageStatus,
 } from "./conversations";
 export { toolEventSchema, type ToolEvent } from "./tools";
+export {
+  approvalResolutionSchema,
+  queuedCommandSchema,
+  queuedMessageSchema,
+  reviewCommentTransportSchema,
+  type QueuedCommand,
+  type QueuedMessage,
+} from "./transport";

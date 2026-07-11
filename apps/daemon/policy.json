@@ -1,0 +1,12 @@
+{
+  "rules": [
+    { "capability": "read", "risk": "low", "decision": "allow" },
+    { "capability": "edit", "risk": "low", "decision": "allow" },
+    { "capability": "exec", "risk": "low", "decision": "allow" },
+    { "capability": "exec", "risk": "high", "decision": "ask" },
+    { "capability": "exec", "risk": "critical", "decision": "deny" },
+    { "capability": "task", "risk": "low", "decision": "allow" },
+    { "capability": "task", "risk": "high", "decision": "ask" },
+    { "capability": "task", "risk": "critical", "decision": "deny" }
+  ]
+}

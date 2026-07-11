@@ -2,6 +2,11 @@ import { expect, test } from "bun:test";
 
 import { buildTurnPrompt, runQueuedTurn } from "./agent-loop";
 import type { ModelProvider } from "./model-provider";
+import type { GovernanceGateway } from "./governed-tool-executor";
+import type { Policy } from "./policy";
+
+const governance: GovernanceGateway = { recordDecision: async () => undefined, requestApproval: async () => "allow" };
+const policy: Policy = { rules: [] };
 
 test("formats unresolved diff comments as structured review feedback", () => {
   expect(buildTurnPrompt({
@@ -25,6 +30,7 @@ test("resolves only the review comments included in a successful turn", async ()
 
   await runQueuedTurn({
     deviceToken: "device",
+    governance,
     gateway: {
       appendAssistantText: async () => undefined,
       beginAssistantMessage: async () => "assistant-message",
@@ -37,6 +43,7 @@ test("resolves only the review comments included in a successful turn", async ()
       completeAssistantMessage: async ({ resolvedCommentIds = [] }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => { resolved.push(resolvedCommentIds); },
     },
     provider,
+    policy,
   });
 
   expect(prompts[0]).toContain("<review_feedback>");

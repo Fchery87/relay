@@ -12,16 +12,21 @@ export const listForThread = queryGeneric({
 });
 
 export const claim = mutationGeneric({
-  args: {},
-  handler: async (ctx) => {
-    const command = await ctx.db.query("commands").withIndex("by_status", (q) => q.eq("status", "queued")).first();
-    if (!command) return null;
-    const thread = await ctx.db.get("threads", command.threadId);
-    if (!thread) throw new Error("Command thread not found");
-    const project = await ctx.db.get("projects", thread.projectId);
-    if (!project) throw new Error("Command project not found");
-    await ctx.db.patch(command._id, { status: "running" });
-    return { command: command.command, commandId: command._id, projectPath: project.path, threadId: command.threadId };
+  args: { deviceToken: v.string() },
+  handler: async (ctx, args) => {
+    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
+    if (!machine) return null;
+    const queued = await ctx.db.query("commands").withIndex("by_status", (q) => q.eq("status", "queued")).take(100);
+    for (const command of queued) {
+      const thread = await ctx.db.get("threads", command.threadId);
+      if (!thread) continue;
+      if (thread.status === "running" || thread.status === "awaiting-approval") continue;
+      const project = await ctx.db.get("projects", thread.projectId);
+      if (!project || project.machineId !== machine._id) continue;
+      await ctx.db.patch(command._id, { status: "running" });
+      return { command: command.command, commandId: command._id, projectPath: project.path, threadId: command.threadId };
+    }
+    return null;
   },
 });
 

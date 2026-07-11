@@ -1,7 +1,7 @@
 import { mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
 
-const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("done"), v.literal("failed"));
+const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("done"), v.literal("failed"));
 
 export const createThread = mutationGeneric({
   args: { projectId: v.id("projects"), title: v.string() },
@@ -37,6 +37,8 @@ export const removeThread = mutationGeneric({
   handler: async (ctx, args) => {
     for await (const message of ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(message._id);
     for await (const comment of ctx.db.query("diffComments").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comment._id);
+    for await (const approval of ctx.db.query("approvals").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(approval._id);
+    for await (const audit of ctx.db.query("auditLog").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(audit._id);
     await ctx.db.delete(args.threadId);
   },
 });
@@ -50,6 +52,7 @@ export const claimQueuedMessage = mutationGeneric({
     for await (const message of ctx.db.query("messages").withIndex("by_status", (q) => q.eq("status", "queued"))) {
       const thread = await ctx.db.get("threads", message.threadId);
       if (!thread) continue;
+      if (thread.status === "running" || thread.status === "awaiting-approval") continue;
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id) continue;
       const reviewComments = await ctx.db.query("diffComments")

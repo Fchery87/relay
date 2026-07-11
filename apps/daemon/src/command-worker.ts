@@ -1,6 +1,7 @@
 import type { MachinePlatform } from "@relay/shared";
 
-import { runCommand } from "./tools";
+import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
+import type { Policy } from "./policy";
 
 export interface CommandGateway {
   appendOutput(input: { output: string; threadId: string }): Promise<unknown>;
@@ -8,12 +9,20 @@ export interface CommandGateway {
   complete(input: { commandId: string; status: "complete" | "failed" }): Promise<unknown>;
 }
 
-export async function runQueuedCommand({ gateway, platform, resolveProjectRoot }: { gateway: CommandGateway; platform: MachinePlatform; resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string> }): Promise<boolean> {
+export async function runQueuedCommand({ gateway, governance, platform, policy, resolveProjectRoot }: { gateway: CommandGateway; governance: GovernanceGateway; platform: MachinePlatform; policy: Policy; resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string> }): Promise<boolean> {
   const queued = await gateway.claim();
   if (!queued) return false;
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
-  const result = await runCommand({ command: queued.command, platform, root });
-  await gateway.appendOutput({ output: `${result.stdout}${result.stderr}`, threadId: queued.threadId });
-  await gateway.complete({ commandId: queued.commandId, status: result.exitCode === 0 ? "complete" : "failed" });
+  const result = await executeGovernedToolCall({
+    call: { command: queued.command, kind: "bash" },
+    governance,
+    onCompleted: async () => undefined,
+    platform,
+    policy,
+    root,
+    threadId: queued.threadId,
+  });
+  await gateway.appendOutput({ output: result.output, threadId: queued.threadId });
+  await gateway.complete({ commandId: queued.commandId, status: result.kind === "executed" && result.succeeded ? "complete" : "failed" });
   return true;
 }

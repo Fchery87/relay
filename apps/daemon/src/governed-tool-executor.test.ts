@@ -1,0 +1,60 @@
+import { expect, test } from "bun:test";
+import { access, mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { executeGovernedToolCall, summarizeToolCall } from "./governed-tool-executor";
+import type { Policy } from "./policy";
+
+const policy: Policy = { rules: [
+  { capability: "exec", decision: "deny", risk: "critical" },
+  { capability: "exec", decision: "ask", risk: "high" },
+] };
+
+test("a policy denial blocks execution and records a structured refusal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-deny-"));
+  const decisions: string[] = [];
+  const result = await executeGovernedToolCall({
+    call: { command: "sudo touch blocked.txt", kind: "bash" },
+    governance: {
+      recordDecision: async ({ decision }) => { decisions.push(decision); },
+      requestApproval: async () => "deny",
+    },
+    onCompleted: async () => undefined,
+    platform: "linux",
+    policy,
+    root,
+    threadId: "thread",
+  });
+
+  expect(result.kind).toBe("refused");
+  expect(JSON.parse(result.output)).toMatchObject({ capability: "exec", kind: "tool_refusal", reason: "policy_denied", risk: "critical" });
+  expect(decisions).toEqual(["deny"]);
+  expect(access(join(root, "blocked.txt"))).rejects.toThrow();
+});
+
+test("an approval denial blocks a high-risk command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-ask-"));
+  const result = await executeGovernedToolCall({
+    call: { command: "rm -f blocked.txt", kind: "bash" },
+    governance: {
+      recordDecision: async () => undefined,
+      requestApproval: async () => "deny",
+    },
+    onCompleted: async () => undefined,
+    platform: "linux",
+    policy,
+    root,
+    threadId: "thread",
+  });
+
+  expect(result.kind).toBe("refused");
+  expect(JSON.parse(result.output)).toMatchObject({ kind: "tool_refusal", reason: "approval_denied" });
+});
+
+test("redacts credentials from approval and audit summaries", () => {
+  const summary = summarizeToolCall({ command: "curl -H 'Authorization: Bearer deep-secret' --api-key another-secret https://example.com", kind: "bash" });
+  expect(summary).not.toContain("deep-secret");
+  expect(summary).not.toContain("another-secret");
+  expect(summary).toContain("[REDACTED]");
+});
