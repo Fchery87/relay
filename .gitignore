@@ -1,7 +1,13 @@
 node_modules/
 dist/
+coverage/
+.vite/
+
 .env
-.env.local
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+
 .convex/
-convex/*.js
-convex/*.js.map
