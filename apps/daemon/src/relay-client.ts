@@ -1,7 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 
-import { approvalResolutionSchema, queuedCommandSchema, queuedMessageSchema, type MachineRegistration } from "@relay/shared";
+import { approvalResolutionSchema, queuedCommandSchema, queuedMessageSchema, type MachineRegistration, type TokenUsage } from "@relay/shared";
 
 const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: string }>(
   "machines:heartbeat",
@@ -24,6 +24,7 @@ const completeGitActionMutation = makeFunctionReference<"mutation", { actionId: 
 const createApprovalMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task"; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("approvals:create");
 const getApprovalQuery = makeFunctionReference<"query", { approvalId: string }, unknown>("approvals:get");
 const recordAuditMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task"; decision: "allow" | "deny" | "ask"; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("audit_log:record");
+const recordUsageMutation = makeFunctionReference<"mutation", { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }, string>("usage:record");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -66,6 +67,7 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     completeAssistantMessage: ({ messageId, resolvedCommentIds, threadId }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, resolvedCommentIds, status: "done", threadId }),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),
+    recordUsage: (input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }) => client.mutation(recordUsageMutation, input),
     snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
   };
 }

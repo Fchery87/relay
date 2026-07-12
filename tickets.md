@@ -100,8 +100,8 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Model catalog and routing.
 
-- [ ] Usage recorded per turn, aggregated per thread (and later per subagent)
-- [ ] Thread UI surfaces cost/tokens live as turns complete
+- [x] Usage recorded per turn, aggregated per thread (and later per subagent)
+- [x] Thread UI surfaces cost/tokens live as turns complete
 
 ## Steering and message queue
 

@@ -25,7 +25,11 @@ test("resolves only the review comments included in a successful turn", async ()
   const prompts: string[] = [];
   const resolved: string[][] = [];
   const provider: ModelProvider = {
-    async *streamReply({ prompt }) { prompts.push(prompt); yield "Done"; },
+    async *streamReply({ prompt }) {
+      prompts.push(prompt);
+      yield { kind: "text", text: "Done" } as const;
+      yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } } as const;
+    },
   };
 
   await runQueuedTurn({
@@ -41,6 +45,7 @@ test("resolves only the review comments included in a successful turn", async ()
         threadId: "thread",
       }),
       completeAssistantMessage: async ({ resolvedCommentIds = [] }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => { resolved.push(resolvedCommentIds); },
+      recordUsage: async () => undefined,
     },
     provider,
     policy,

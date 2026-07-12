@@ -27,6 +27,7 @@ test("coalesces rapid scripted chunks into a final persisted response", async ()
       beginAssistantMessage: async () => "assistant-message",
       claimQueuedMessage: async () => ({ content: "hello", projectPath: "/tmp", threadId: "thread" }),
       completeAssistantMessage: async () => undefined,
+      recordUsage: async () => undefined,
     },
     provider: new ScriptedModelProvider({ chunks: ["Hello", " world"] }),
     policy,
@@ -50,6 +51,7 @@ test("an agent edit produces a diff document and commits in the fixture repo", a
       beginAssistantMessage: async () => "assistant-message",
       claimQueuedMessage: async () => ({ content: "create result", projectPath: root, threadId: "thread" }),
       completeAssistantMessage: async () => undefined,
+      recordUsage: async () => undefined,
       recordToolCompleted: async ({ summary }) => { events.push(summary); },
       snapshotDiff: async ({ content }) => { diffs.push(content); },
     },
@@ -72,7 +74,11 @@ test("a denied tool call returns a structured refusal to the agent", async () =>
   const prompts: string[] = [];
   const decisions: string[] = [];
   const provider: ModelProvider = {
-    async *streamReply({ prompt }) { prompts.push(prompt); yield "Denied"; },
+    async *streamReply({ prompt }) {
+      prompts.push(prompt);
+      yield { kind: "text", text: "Denied" } as const;
+      yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } } as const;
+    },
     async *toolCalls() { yield { command: "sudo touch blocked.txt", kind: "bash" }; },
   };
   await runQueuedTurn({
@@ -82,6 +88,7 @@ test("a denied tool call returns a structured refusal to the agent", async () =>
       beginAssistantMessage: async () => "assistant-message",
       claimQueuedMessage: async () => ({ content: "run it", projectPath: root, threadId: "thread" }),
       completeAssistantMessage: async () => undefined,
+      recordUsage: async () => undefined,
     },
     governance: { recordDecision: async ({ decision }) => { decisions.push(decision); }, requestApproval: async () => "deny" },
     policy: { rules: [{ capability: "exec", decision: "deny", risk: "critical" }] },
@@ -102,6 +109,7 @@ test("resolves the model provider from the claimed thread selection", async () =
       beginAssistantMessage: async () => "assistant-message",
       claimQueuedMessage: async () => ({ content: "hello", modelId: "openai/gpt-5-mini", projectPath: "/tmp", thinkingLevel: "high", threadId: "thread" }),
       completeAssistantMessage: async () => undefined,
+      recordUsage: async () => undefined,
     },
     governance,
     policy,
@@ -114,4 +122,52 @@ test("resolves the model provider from the claimed thread selection", async () =
     },
   });
   expect(selections).toEqual([{ modelId: "openai/gpt-5-mini", thinkingLevel: "high" }]);
+});
+
+test("submits normalized usage once when a scripted turn completes", async () => {
+  const recorded: unknown[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "hello", modelId: "deepseek/deepseek-chat", projectPath: "/tmp", threadId: "thread" }),
+      completeAssistantMessage: async () => undefined,
+      recordUsage: async (input: unknown) => { recorded.push(input); },
+    },
+    governance,
+    policy,
+    provider: new ScriptedModelProvider({
+      chunks: ["done"],
+      usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 1_000_000, outputTokens: 500_000, thinkingTokens: 0 },
+    }),
+  });
+
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0]).toMatchObject({
+    messageId: "assistant-message",
+    modelId: "deepseek/deepseek-chat",
+    role: "primary",
+    threadId: "thread",
+  });
+});
+
+test("does not complete a turn when the provider omits usage", async () => {
+  let completed = false;
+  let recorded = false;
+  await expect(runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "hello", projectPath: "/tmp", threadId: "thread" }),
+      completeAssistantMessage: async () => { completed = true; },
+      recordUsage: async () => { recorded = true; },
+    },
+    governance,
+    policy,
+    provider: { async *streamReply() { yield { kind: "text", text: "partial" } as const; } },
+  })).rejects.toThrow("did not report usage");
+  expect(recorded).toBe(false);
+  expect(completed).toBe(false);
 });

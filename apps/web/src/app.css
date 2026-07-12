@@ -38,6 +38,21 @@ h1 { font-size: 20px; font-weight: 650; margin: 0; }
 .workspace-state { color: #b7b7af; font-size: 14px; margin: 20px 0; }
 .thread-view { display: grid; gap: 16px; padding-top: 20px; }
 .thread-toolbar { display: flex; gap: 8px; justify-content: flex-end; }
+.usage-panel { position: relative; }
+.usage-panel summary { align-items: center; background: #20211f; border: 1px solid #454640; cursor: pointer; display: flex; font-size: 12px; gap: 8px; min-height: 36px; padding: 0 9px; }
+.usage-panel summary strong { color: #f3d785; font-weight: 650; }
+.usage-panel summary span { color: #b7b7af; white-space: nowrap; }
+.usage-panel summary .usage-warning { color: #e0a28b; }
+.usage-breakdown { background: #20211f; border: 1px solid #454640; max-width: min(760px, calc(100vw - 56px)); overflow: auto; padding: 8px; position: absolute; right: 0; top: calc(100% + 5px); z-index: 4; }
+.usage-breakdown p { color: #b7b7af; font-size: 12px; margin: 4px; }
+.usage-breakdown table { border-collapse: collapse; font-size: 11px; min-width: 680px; text-align: left; }
+.usage-breakdown th { color: #a9aaa4; font-weight: 600; padding: 5px 8px; }
+.usage-breakdown td { border-top: 1px solid #353632; padding: 7px 8px; white-space: nowrap; }
+.usage-breakdown code { color: #d7d5cc; }
+.budget-form { display: grid; gap: 6px; grid-template-columns: minmax(110px, 1fr) auto auto; margin-bottom: 8px; }
+.budget-form input { background: #252622; border: 1px solid #454640; color: inherit; min-width: 0; padding: 6px 8px; }
+.budget-form button { font-size: 11px; padding: 6px 8px; }
+.usage-truncated { border-bottom: 1px solid #353632; padding-bottom: 7px; }
 .model-controls { display: flex; gap: 6px; }
 .model-controls select { background: #252622; border: 1px solid #454640; color: inherit; font: inherit; min-width: 132px; padding: 8px; }
 .governance-panel { display: grid; gap: 12px; }
@@ -95,6 +110,8 @@ button { cursor: pointer; }
   .machine { border: 1px solid #353632; }
   .activity-layout { grid-template-columns: 1fr; }
   .thread-toolbar { align-items: stretch; flex-direction: column; }
+  .usage-panel summary { justify-content: space-between; overflow-x: auto; }
+  .usage-breakdown { left: 0; max-width: 100%; right: auto; }
   .model-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, auto); }
   .approval-card { grid-template-columns: 1fr; }
   .approval-actions { justify-content: flex-end; }

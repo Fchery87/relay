@@ -1,5 +1,5 @@
 import type { ModelProvider, ModelProviderRouter } from "./model-provider";
-import { DEFAULT_MODEL_ID, type MachinePlatform } from "@relay/shared";
+import { DEFAULT_MODEL_ID, type MachinePlatform, type TokenUsage } from "@relay/shared";
 import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
 import type { Policy } from "./policy";
@@ -9,6 +9,7 @@ export interface ConversationGateway {
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
   claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; threadId: string }): Promise<unknown>;
+  recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
   recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
 }
@@ -73,16 +74,24 @@ export async function runQueuedTurn({
     if (mutated) await gateway.snapshotDiff?.({ content: await computeDiff({ root, startCommit: "HEAD" }), threadId: queued.threadId });
   }
   let content = "";
+  let usage: TokenUsage | null = null;
   let lastFlushAt = Date.now();
   const responsePrompt = toolResults.length === 0 ? prompt : `${prompt}\n\n<tool_results>\n${toolResults.map(escapeXml).join("\n")}\n</tool_results>`;
-  for await (const chunk of turnProvider.streamReply({ prompt: responsePrompt })) {
-    content += chunk;
+  for await (const event of turnProvider.streamReply({ prompt: responsePrompt })) {
+    if (event.kind === "usage") {
+      usage = event.usage;
+      continue;
+    }
+    content += event.text;
     if (Date.now() - lastFlushAt >= 200) {
       await gateway.appendAssistantText({ content, messageId });
       lastFlushAt = Date.now();
     }
   }
   await gateway.appendAssistantText({ content, messageId });
+  if (!usage) throw new Error("Model provider did not report usage");
+  const modelId = turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID;
+  await gateway.recordUsage({ callId: crypto.randomUUID(), messageId, modelId, role: "primary", threadId: queued.threadId, usage });
   await gateway.completeAssistantMessage({ messageId, resolvedCommentIds: reviewComments.map((comment) => comment.commentId), threadId: queued.threadId });
   return true;
 }

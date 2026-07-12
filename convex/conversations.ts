@@ -1,12 +1,19 @@
-import { mutationGeneric, queryGeneric } from "convex/server";
+import { makeFunctionReference, mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
 import { DEFAULT_MODEL_ID, MODEL_CATALOG, listThinkingLevels } from "@relay/shared";
 
 const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("done"), v.literal("failed"));
+const removeUsageForThread = makeFunctionReference<"mutation", { threadId: string }, null>("usage:removeForThreadBatch");
 
 export const createThread = mutationGeneric({
   args: { projectId: v.id("projects"), title: v.string() },
-  handler: (ctx, args) => ctx.db.insert("threads", { ...args, modelId: DEFAULT_MODEL_ID, status: "idle", thinkingLevel: "none" }),
+  handler: (ctx, args) => ctx.db.insert("threads", {
+    ...args,
+    modelId: DEFAULT_MODEL_ID,
+    status: "idle",
+    thinkingLevel: "none",
+    usageTotals: { cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, thinkingTokensUnavailableCalls: 0 },
+  }),
 });
 
 export const updateModelSelection = mutationGeneric({
@@ -50,6 +57,7 @@ export const removeThread = mutationGeneric({
     for await (const comment of ctx.db.query("diffComments").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comment._id);
     for await (const approval of ctx.db.query("approvals").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(approval._id);
     for await (const audit of ctx.db.query("auditLog").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(audit._id);
+    await ctx.scheduler.runAfter(0, removeUsageForThread, { threadId: args.threadId });
     await ctx.db.delete(args.threadId);
   },
 });

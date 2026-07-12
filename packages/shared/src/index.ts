@@ -38,3 +38,4 @@ export {
   type ModelCatalog,
   type ThinkingLevel,
 } from "./model-catalog";
+export { computeUsageCost, tokenUsageSchema, type TokenUsage } from "./usage";
