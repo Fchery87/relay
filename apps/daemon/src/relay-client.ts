@@ -1,7 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 
-import { approvalResolutionSchema, queuedCommandSchema, queuedMessageSchema, type MachineRegistration, type TokenUsage } from "@relay/shared";
+import { approvalResolutionSchema, queuedCommandSchema, queuedMessageSchema, steeringMessagesSchema, stopStateSchema, type MachineRegistration, type TokenUsage } from "@relay/shared";
 
 const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: string }>(
   "machines:heartbeat",
@@ -25,6 +25,9 @@ const createApprovalMutation = makeFunctionReference<"mutation", { capability: "
 const getApprovalQuery = makeFunctionReference<"query", { approvalId: string }, unknown>("approvals:get");
 const recordAuditMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task"; decision: "allow" | "deny" | "ask"; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("audit_log:record");
 const recordUsageMutation = makeFunctionReference<"mutation", { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }, string>("usage:record");
+const claimSteeringMessagesMutation = makeFunctionReference<"mutation", { deviceToken: string; threadId: string }, unknown>("conversations:claimSteeringMessages");
+const getStopStateQuery = makeFunctionReference<"query", { deviceToken: string; threadId: string }, unknown>("conversations:getStopState");
+const acknowledgeStopMutation = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; threadId: string }, null>("conversations:acknowledgeStop");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -61,12 +64,15 @@ export function createConvexMachineGateway({ deploymentUrl }: { deploymentUrl: s
 export function createConvexConversationGateway({ deploymentUrl }: { deploymentUrl: string }) {
   const client = new ConvexHttpClient(deploymentUrl);
   return {
+    acknowledgeStop: (input: { deviceToken: string; messageId: string; threadId: string }) => client.mutation(acknowledgeStopMutation, input),
     appendAssistantText: ({ content, messageId }: { content: string; messageId: string }) => client.mutation(appendAssistantTextMutation, { content, messageId }),
     beginAssistantMessage: ({ threadId }: { threadId: string }) => client.mutation(beginAssistantMessageMutation, { threadId }),
     claimQueuedMessage: async ({ deviceToken }: { deviceToken: string }) => queuedMessageSchema.nullable().parse(await client.mutation(claimQueuedMessageMutation, { deviceToken })),
+    claimSteeringMessages: async (input: { deviceToken: string; threadId: string }) => steeringMessagesSchema.parse(await client.mutation(claimSteeringMessagesMutation, input)),
     completeAssistantMessage: ({ messageId, resolvedCommentIds, threadId }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, resolvedCommentIds, status: "done", threadId }),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),
+    isStopRequested: async (input: { deviceToken: string; threadId: string }) => stopStateSchema.parse(await client.query(getStopStateQuery, input)).requested,
     recordUsage: (input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }) => client.mutation(recordUsageMutation, input),
     snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
   };

@@ -109,9 +109,9 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** First conversation streams end-to-end.
 
-- [ ] User messages sent mid-run are queued and visible as pending
-- [ ] Steering per the resolved map decision (interrupt vs inject-next-turn)
-- [ ] End-to-end test: message sent during a scripted long run is handled per the chosen semantics
+- [x] User messages sent mid-run are queued and visible as pending
+- [x] Steering per the resolved map decision (interrupt vs inject-next-turn)
+- [x] End-to-end test: message sent during a scripted long run is handled per the chosen semantics
 
 ## Per-turn checkpoints and revert
 

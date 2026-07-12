@@ -7,9 +7,10 @@ import { GovernancePanel, type Approval, type AuditEntry } from "./governance-pa
 import { DEFAULT_MODEL_ID, type ThinkingLevel } from "@relay/shared";
 import { ModelControls } from "./model-controls";
 import { EMPTY_USAGE_SUMMARY, UsagePanel, type UsageSummary } from "./usage-panel";
+import { ThreadMessages, ThreadRunControls, type ThreadMessage, type ThreadStatus } from "./thread-messages";
 
-const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; modelId?: string; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
-const listMessages = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; content: string; role: "assistant" | "user"; status: string }>>("conversations:listThreadMessages");
+const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; modelId?: string; status: ThreadStatus; stopRequested?: boolean; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
+const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
 const createThread = makeFunctionReference<"mutation", { projectId: string; title: string }, string>("conversations:createThread");
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
 const listEvents = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; kind: string; output?: string; summary?: string; tool?: string }>>("events:list");
@@ -25,6 +26,7 @@ const listAudit = makeFunctionReference<"query", { threadId: string }, AuditEntr
 const updateModelSelection = makeFunctionReference<"mutation", { modelId: string; thinkingLevel: ThinkingLevel; threadId: string }, null>("conversations:updateModelSelection");
 const getThreadUsage = makeFunctionReference<"query", { threadId: string }, UsageSummary | null>("usage:forThread");
 const setThreadBudget = makeFunctionReference<"mutation", { budgetUsd: number | null; threadId: string }, null>("usage:setBudget");
+const requestThreadStop = makeFunctionReference<"mutation", { threadId: string }, null>("conversations:requestStop");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
@@ -36,6 +38,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const resolve = useMutation(resolveApproval);
   const updateSelection = useMutation(updateModelSelection);
   const setBudget = useMutation(setThreadBudget);
+  const stop = useMutation(requestThreadStop);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
@@ -68,10 +71,10 @@ export function ThreadView({ projectId }: { projectId: string }) {
   }
 
   return <section className="thread-view">
-    <div className="thread-toolbar">{activeThreadId ? <><UsagePanel key={`${activeThreadId}:${usage?.budgetUsd ?? "none"}`} onBudgetChange={(budgetUsd) => setBudget({ budgetUsd, threadId: activeThreadId })} value={usage ?? EMPTY_USAGE_SUMMARY} /><ModelControls modelId={activeThread?.modelId ?? DEFAULT_MODEL_ID} onChange={(selection) => updateSelection({ ...selection, threadId: activeThreadId })} thinkingLevel={activeThread?.thinkingLevel ?? "none"} /></> : null}<button onClick={() => void startThread()} type="button">New thread</button></div>
+    <div className="thread-toolbar">{activeThreadId && activeThread ? <><ThreadRunControls onStop={() => stop({ threadId: activeThreadId })} status={activeThread.status} stopRequested={activeThread.stopRequested ?? false} /><UsagePanel key={`${activeThreadId}:${usage?.budgetUsd ?? "none"}`} onBudgetChange={(budgetUsd) => setBudget({ budgetUsd, threadId: activeThreadId })} value={usage ?? EMPTY_USAGE_SUMMARY} /><ModelControls modelId={activeThread.modelId ?? DEFAULT_MODEL_ID} onChange={(selection) => updateSelection({ ...selection, threadId: activeThreadId })} thinkingLevel={activeThread.thinkingLevel ?? "none"} /></> : null}<button onClick={() => void startThread()} type="button">New thread</button></div>
     {activeThreadId ? <>
       <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
-      <div className="messages">{messages?.map((message) => <p className={`message message-${message.role}`} key={message._id}>{message.content || "..."}</p>)}</div>
+      <ThreadMessages messages={messages ?? []} />
       <div className="activity-layout">
         <section><h2>Activity</h2>{events?.filter((event) => event.kind === "tool.completed").map((event) => <p className="activity-line" key={event._id}>{event.tool}: {event.summary}</p>)}</section>
         <section className="terminal"><h2>Terminal</h2><pre>{events?.filter((event) => event.kind === "command.output").map((event) => event.output).join("") || "No command output."}</pre>

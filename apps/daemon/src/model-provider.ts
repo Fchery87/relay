@@ -5,7 +5,7 @@ import { buildProviderRequest } from "./model-router";
 
 export interface ModelProvider {
   readonly modelId?: string;
-  streamReply(input: { prompt: string }): AsyncIterable<ModelStreamEvent>;
+  streamReply(input: { prompt: string; signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
   toolCalls?(input: { prompt: string }): AsyncIterable<import("./tool-executor").ToolCall>;
 }
 
@@ -38,9 +38,9 @@ export class CatalogModelProvider implements ModelProvider {
     this.#thinkingValue = thinkingValue;
   }
 
-  async *streamReply({ prompt }: { prompt: string }): AsyncIterable<ModelStreamEvent> {
+  async *streamReply({ prompt, signal }: { prompt: string; signal: AbortSignal }): AsyncIterable<ModelStreamEvent> {
     const request = buildProviderRequest({ apiKey: this.#apiKey, model: this.#model, prompt, thinkingValue: this.#thinkingValue });
-    const response = await this.#fetcher(request.url, { body: JSON.stringify(request.body), headers: request.headers, method: "POST" });
+    const response = await this.#fetcher(request.url, { body: JSON.stringify(request.body), headers: request.headers, method: "POST", signal });
     if (!response.ok) throw new Error(`${this.#model.provider} response failed: ${response.status}`);
     if (!response.body) throw new Error(`${this.#model.provider} response did not stream a body`);
     const decoder = new TextDecoder();
@@ -90,8 +90,12 @@ export class ScriptedModelProvider implements ModelProvider {
     this.#usage = tokenUsageSchema.parse(usage);
   }
 
-  async *streamReply(): AsyncIterable<ModelStreamEvent> {
-    for (const text of this.#chunks) yield { kind: "text", text };
+  async *streamReply({ signal }: { prompt: string; signal: AbortSignal }): AsyncIterable<ModelStreamEvent> {
+    for (const text of this.#chunks) {
+      if (signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
+      yield { kind: "text", text };
+    }
+    if (signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
     yield { kind: "usage", usage: this.#usage };
   }
 

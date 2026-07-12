@@ -6,7 +6,7 @@ import { CatalogModelProvider } from "./model-provider";
 async function collect(provider: CatalogModelProvider): Promise<{ text: string; usages: unknown[] }> {
   let text = "";
   const usages: unknown[] = [];
-  for await (const chunk of provider.streamReply({ prompt: "hello" })) {
+  for await (const chunk of provider.streamReply({ prompt: "hello", signal: new AbortController().signal })) {
     const event: unknown = chunk;
     if (typeof event === "string") text += event;
     else if (typeof event === "object" && event !== null && "kind" in event && event.kind === "text" && "text" in event && typeof event.text === "string") text += event.text;
@@ -55,4 +55,24 @@ test("streams OpenAI-compatible completion deltas", async () => {
     text: "Hello",
     usages: [{ cacheReadTokens: 300, cacheWriteTokens: 0, inputTokens: 1_200, outputTokens: 500, thinkingTokens: 200 }],
   });
+});
+
+test("passes the turn abort signal to the provider request", async () => {
+  const model = MODEL_CATALOG.models.find((entry) => entry.apiKind === "openai-responses")!;
+  const controller = new AbortController();
+  let receivedSignal: AbortSignal | null | undefined;
+  const provider = new CatalogModelProvider({
+    apiKey: "secret",
+    fetcher: async (_input, init) => {
+      receivedSignal = init.signal;
+      return new Response('data: {"type":"response.completed","response":{"usage":{"input_tokens":0,"output_tokens":0}}}\n\n');
+    },
+    model,
+    thinkingValue: null,
+  });
+
+  for await (const _event of provider.streamReply({ prompt: "hello", signal: controller.signal })) {
+    // Consume the stream so the request is issued.
+  }
+  expect(receivedSignal).toBe(controller.signal);
 });

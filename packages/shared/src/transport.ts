@@ -31,5 +31,10 @@ export const approvalResolutionSchema = z.object({
   decision: z.enum(["pending", "allow", "deny"]),
 });
 
+export const steeringMessagesSchema = z.array(z.object({ content: z.string().min(1).max(1_000_000) })).max(100);
+export const stopStateSchema = z.object({ requested: z.boolean() });
+
 export type QueuedCommand = z.infer<typeof queuedCommandSchema>;
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
+export type SteeringMessages = z.infer<typeof steeringMessagesSchema>;
+export type StopState = z.infer<typeof stopStateSchema>;

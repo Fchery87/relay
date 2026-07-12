@@ -21,8 +21,12 @@ export {
   queuedCommandSchema,
   queuedMessageSchema,
   reviewCommentTransportSchema,
+  steeringMessagesSchema,
+  stopStateSchema,
   type QueuedCommand,
   type QueuedMessage,
+  type SteeringMessages,
+  type StopState,
 } from "./transport";
 export {
   apiKindSchema,

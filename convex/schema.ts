@@ -15,10 +15,12 @@ export default defineSchema({
     path: v.string(),
   }).index("by_machine", ["machineId"]).index("by_machine_path", ["machineId", "path"]),
   threads: defineTable({
+    activeAssistantMessageId: v.optional(v.id("messages")),
     budgetUsd: v.optional(v.number()),
     modelId: v.optional(v.string()),
     projectId: v.id("projects"),
-    status: v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("done"), v.literal("failed")),
+    status: v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("stopped"), v.literal("done"), v.literal("failed")),
+    stopRequested: v.optional(v.boolean()),
     title: v.string(),
     thinkingLevel: v.optional(v.union(v.literal("none"), v.literal("low"), v.literal("medium"), v.literal("high"))),
     usageTotals: v.optional(v.object({
@@ -33,10 +35,11 @@ export default defineSchema({
   }).index("by_project", ["projectId"]),
   messages: defineTable({
     content: v.string(),
+    queuedThreadId: v.optional(v.id("threads")),
     role: v.union(v.literal("assistant"), v.literal("user")),
     status: v.union(v.literal("complete"), v.literal("queued"), v.literal("streaming")),
     threadId: v.id("threads"),
-  }).index("by_thread", ["threadId"]).index("by_status", ["status"]),
+  }).index("by_thread", ["threadId"]).index("by_status", ["status"]).index("by_queued_thread", ["queuedThreadId"]),
   events: defineTable({
     kind: v.union(v.literal("command.output"), v.literal("tool.completed")),
     output: v.optional(v.string()),
@@ -65,7 +68,7 @@ export default defineSchema({
     capability: v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task")),
     decision: v.union(v.literal("pending"), v.literal("allow"), v.literal("deny")),
     risk: v.union(v.literal("low"), v.literal("high"), v.literal("critical")),
-    resumeStatus: v.optional(v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("done"), v.literal("failed"))),
+    resumeStatus: v.optional(v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("stopped"), v.literal("done"), v.literal("failed"))),
     summary: v.string(),
     threadId: v.id("threads"),
   }).index("by_thread", ["threadId"]),

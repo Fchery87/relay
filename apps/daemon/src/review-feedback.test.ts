@@ -36,6 +36,7 @@ test("resolves only the review comments included in a successful turn", async ()
     deviceToken: "device",
     governance,
     gateway: {
+      acknowledgeStop: async () => undefined,
       appendAssistantText: async () => undefined,
       beginAssistantMessage: async () => "assistant-message",
       claimQueuedMessage: async () => ({
@@ -44,7 +45,9 @@ test("resolves only the review comments included in a successful turn", async ()
         reviewComments: [{ commentId: "comment-1", content: "Handle the empty case.", endLine: 14, filePath: "src/parser.ts", startLine: 12 }],
         threadId: "thread",
       }),
+      claimSteeringMessages: async () => [],
       completeAssistantMessage: async ({ resolvedCommentIds = [] }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => { resolved.push(resolvedCommentIds); },
+      isStopRequested: async () => false,
       recordUsage: async () => undefined,
     },
     provider,

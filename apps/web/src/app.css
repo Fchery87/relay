@@ -73,6 +73,11 @@ button { cursor: pointer; }
 .messages { display: grid; gap: 8px; min-height: 240px; }
 .message { margin: 0; max-width: 72ch; white-space: pre-wrap; }
 .message-user { color: #f3d785; }
+.message-pending { color: #b9aa72; opacity: 0.78; }
+.pending-label { color: #a9aaa4; font-size: 11px; margin-left: 8px; }
+.stop-turn { border-color: #815e59; color: #e1aaa0; }
+.stop-turn:disabled { color: #9e8d88; cursor: wait; }
+.thread-stopped { align-self: center; color: #a9aaa4; font-size: 12px; }
 .composer { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
 .composer textarea { min-height: 42px; resize: vertical; }
 .activity-layout { border-top: 1px solid #353632; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; padding-top: 16px; }
