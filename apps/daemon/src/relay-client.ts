@@ -1,7 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 
-import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, queuedMessageSchema, queuedRestoreSchema, steeringMessagesSchema, stopStateSchema, type MachineRegistration, type TokenUsage } from "@relay/shared";
+import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, queuedMessageSchema, queuedRestoreSchema, queuedSubagentSchema, steeringMessagesSchema, stopStateSchema, type Capability, type MachineRegistration, type SubagentResult, type TokenUsage } from "@relay/shared";
 
 const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: string }>(
   "machines:heartbeat",
@@ -16,7 +16,7 @@ const completeAssistantMessageMutation = makeFunctionReference<"mutation", { mes
 const claimCommandMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("commands:claim");
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; status: "complete" | "failed" }>("commands:complete");
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
-const appendToolCompletedMutation = makeFunctionReference<"mutation", { summary: string; threadId: string; tool: "bash" | "edit" | "read" }>("events:appendToolCompleted");
+const appendToolCompletedMutation = makeFunctionReference<"mutation", { summary: string; threadId: string; tool: "bash" | "edit" | "read" | "task" }>("events:appendToolCompleted");
 const listThreadIdsQuery = makeFunctionReference<"query", Record<string, never>, string[]>("conversations:listThreadIds");
 const snapshotDiffMutation = makeFunctionReference<"mutation", { content: string; threadId: string }>("diffs:snapshot");
 const claimGitActionMutation = makeFunctionReference<"mutation", { deviceToken: string }, { action: "stage" | "commit" | "push"; actionId: string; message?: string; projectPath: string; threadId: string } | null>("git_actions:claim");
@@ -33,6 +33,13 @@ const claimCheckpointRestoreMutation = makeFunctionReference<"mutation", { devic
 const completeCheckpointRestoreMutation = makeFunctionReference<"mutation", { actionId: string; claimToken: string; deviceToken: string; status: "complete" | "failed" }, null>("checkpoints:completeRestore");
 const claimCheckpointComparisonMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("checkpoints:claimComparison");
 const completeCheckpointComparisonMutation = makeFunctionReference<"mutation", { claimToken: string; comparisonId: string; content: string; deviceToken: string; status: "complete" | "failed" }, null>("checkpoints:completeComparison");
+const seedSubagentRolesMutation = makeFunctionReference<"mutation", Record<string, never>, null>("subagents:seedDefaults");
+const enqueueSubagentMutation = makeFunctionReference<"mutation", { capabilities: Capability[]; depth: number; deviceToken: string; parentRunId?: string; roleName: string; task: string; threadId: string }, string>("subagents:enqueueByName");
+const claimSubagentMutation = makeFunctionReference<"mutation", { depth?: number; deviceToken: string }, unknown>("subagents:claim");
+const completeSubagentMutation = makeFunctionReference<"mutation", { claimToken: string; deviceToken: string; result: SubagentResult; runId: string }, null>("subagents:complete");
+const renewSubagentLeaseMutation = makeFunctionReference<"mutation", { claimToken: string; deviceToken: string; runId: string }, null>("subagents:renewLease");
+const getSubagentResultQuery = makeFunctionReference<"query", { deviceToken: string; runId: string }, { result?: SubagentResult; status: "queued" | "running" | "complete" | "failed"; threadId: string }>("subagents:getResult");
+const setCapabilityCeilingMutation = makeFunctionReference<"mutation", { capabilities: Capability[]; deviceToken: string }, null>("machines:setCapabilityCeiling");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -75,12 +82,40 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     claimQueuedMessage: async ({ deviceToken }: { deviceToken: string }) => queuedMessageSchema.nullable().parse(await client.mutation(claimQueuedMessageMutation, { deviceToken })),
     claimSteeringMessages: async (input: { deviceToken: string; threadId: string }) => steeringMessagesSchema.parse(await client.mutation(claimSteeringMessagesMutation, input)),
     completeAssistantMessage: ({ messageId, resolvedCommentIds, threadId }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, resolvedCommentIds, status: "done", threadId }),
-    recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
+    enqueueSubagent: (input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }) => client.mutation(enqueueSubagentMutation, input),
+    recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" | "task" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),
     isStopRequested: async (input: { deviceToken: string; threadId: string }) => stopStateSchema.parse(await client.query(getStopStateQuery, input)).requested,
     recordCheckpoint: (input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }) => client.mutation(recordCheckpointMutation, input),
     recordUsage: (input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }) => client.mutation(recordUsageMutation, input),
     snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
+    waitForSubagent: async ({ deviceToken, runId, threadId }: { deviceToken: string; runId: string; threadId: string }) => {
+      for (;;) {
+        if (stopStateSchema.parse(await client.query(getStopStateQuery, { deviceToken, threadId })).requested) return { artifacts: [], findings: [], status: "failed" as const, summary: "Parent turn stopped while waiting for subagent." };
+        const state = await client.query(getSubagentResultQuery, { deviceToken, runId });
+        if ((state.status === "complete" || state.status === "failed") && state.result) return state.result;
+        await Bun.sleep(200);
+      }
+    },
+  };
+}
+
+export function createConvexSubagentGateway({ deploymentUrl, deviceToken, depth }: { deploymentUrl: string; deviceToken: string; depth?: number }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    claim: async () => queuedSubagentSchema.nullable().parse(await client.mutation(claimSubagentMutation, { depth, deviceToken })),
+    complete: (input: { claimToken: string; result: SubagentResult; runId: string }) => client.mutation(completeSubagentMutation, { ...input, deviceToken }),
+    enqueue: (input: { capabilities: Capability[]; depth: number; parentRunId: string; roleName: string; task: string; threadId: string }) => client.mutation(enqueueSubagentMutation, { ...input, deviceToken }),
+    renew: (input: { claimToken: string; runId: string }) => client.mutation(renewSubagentLeaseMutation, { ...input, deviceToken }),
+    seedDefaults: () => client.mutation(seedSubagentRolesMutation, {}),
+    setCapabilityCeiling: (capabilities: Capability[]) => client.mutation(setCapabilityCeilingMutation, { capabilities, deviceToken }),
+    wait: async ({ runId }: { runId: string }) => {
+      for (;;) {
+        const state = await client.query(getSubagentResultQuery, { deviceToken, runId });
+        if ((state.status === "complete" || state.status === "failed") && state.result) return state.result;
+        await Bun.sleep(200);
+      }
+    },
   };
 }
 

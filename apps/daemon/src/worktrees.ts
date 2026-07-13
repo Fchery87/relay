@@ -1,8 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCommand } from "./tools";
-import { deleteCheckpointNamespace } from "./checkpoints";
+import { createCheckpoint, deleteCheckpointNamespace } from "./checkpoints";
 
 export async function assertGitAvailable(): Promise<void> {
   const result = await runCommand({ command: "git --version", platform: process.platform === "win32" ? "win32" : "linux", root: process.cwd() });
@@ -17,6 +17,37 @@ export async function createThreadWorktree({ daemonHome, repoPath, threadId }: {
   const result = await runCommand({ command: `git worktree add --detach ${JSON.stringify(target)} HEAD`, platform: process.platform === "win32" ? "win32" : "linux", root: repoPath });
   if (result.exitCode !== 0) throw new Error(`Failed to create worktree: ${result.stderr}`);
   return target;
+}
+
+export async function createNestedSubagentWorktree({ daemonHome, parentRoot, runId, threadId }: { daemonHome: string; parentRoot: string; runId: string; threadId: string }): Promise<string> {
+  await assertGitAvailable();
+  const snapshot = await createCheckpoint({ root: parentRoot, threadId, turnId: `subagent-${runId}` });
+  const parent = join(daemonHome, "subagents", threadId);
+  const target = join(parent, runId);
+  await mkdir(parent, { recursive: true });
+  const result = await runCommand({ command: `git worktree add --detach ${JSON.stringify(target)} ${snapshot.commit}`, platform: process.platform === "win32" ? "win32" : "linux", root: parentRoot });
+  if (result.exitCode !== 0) throw new Error(`Failed to create subagent worktree: ${result.stderr}`);
+  return target;
+}
+
+export async function integrateNestedSubagentWorktree({ daemonHome, parentRoot, runId, threadId, writerRoot }: { daemonHome: string; parentRoot: string; runId: string; threadId: string; writerRoot: string }): Promise<string | null> {
+  const completed = await createCheckpoint({ root: writerRoot, threadId, turnId: `subagent-result-${runId}` });
+  const diff = await runCommand({ command: `git diff --binary HEAD ${completed.commit}`, platform: process.platform === "win32" ? "win32" : "linux", root: writerRoot });
+  if (diff.exitCode !== 0) throw new Error(`Failed to collect subagent changes: ${diff.stderr}`);
+  if (!diff.stdout.trim()) return null;
+  const directory = join(daemonHome, "artifacts");
+  const patchPath = join(directory, `${runId}.patch`);
+  await mkdir(directory, { recursive: true });
+  await writeFile(patchPath, diff.stdout, "utf8");
+  const applied = await runCommand({ command: `git apply --whitespace=nowarn ${JSON.stringify(patchPath)}`, platform: process.platform === "win32" ? "win32" : "linux", root: parentRoot });
+  if (applied.exitCode !== 0) throw new Error(`Failed to apply subagent changes: ${applied.stderr}`);
+  return `relay-artifacts/${runId}.patch`;
+}
+
+export async function resolveSubagentParentRoot({ daemonHome, fallbackRoot, parentRunId, threadId }: { daemonHome: string; fallbackRoot: string; parentRunId?: string; threadId: string }): Promise<string> {
+  if (!parentRunId) return fallbackRoot;
+  const candidate = join(daemonHome, "subagents", threadId, parentRunId);
+  try { await access(candidate); return candidate; } catch { return fallbackRoot; }
 }
 
 export async function removeThreadWorktree({ repoPath, worktreePath }: { repoPath: string; worktreePath: string }): Promise<void> {
@@ -45,6 +76,13 @@ export class ThreadWorktrees {
     await this.#load();
     for (const [threadId, entry] of this.#entries) {
       if (activeThreadIds.has(threadId)) continue;
+      const subagentRoot = join(this.#daemonHome, "subagents", threadId);
+      try {
+        for (const runId of await readdir(subagentRoot)) await removeThreadWorktree({ repoPath: entry.repoPath, worktreePath: join(subagentRoot, runId) });
+        await rm(subagentRoot, { force: true, recursive: true });
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+      }
       await deleteCheckpointNamespace({ root: entry.worktreePath, threadId });
       await removeThreadWorktree(entry);
       this.#entries.delete(threadId);

@@ -5,6 +5,13 @@ type ProviderSecrets = Readonly<Record<string, string>>;
 export type ProviderConfig = { apiKey: string; model: CatalogModel; thinkingValue: string | null };
 export type ProviderRequest = { body: Record<string, unknown>; headers: Record<string, string>; url: string };
 
+const TOOL_PARAMETERS = {
+  bash: { properties: { command: { type: "string" } }, required: ["command"], type: "object" },
+  edit: { properties: { content: { type: "string" }, path: { type: "string" } }, required: ["path", "content"], type: "object" },
+  read: { properties: { path: { type: "string" } }, required: ["path"], type: "object" },
+  task: { properties: { capabilities: { items: { enum: ["read", "edit", "exec", "task"], type: "string" }, type: "array" }, role: { type: "string" }, task: { type: "string" } }, required: ["role", "task", "capabilities"], type: "object" },
+} as const;
+
 export function readProviderSecrets(env: Readonly<Record<string, string | undefined>>): ProviderSecrets {
   const secrets: Record<string, string> = {};
   if (env.RELAY_ANTHROPIC_API_KEY) secrets.anthropic = env.RELAY_ANTHROPIC_API_KEY;
@@ -54,4 +61,12 @@ export function buildProviderRequest({ apiKey, model, prompt, thinkingValue }: {
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     url: model.provider === "deepseek" ? "https://api.deepseek.com/chat/completions" : "https://api.openai.com/v1/chat/completions",
   };
+}
+
+export function buildProviderToolRequest(input: { apiKey: string; model: CatalogModel; prompt: string; thinkingValue: string | null }): ProviderRequest {
+  const request = buildProviderRequest(input);
+  const definitions = Object.entries(TOOL_PARAMETERS).map(([name, parameters]) => ({ description: `Relay ${name} tool`, name, parameters }));
+  if (input.model.apiKind === "anthropic-messages") return { ...request, body: { ...request.body, stream: false, tools: definitions.map(({ description, name, parameters }) => ({ description, input_schema: parameters, name })) } };
+  if (input.model.apiKind === "openai-responses") return { ...request, body: { ...request.body, stream: false, tools: definitions.map(({ description, name, parameters }) => ({ description, name, parameters, strict: true, type: "function" })) } };
+  return { ...request, body: { ...request.body, stream: false, stream_options: undefined, tools: definitions.map(({ description, name, parameters }) => ({ function: { description, name, parameters }, type: "function" })) } };
 }

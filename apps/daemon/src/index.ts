@@ -9,8 +9,9 @@ import { runQueuedGitAction } from "./git-worker";
 import { runQueuedCheckpointRestore } from "./checkpoint-worker";
 import { runQueuedCheckpointComparison } from "./checkpoint-comparison-worker";
 import { ScriptedModelProvider } from "./model-provider";
-import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
-import { ThreadWorktrees } from "./worktrees";
+import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, createConvexSubagentGateway, MachineReporter } from "./relay-client";
+import { createNestedSubagentWorktree, integrateNestedSubagentWorktree, resolveSubagentParentRoot, ThreadWorktrees } from "./worktrees";
+import { runQueuedSubagent } from "./subagent-worker";
 import { loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
 
@@ -32,7 +33,8 @@ setInterval(() => {
 const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl });
 const governance = createConvexGovernanceGateway({ deploymentUrl: config.deploymentUrl });
 const policy = await loadPolicy({ path: Bun.env.RELAY_POLICY_PATH ?? join(import.meta.dir, "..", "policy.json") });
-const worktrees = new ThreadWorktrees({ daemonHome: Bun.env.RELAY_DAEMON_HOME ?? join(homedir(), ".relay") });
+const daemonHome = Bun.env.RELAY_DAEMON_HOME ?? join(homedir(), ".relay");
+const worktrees = new ThreadWorktrees({ daemonHome });
 async function collectOrphanedWorktrees() {
   const activeThreadIds = new Set(await conversationGateway.listThreadIds());
   await worktrees.gc({ activeThreadIds });
@@ -40,6 +42,26 @@ async function collectOrphanedWorktrees() {
 await collectOrphanedWorktrees();
 setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
 const provider = new LocalModelRouter({ env: Bun.env, fallbackProvider: new ScriptedModelProvider({ chunks: ["Relay received your message."] }) });
+const subagentGateway = createConvexSubagentGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken, depth: 1 });
+const nestedSubagentGateway = createConvexSubagentGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken, depth: 2 });
+await subagentGateway.seedDefaults();
+await subagentGateway.setCapabilityCeiling([...new Set(policy.rules.filter((rule) => rule.decision !== "deny").map((rule) => rule.capability))]);
+let subagentRunning = false;
+setInterval(() => {
+  if (subagentRunning) return;
+  subagentRunning = true;
+  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: subagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
+    .catch((error: unknown) => console.error("Relay subagent failed", error))
+    .finally(() => { subagentRunning = false; });
+}, 200);
+let nestedSubagentRunning = false;
+setInterval(() => {
+  if (nestedSubagentRunning) return;
+  nestedSubagentRunning = true;
+  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: nestedSubagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
+    .catch((error: unknown) => console.error("Relay nested subagent failed", error))
+    .finally(() => { nestedSubagentRunning = false; });
+}, 200);
 
 setInterval(() => {
   void runQueuedTurn({

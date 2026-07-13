@@ -76,3 +76,21 @@ test("passes the turn abort signal to the provider request", async () => {
   }
   expect(receivedSignal).toBe(controller.signal);
 });
+
+test("catalog providers expose task tool calls to the agent loop", async () => {
+  const model = MODEL_CATALOG.models.find((entry) => entry.apiKind === "openai-completions")!;
+  let body = "";
+  const provider = new CatalogModelProvider({
+    apiKey: "secret",
+    fetcher: async (_input, init) => {
+      body = String(init.body);
+      return Response.json({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify({ capabilities: ["read"], role: "explore", task: "Map the repo" }), name: "task" }, type: "function" }] } }] });
+    },
+    model,
+    thinkingValue: null,
+  });
+  const calls = [];
+  for await (const call of provider.toolCalls({ prompt: "delegate" })) calls.push(call);
+  expect(calls).toEqual([{ capabilities: ["read"], kind: "task", role: "explore", task: "Map the repo" }]);
+  expect(body).toContain('"name":"task"');
+});

@@ -1,7 +1,8 @@
 import { tokenUsageSchema, type CatalogModel, type ThinkingLevel, type TokenUsage } from "@relay/shared";
 import { z } from "zod";
 
-import { buildProviderRequest } from "./model-router";
+import { buildProviderRequest, buildProviderToolRequest } from "./model-router";
+import type { ToolCall } from "./tool-executor";
 
 export interface ModelProvider {
   readonly modelId?: string;
@@ -76,6 +77,14 @@ export class CatalogModelProvider implements ModelProvider {
         }
       }
     }
+  }
+
+  async *toolCalls({ prompt }: { prompt: string }): AsyncIterable<ToolCall> {
+    const request = buildProviderToolRequest({ apiKey: this.#apiKey, model: this.#model, prompt, thinkingValue: this.#thinkingValue });
+    const response = await this.#fetcher(request.url, { body: JSON.stringify(request.body), headers: request.headers, method: "POST" });
+    if (!response.ok) throw new Error(`${this.#model.provider} tool response failed: ${response.status}`);
+    const payload: unknown = await response.json();
+    for (const call of parseProviderToolCalls(payload, this.#model.apiKind)) yield call;
   }
 }
 
@@ -199,4 +208,37 @@ function isAnthropicTextDelta(value: unknown): value is { delta: { text: string;
   if (typeof value !== "object" || value === null || !("type" in value) || value.type !== "content_block_delta" || !("delta" in value)) return false;
   const delta = value.delta;
   return typeof delta === "object" && delta !== null && "type" in delta && delta.type === "text_delta" && "text" in delta && typeof delta.text === "string";
+}
+
+const toolCallSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("read"), path: z.string() }),
+  z.object({ content: z.string(), kind: z.literal("edit"), path: z.string() }),
+  z.object({ command: z.string(), kind: z.literal("bash") }),
+  z.object({ capabilities: z.array(z.enum(["read", "edit", "exec", "task"])), kind: z.literal("task"), role: z.string(), task: z.string() }),
+]);
+
+function parseProviderToolCalls(payload: unknown, apiKind: CatalogModel["apiKind"]): ToolCall[] {
+  const raw: Array<{ arguments: unknown; name: unknown }> = [];
+  if (typeof payload !== "object" || payload === null) return [];
+  if (apiKind === "anthropic-messages" && "content" in payload && Array.isArray(payload.content)) {
+    for (const item of payload.content) if (typeof item === "object" && item !== null && "type" in item && item.type === "tool_use" && "name" in item && "input" in item) raw.push({ arguments: item.input, name: item.name });
+  } else if (apiKind === "openai-responses" && "output" in payload && Array.isArray(payload.output)) {
+    for (const item of payload.output) if (typeof item === "object" && item !== null && "type" in item && item.type === "function_call" && "name" in item && "arguments" in item) raw.push({ arguments: item.arguments, name: item.name });
+  } else if ("choices" in payload && Array.isArray(payload.choices)) {
+    const first = payload.choices[0];
+    if (typeof first === "object" && first !== null && "message" in first && typeof first.message === "object" && first.message !== null && "tool_calls" in first.message && Array.isArray(first.message.tool_calls)) for (const item of first.message.tool_calls) {
+      if (typeof item === "object" && item !== null && "function" in item && typeof item.function === "object" && item.function !== null && "name" in item.function && "arguments" in item.function) raw.push({ arguments: item.function.arguments, name: item.function.name });
+    }
+  }
+  return raw.map(({ arguments: args, name }) => toolCallSchema.parse({ ...parseArguments(args), kind: name }));
+}
+
+function parseArguments(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("Tool arguments must be an object");
+    return parsed as Record<string, unknown>;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Tool arguments must be an object");
+  return value as Record<string, unknown>;
 }

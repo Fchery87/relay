@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { capabilitySchema, subagentResultSchema } from "./subagents";
 
 const id = z.string().min(1).max(256);
 const projectPath = z.string().min(1).max(4096);
@@ -49,6 +50,11 @@ export const queuedComparisonSchema = z.object({
   threadId: id,
   toCommit: z.string().regex(/^[0-9a-f]{4,64}$/i),
 });
+export const queuedSubagentSchema = z.object({
+  capabilities: z.array(capabilitySchema), claimToken: id, contextMode: z.enum(["fresh", "forked"]), depth: z.number().int().min(1).max(2),
+  maxTurns: z.number().int().positive().max(100), modelId: id, parentRunId: id.optional(), projectPath, prompt: z.string(), roleName: id,
+  runId: id, task: z.string().min(1).max(1_000_000), thinkingLevel: z.enum(["none", "low", "medium", "high"]), threadId: id, writer: z.boolean(),
+});
 
 export type QueuedCommand = z.infer<typeof queuedCommandSchema>;
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
@@ -56,3 +62,5 @@ export type SteeringMessages = z.infer<typeof steeringMessagesSchema>;
 export type StopState = z.infer<typeof stopStateSchema>;
 export type QueuedRestore = z.infer<typeof queuedRestoreSchema>;
 export type QueuedComparison = z.infer<typeof queuedComparisonSchema>;
+export type QueuedSubagent = z.infer<typeof queuedSubagentSchema>;
+export { subagentResultSchema };

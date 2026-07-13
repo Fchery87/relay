@@ -22,6 +22,7 @@ export {
   queuedComparisonSchema,
   queuedMessageSchema,
   queuedRestoreSchema,
+  queuedSubagentSchema,
   reviewCommentTransportSchema,
   steeringMessagesSchema,
   stopStateSchema,
@@ -29,6 +30,7 @@ export {
   type QueuedComparison,
   type QueuedMessage,
   type QueuedRestore,
+  type QueuedSubagent,
   type SteeringMessages,
   type StopState,
 } from "./transport";
@@ -47,3 +49,13 @@ export {
   type ThinkingLevel,
 } from "./model-catalog";
 export { computeUsageCost, tokenUsageSchema, type TokenUsage } from "./usage";
+export {
+  capabilitySchema,
+  DEFAULT_SUBAGENT_ROLES,
+  narrowCapabilities,
+  subagentResultSchema,
+  subagentRoleSchema,
+  type Capability,
+  type SubagentResult,
+  type SubagentRole,
+} from "./subagents";

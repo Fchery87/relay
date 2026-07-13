@@ -1,5 +1,5 @@
 import type { ModelProvider, ModelProviderRouter } from "./model-provider";
-import { DEFAULT_MODEL_ID, type MachinePlatform, type TokenUsage } from "@relay/shared";
+import { DEFAULT_MODEL_ID, narrowCapabilities, type Capability, type MachinePlatform, type SubagentResult, type TokenUsage } from "@relay/shared";
 import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
 import { createCheckpoint } from "./checkpoints";
@@ -14,8 +14,10 @@ export interface ConversationGateway {
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; threadId: string }): Promise<unknown>;
   isStopRequested(input: { deviceToken: string; threadId: string }): Promise<boolean>;
   recordCheckpoint?(input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }): Promise<unknown>;
+  enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
+  waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
-  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }): Promise<unknown>;
+  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" | "task" }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
 }
 
@@ -79,6 +81,13 @@ export async function runQueuedTurn({
       const toolResult = await executeGovernedToolCall({
         call,
         governance,
+        onTask: gateway.enqueueSubagent ? async (taskCall) => {
+          let capabilities: Capability[];
+          try { capabilities = narrowCapabilities({ child: taskCall.capabilities, depth: 1, parent: policyCapabilities(policy) }); }
+          catch { return JSON.stringify({ capability: "task", kind: "tool_refusal", reason: "capability_escalation", risk: "critical" }); }
+          const runId = await gateway.enqueueSubagent!({ capabilities, depth: 1, deviceToken, roleName: taskCall.role, task: taskCall.task, threadId: queued.threadId });
+          return JSON.stringify(gateway.waitForSubagent ? await gateway.waitForSubagent({ deviceToken, runId, threadId: queued.threadId }) : { kind: "subagent_queued", runId });
+        } : undefined,
         onCompleted: async (event) => { await gateway.recordToolCompleted?.({ ...event, threadId: queued.threadId }); },
         platform,
         policy,
@@ -181,4 +190,8 @@ function isAbortError(error: unknown): boolean {
 
 function isModelProviderRouter(provider: ModelProvider | ModelProviderRouter): provider is ModelProviderRouter {
   return "kind" in provider && provider.kind === "model-router";
+}
+
+function policyCapabilities(policy: Policy): Capability[] {
+  return [...new Set(policy.rules.filter((rule) => rule.decision !== "deny").map((rule) => rule.capability))];
 }

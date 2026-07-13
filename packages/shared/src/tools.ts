@@ -6,7 +6,7 @@ export const toolEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("tool.completed"),
     summary: z.string(),
     threadId: z.string().min(1),
-    tool: z.enum(["bash", "edit", "read"]),
+    tool: z.enum(["bash", "edit", "read", "task"]),
   }),
 ]);
 

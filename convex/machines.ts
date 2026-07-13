@@ -85,6 +85,15 @@ export const heartbeat = mutationGeneric({
   },
 });
 
+export const setCapabilityCeiling = mutationGeneric({
+  args: { capabilities: v.array(v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task"))), deviceToken: v.string() },
+  handler: async (ctx, args) => {
+    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
+    if (!machine) throw new Error("Unknown development device token");
+    await ctx.db.patch(machine._id, { capabilityCeiling: [...new Set(args.capabilities)] });
+  },
+});
+
 export const listMachinesAndProjects = queryGeneric({
   args: {},
   handler: async (ctx) => {

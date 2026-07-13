@@ -94,6 +94,17 @@ button { cursor: pointer; }
 .checkpoint-comparison select { background: #252622; border: 1px solid #454640; color: inherit; padding: 6px 8px; }
 .current-diff { font-size: 11px; margin-bottom: 8px; padding: 5px 8px; }
 .comparison-status { color: #a9aaa4; font-size: 11px; margin: 0 0 8px; min-height: 14px; }
+.subagent-panel { border-top: 1px solid #353632; padding-top: 12px; }
+.subagent-panel h2 { font-size: 14px; }
+.subagent-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.role-roster details, .subagent-tree details { border-bottom: 1px solid #353632; padding: 8px 0; }
+.role-roster summary, .subagent-tree summary { cursor: pointer; display: flex; justify-content: space-between; }
+.role-roster summary span, .subagent-tree summary span, .role-meta { color: #a9aaa4; font-size: 11px; }
+.role-roster label { display: grid; font-size: 12px; gap: 4px; margin-top: 7px; }
+.role-roster input, .role-roster select { background: #252622; border: 1px solid #454640; color: inherit; min-width: 0; padding: 6px; }
+.role-capabilities { display: flex; flex-wrap: wrap; gap: 10px; }
+.role-capabilities label { align-items: center; display: flex; flex-direction: row; }
+.subagent-tree code { color: #b7b7af; display: block; font-size: 11px; overflow-wrap: anywhere; }
 .diff-files { display: grid; gap: 12px; }
 .diff-file h3 { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; margin: 0 0 5px; }
 .diff-editor { border: 1px solid #353632; max-height: 360px; overflow: auto; }
@@ -120,6 +131,7 @@ button { cursor: pointer; }
   .machine-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .machine { border: 1px solid #353632; }
   .activity-layout { grid-template-columns: 1fr; }
+  .subagent-layout { grid-template-columns: 1fr; }
   .thread-toolbar { align-items: stretch; flex-direction: column; }
   .usage-panel summary { justify-content: space-between; overflow-x: auto; }
   .usage-breakdown { left: 0; max-width: 100%; right: auto; }

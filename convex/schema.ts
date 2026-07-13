@@ -3,6 +3,7 @@ import { v } from "convex/values";
 
 export default defineSchema({
   machines: defineTable({
+    capabilityCeiling: v.optional(v.array(v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task")))),
     deviceToken: v.string(),
     name: v.string(),
     platform: v.union(v.literal("darwin"), v.literal("linux"), v.literal("win32")),
@@ -46,7 +47,7 @@ export default defineSchema({
     output: v.optional(v.string()),
     summary: v.optional(v.string()),
     threadId: v.id("threads"),
-    tool: v.optional(v.union(v.literal("bash"), v.literal("edit"), v.literal("read"))),
+    tool: v.optional(v.union(v.literal("bash"), v.literal("edit"), v.literal("read"), v.literal("task"))),
   }).index("by_thread", ["threadId"]),
   commands: defineTable({
     command: v.string(),
@@ -122,4 +123,32 @@ export default defineSchema({
     thinkingTokens: v.union(v.number(), v.null()),
     threadId: v.id("threads"),
   }).index("by_call_id", ["callId"]).index("by_thread", ["threadId"]),
+  roles: defineTable({
+    capabilities: v.array(v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task"))),
+    contextMode: v.union(v.literal("fresh"), v.literal("forked")),
+    description: v.string(),
+    maxTurns: v.number(),
+    modelId: v.string(),
+    name: v.string(),
+    prompt: v.string(),
+    thinkingLevel: v.union(v.literal("none"), v.literal("low"), v.literal("medium"), v.literal("high")),
+    writer: v.boolean(),
+  }).index("by_name", ["name"]),
+  subagentRuns: defineTable({
+    capabilities: v.array(v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task"))),
+    claimToken: v.optional(v.string()),
+    depth: v.number(),
+    leaseExpiresAt: v.optional(v.number()),
+    parentRunId: v.optional(v.id("subagentRuns")),
+    result: v.optional(v.object({
+      artifacts: v.array(v.string()),
+      findings: v.array(v.string()),
+      status: v.union(v.literal("success"), v.literal("failed")),
+      summary: v.string(),
+    })),
+    roleId: v.id("roles"),
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("complete"), v.literal("failed")),
+    task: v.string(),
+    threadId: v.id("threads"),
+  }).index("by_status", ["status"]).index("by_thread", ["threadId"]).index("by_parent_run_id", ["parentRunId"]),
 });

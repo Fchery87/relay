@@ -40,6 +40,38 @@ test("coalesces rapid scripted chunks into a final persisted response", async ()
   expect(updates).toEqual(["Hello world"]);
 });
 
+test("a governed task call queues a narrowed subagent run", async () => {
+  const queued: unknown[] = [];
+  let waited = false;
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined, appendAssistantText: async () => undefined, beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "delegate", projectPath: "/tmp", threadId: "thread" }), claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined, enqueueSubagent: async (input) => { queued.push(input); return "run-1"; }, isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+      waitForSubagent: async () => { waited = true; return { artifacts: [], findings: ["README.md:1"], status: "success", summary: "Mapped." }; },
+    },
+    governance,
+    policy: { rules: [{ capability: "read", decision: "allow", risk: "low" }, { capability: "task", decision: "allow", risk: "low" }] },
+    provider: new ScriptedModelProvider({ chunks: ["Delegated"], toolCalls: [{ capabilities: ["read"], kind: "task", role: "explore", task: "Map the repo" }] }),
+  });
+  expect(queued).toMatchObject([{ capabilities: ["read"], depth: 1, deviceToken: "device", roleName: "explore", task: "Map the repo", threadId: "thread" }]);
+  expect(waited).toBe(true);
+});
+
+test("a top-level subagent cannot exceed the parent policy ceiling", async () => {
+  let queued = false;
+  const prompts: string[] = [];
+  const provider: ModelProvider = {
+    async *toolCalls() { yield { capabilities: ["exec"], kind: "task", role: "build", task: "Run commands" } as const; },
+    async *streamReply({ prompt }) { prompts.push(prompt); yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } } as const; },
+  };
+  await runQueuedTurn({ deviceToken: "device", gateway: { acknowledgeStop: async () => undefined, appendAssistantText: async () => undefined, beginAssistantMessage: async () => "assistant", claimQueuedMessage: async () => ({ content: "delegate", projectPath: "/tmp", threadId: "thread" }), claimSteeringMessages: async () => [], completeAssistantMessage: async () => undefined, enqueueSubagent: async () => { queued = true; return "run"; }, isStopRequested: async () => false, recordUsage: async () => undefined }, governance, policy: { rules: [{ capability: "task", decision: "allow", risk: "low" }] }, provider });
+  expect(queued).toBe(false);
+  expect(prompts[0]).toContain("capability_escalation");
+});
+
 test("an agent edit produces a diff document and commits in the fixture repo", async () => {
   const root = await mkdtemp(join(tmpdir(), "relay-agent-turn-"));
   const checkpoints: Array<{ commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }> = [];

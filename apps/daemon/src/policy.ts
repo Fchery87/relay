@@ -20,6 +20,7 @@ export function evaluatePolicy({ capability, policy, risk }: { capability: Capab
 }
 
 export function classifyToolCall(call: ToolCall): { capability: Capability; risk: RiskTier } {
+  if (call.kind === "task") return { capability: "task", risk: "low" };
   if (call.kind === "read") return { capability: "read", risk: isSensitivePath(call.path) ? "critical" : "low" };
   if (call.kind === "edit") return { capability: "edit", risk: isSensitivePath(call.path) ? "critical" : "low" };
   const normalized = call.command.toLowerCase().replaceAll(/\s+/g, " ").trim();

@@ -129,12 +129,12 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Threads run on disposable worktrees; Governance: chokepoint, approval cards, audit log; Model catalog and routing.
 
-- [ ] Role definitions (tools, model, thinking, maxTurns, context mode, read-only vs writer) seeded from the Thanos roster, editable in UI
-- [ ] Capability narrowing enforced per hop; depth cap 2
-- [ ] Writers isolated in nested worktrees; result contracts persisted; oversized output spills to artifacts
-- [ ] Per-role model routing with fallbacks
-- [ ] Subagent tree view with drill-in from the parent thread
-- [ ] Unit tests for narrowing; end-to-end test: parent spawns read-only explorer, contract lands
+- [x] Role definitions (tools, model, thinking, maxTurns, context mode, read-only vs writer) seeded from the Thanos roster, editable in UI
+- [x] Capability narrowing enforced per hop; depth cap 2
+- [x] Writers isolated in nested worktrees; result contracts persisted; oversized output spills to artifacts
+- [x] Per-role model routing with fallbacks
+- [x] Subagent tree view with drill-in from the parent thread
+- [x] Unit tests for narrowing; end-to-end test: parent spawns read-only explorer, contract lands
 
 ## Plan mode
 

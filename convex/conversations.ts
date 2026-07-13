@@ -109,6 +109,7 @@ export const listThreadIds = queryGeneric({
 export const removeThread = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    for await (const run of ctx.db.query("subagentRuns").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(run._id);
     for await (const event of ctx.db.query("events").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(event._id);
     for await (const comparison of ctx.db.query("checkpointComparisons").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comparison._id);
     for await (const action of ctx.db.query("checkpointActions").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(action._id);

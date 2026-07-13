@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-import { createThreadWorktree, ThreadWorktrees } from "./worktrees";
+import { createNestedSubagentWorktree, createThreadWorktree, integrateNestedSubagentWorktree, ThreadWorktrees } from "./worktrees";
 import { createCheckpoint } from "./checkpoints";
 import { editFile } from "./tools";
 import { runCommand } from "./tools";
@@ -54,4 +54,20 @@ test("garbage collection deletes an inactive thread checkpoint namespace", async
 
   expect((await runCommand({ command: "git show-ref --verify --quiet refs/relay/checkpoints/inactive/turn-1", platform: "linux", root: repo })).exitCode).not.toBe(0);
   expect((await runCommand({ command: "git show-ref --verify --quiet refs/relay/checkpoints/active/turn-1", platform: "linux", root: repo })).exitCode).toBe(0);
+}, 15_000);
+
+test("creates writer subagents in a nested detached worktree", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "relay-nested-repo-"));
+  await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test", platform: "linux", root: repo });
+  await writeFile(join(repo, "shared.txt"), "base");
+  await runCommand({ command: "git add . && git commit -m base", platform: "linux", root: repo });
+  const home = await mkdtemp(join(tmpdir(), "relay-nested-home-"));
+  const parent = await createThreadWorktree({ daemonHome: home, repoPath: repo, threadId: "parent" });
+  await writeFile(join(parent, "dirty.txt"), "parent dirty", "utf8");
+  const nested = await createNestedSubagentWorktree({ daemonHome: home, parentRoot: parent, runId: "child", threadId: "parent" });
+  await writeFile(join(nested, "nested.txt"), "child", "utf8");
+  expect(await integrateNestedSubagentWorktree({ daemonHome: home, parentRoot: parent, runId: "child", threadId: "parent", writerRoot: nested })).toBe("relay-artifacts/child.patch");
+  expect(await readFile(join(parent, "shared.txt"), "utf8")).toBe("base");
+  expect(await readFile(join(nested, "dirty.txt"), "utf8")).toBe("parent dirty");
+  expect(await readFile(join(parent, "nested.txt"), "utf8")).toBe("child");
 }, 15_000);

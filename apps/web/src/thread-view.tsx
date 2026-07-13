@@ -9,6 +9,7 @@ import { ModelControls } from "./model-controls";
 import { EMPTY_USAGE_SUMMARY, UsagePanel, type UsageSummary } from "./usage-panel";
 import { ThreadMessages, ThreadRunControls, type ThreadCheckpoint, type ThreadMessage, type ThreadStatus } from "./thread-messages";
 import { CheckpointComparison } from "./checkpoint-comparison";
+import { SubagentPanel, type RoleRecord, type SubagentRun } from "./subagent-panel";
 
 const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; modelId?: string; status: ThreadStatus; stopRequested?: boolean; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -32,6 +33,9 @@ const listCheckpoints = makeFunctionReference<"query", { threadId: string }, Thr
 const enqueueCheckpointRestore = makeFunctionReference<"mutation", { checkpointId: string; threadId: string }, string>("checkpoints:enqueueRestore");
 const enqueueCheckpointComparison = makeFunctionReference<"mutation", { fromCheckpointId: string; threadId: string; toCheckpointId: string }, string>("checkpoints:enqueueComparison");
 const latestCheckpointComparison = makeFunctionReference<"query", { threadId: string }, { _id: string; content?: string; status: "queued" | "running" | "complete" | "failed" } | null>("checkpoints:latestComparison");
+const listRoles = makeFunctionReference<"query", Record<string, never>, RoleRecord[]>("subagents:listRoles");
+const updateRole = makeFunctionReference<"mutation", { capabilities?: Array<"read" | "edit" | "exec" | "task">; contextMode?: "fresh" | "forked"; description?: string; maxTurns?: number; modelId?: string; prompt?: string; roleId: string; thinkingLevel?: ThinkingLevel; writer?: boolean }, null>("subagents:updateRole");
+const listSubagentTree = makeFunctionReference<"query", { threadId: string }, SubagentRun[]>("subagents:listTree");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
@@ -46,6 +50,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const stop = useMutation(requestThreadStop);
   const restoreCheckpoint = useMutation(enqueueCheckpointRestore);
   const compareCheckpoints = useMutation(enqueueCheckpointComparison);
+  const saveRole = useMutation(updateRole);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
@@ -65,6 +70,8 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const checkpoints = useQuery(listCheckpoints, activeThreadId ? { threadId: activeThreadId } : "skip");
   const comparison = useQuery(latestCheckpointComparison, activeThreadId ? { threadId: activeThreadId } : "skip");
   const activeComparison = comparison?._id === requestedComparisonId ? comparison : null;
+  const roles = useQuery(listRoles, {});
+  const subagentRuns = useQuery(listSubagentTree, activeThreadId ? { threadId: activeThreadId } : "skip");
   useEffect(() => {
     setShowComparison(false);
     setRequestedComparisonId(undefined);
@@ -90,6 +97,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
     <div className="thread-toolbar">{activeThreadId && activeThread ? <><ThreadRunControls onStop={() => stop({ threadId: activeThreadId })} status={activeThread.status} stopRequested={activeThread.stopRequested ?? false} /><UsagePanel key={`${activeThreadId}:${usage?.budgetUsd ?? "none"}`} onBudgetChange={(budgetUsd) => setBudget({ budgetUsd, threadId: activeThreadId })} value={usage ?? EMPTY_USAGE_SUMMARY} /><ModelControls modelId={activeThread.modelId ?? DEFAULT_MODEL_ID} onChange={(selection) => updateSelection({ ...selection, threadId: activeThreadId })} thinkingLevel={activeThread.thinkingLevel ?? "none"} /></> : null}<button onClick={() => void startThread()} type="button">New thread</button></div>
     {activeThreadId ? <>
       <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
+      <SubagentPanel onUpdateRole={(input) => saveRole(input)} roles={roles ?? []} runs={subagentRuns ?? []} />
       <ThreadMessages checkpoints={checkpoints ?? []} messages={messages ?? []} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
       <div className="activity-layout">
         <section><h2>Activity</h2>{events?.filter((event) => event.kind === "tool.completed" || event.kind === "checkpoint.reverted").map((event) => <p className="activity-line" key={event._id}>{event.kind === "checkpoint.reverted" ? "Checkpoint restored" : `${event.tool}: ${event.summary}`}</p>)}</section>

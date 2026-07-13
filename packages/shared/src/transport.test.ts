@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, queuedMessageSchema, queuedRestoreSchema, steeringMessagesSchema, stopStateSchema } from "./transport";
+import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, queuedMessageSchema, queuedRestoreSchema, queuedSubagentSchema, steeringMessagesSchema, stopStateSchema } from "./transport";
 
 test("validates untrusted Convex work queue documents", () => {
   expect(queuedCommandSchema.parse({ command: "pwd", commandId: "command", projectPath: "/repo", threadId: "thread" })).toMatchObject({ command: "pwd" });
@@ -31,4 +31,8 @@ test("validates queued checkpoint restores", () => {
 
 test("validates queued checkpoint comparisons", () => {
   expect(queuedComparisonSchema.parse({ claimToken: "claim-1", comparisonId: "comparison", fromCommit: "abc123", projectPath: "/repo", threadId: "thread", toCommit: "def456" })).toMatchObject({ comparisonId: "comparison" });
+});
+
+test("validates queued subagent runs", () => {
+  expect(queuedSubagentSchema.parse({ capabilities: ["read"], claimToken: "lease", contextMode: "fresh", depth: 1, maxTurns: 20, modelId: "deepseek/deepseek-chat", projectPath: "/repo", prompt: "Explore", roleName: "explore", runId: "run", task: "Map", thinkingLevel: "high", threadId: "thread", writer: false })).toMatchObject({ capabilities: ["read"], roleName: "explore" });
 });
