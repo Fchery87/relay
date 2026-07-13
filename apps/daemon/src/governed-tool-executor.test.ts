@@ -58,3 +58,35 @@ test("redacts credentials from approval and audit summaries", () => {
   expect(summary).not.toContain("another-secret");
   expect(summary).toContain("[REDACTED]");
 });
+
+test("routes MCP execution through approval before invoking the server", async () => {
+  let invoked = false;
+  const result = await executeGovernedToolCall({
+    call: { arguments: { title: "Release" }, kind: "mcp", name: "publish", risk: "high", serverId: "cms" },
+    governance: { recordDecision: async () => undefined, requestApproval: async () => "allow" },
+    onCompleted: async () => undefined,
+    onMcp: async () => { invoked = true; return { published: true }; },
+    platform: "linux",
+    policy,
+    root: ".",
+    threadId: "thread",
+  });
+  expect(invoked).toBe(true);
+  expect(result).toEqual({ kind: "executed", output: '{"published":true}', succeeded: true });
+});
+
+test("does not invoke MCP when approval is denied", async () => {
+  let invoked = false;
+  const result = await executeGovernedToolCall({
+    call: { arguments: {}, kind: "mcp", name: "publish", serverId: "cms" },
+    governance: { recordDecision: async () => undefined, requestApproval: async () => "deny" },
+    onCompleted: async () => undefined,
+    onMcp: async () => { invoked = true; return {}; },
+    platform: "linux",
+    policy,
+    root: ".",
+    threadId: "thread",
+  });
+  expect(invoked).toBe(false);
+  expect(result.kind).toBe("refused");
+});

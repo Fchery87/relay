@@ -1,4 +1,5 @@
 import { resolveCatalogModel, resolveThinkingValue, type CatalogModel, type ModelCatalog, type ThinkingLevel } from "@relay/shared";
+import type { McpModelTool } from "./model-provider";
 
 type ProviderSecrets = Readonly<Record<string, string>>;
 
@@ -11,6 +12,10 @@ const TOOL_PARAMETERS = {
   read: { properties: { path: { type: "string" } }, required: ["path"], type: "object" },
   task: { properties: { capabilities: { items: { enum: ["read", "edit", "exec", "task"], type: "string" }, type: "array" }, role: { type: "string" }, task: { type: "string" } }, required: ["role", "task", "capabilities"], type: "object" },
 } as const;
+
+export function mcpModelName(_tool: Pick<McpModelTool, "name" | "serverId">, index = 0): string {
+  return `mcp_${index}`;
+}
 
 export function readProviderSecrets(env: Readonly<Record<string, string | undefined>>): ProviderSecrets {
   const secrets: Record<string, string> = {};
@@ -63,9 +68,12 @@ export function buildProviderRequest({ apiKey, model, prompt, thinkingValue }: {
   };
 }
 
-export function buildProviderToolRequest(input: { apiKey: string; model: CatalogModel; prompt: string; thinkingValue: string | null }): ProviderRequest {
+export function buildProviderToolRequest(input: { apiKey: string; mcpTools?: McpModelTool[]; model: CatalogModel; prompt: string; thinkingValue: string | null }): ProviderRequest {
   const request = buildProviderRequest(input);
-  const definitions = Object.entries(TOOL_PARAMETERS).map(([name, parameters]) => ({ description: `Relay ${name} tool`, name, parameters }));
+  const definitions = [
+    ...Object.entries(TOOL_PARAMETERS).map(([name, parameters]) => ({ description: `Relay ${name} tool`, name, parameters })),
+    ...(input.mcpTools ?? []).map((tool, index) => ({ description: tool.description ?? `MCP ${tool.serverId}/${tool.name}`, name: mcpModelName(tool, index), parameters: tool.inputSchema })),
+  ];
   if (input.model.apiKind === "anthropic-messages") return { ...request, body: { ...request.body, stream: false, tools: definitions.map(({ description, name, parameters }) => ({ description, input_schema: parameters, name })) } };
   if (input.model.apiKind === "openai-responses") return { ...request, body: { ...request.body, stream: false, tools: definitions.map(({ description, name, parameters }) => ({ description, name, parameters, strict: true, type: "function" })) } };
   return { ...request, body: { ...request.body, stream: false, stream_options: undefined, tools: definitions.map(({ description, name, parameters }) => ({ function: { description, name, parameters }, type: "function" })) } };

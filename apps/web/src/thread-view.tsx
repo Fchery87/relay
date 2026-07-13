@@ -11,12 +11,15 @@ import { ThreadMessages, ThreadRunControls, type ThreadCheckpoint, type ThreadMe
 import { CheckpointComparison } from "./checkpoint-comparison";
 import { SubagentPanel, type RoleRecord, type SubagentRun } from "./subagent-panel";
 import { PlanPanel, type PlanArtifact, type PlanPhase } from "./plan-panel";
+import { McpServerPanel, type McpServer } from "./mcp-server-panel";
+import type { McpServerConfig } from "@relay/shared";
+import { McpElicitationCards, type McpElicitation } from "./mcp-elicitation-card";
 
 const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; buildModelId?: string; mode?: "chat" | "plan"; modelId?: string; planModelId?: string; planPhase?: PlanPhase; status: ThreadStatus; stopRequested?: boolean; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
 const createThread = makeFunctionReference<"mutation", { mode?: "chat" | "plan"; projectId: string; title: string }, string>("conversations:createThread");
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
-const listEvents = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; kind: string; output?: string; summary?: string; tool?: string }>>("events:list");
+const listEvents = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; kind: string; output?: string; serverId?: string; status?: string; summary?: string; taskId?: string; tool?: string }>>("events:list");
 const enqueueCommand = makeFunctionReference<"mutation", { command: string; threadId: string }, string>("commands:enqueue");
 const latestDiff = makeFunctionReference<"query", { threadId: string }, { content: string } | null>("diffs:latest");
 const enqueueGitAction = makeFunctionReference<"mutation", { action: "stage" | "commit" | "push"; message?: string; threadId: string }, string>("git_actions:enqueue");
@@ -41,6 +44,13 @@ const getPlan = makeFunctionReference<"query", { threadId: string }, PlanArtifac
 const updatePlanModels = makeFunctionReference<"mutation", { buildModelId: string; planModelId: string; threadId: string }, null>("plans:updateModelPair");
 const updatePlanDraft = makeFunctionReference<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:updateDraft");
 const approvePlan = makeFunctionReference<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:approve");
+const listMcpServers = makeFunctionReference<"query", { projectId: string }, McpServer[]>("mcp_servers:listForProject");
+const createMcpServer = makeFunctionReference<"mutation", { name: string; projectId: string; threadId: string; transport: McpServerConfig["transport"] }, string>("mcp_servers:create");
+const updateMcpServer = makeFunctionReference<"mutation", McpServerConfig & { serverId: string }, null>("mcp_servers:update");
+const removeMcpServer = makeFunctionReference<"mutation", { serverId: string }, null>("mcp_servers:remove");
+const listMcpElicitations = makeFunctionReference<"query", { threadId: string }, McpElicitation[]>("mcp_elicitations:listForThread");
+const submitMcpElicitation = makeFunctionReference<"mutation", { elicitationId: string; responseJson: string }, null>("mcp_elicitations:submit");
+const cancelMcpElicitation = makeFunctionReference<"mutation", { elicitationId: string }, null>("mcp_elicitations:cancel");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
@@ -59,6 +69,11 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const savePlanModels = useMutation(updatePlanModels);
   const savePlanDraft = useMutation(updatePlanDraft);
   const approve = useMutation(approvePlan);
+  const createMcp = useMutation(createMcpServer);
+  const updateMcp = useMutation(updateMcpServer);
+  const removeMcp = useMutation(removeMcpServer);
+  const submitElicitation = useMutation(submitMcpElicitation);
+  const cancelElicitation = useMutation(cancelMcpElicitation);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
@@ -81,6 +96,8 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const roles = useQuery(listRoles, {});
   const subagentRuns = useQuery(listSubagentTree, activeThreadId ? { threadId: activeThreadId } : "skip");
   const plan = useQuery(getPlan, activeThread?.mode === "plan" && activeThreadId ? { threadId: activeThreadId } : "skip");
+  const mcpServers = useQuery(listMcpServers, { projectId });
+  const mcpElicitations = useQuery(listMcpElicitations, activeThreadId ? { threadId: activeThreadId } : "skip");
   useEffect(() => {
     setShowComparison(false);
     setRequestedComparisonId(undefined);
@@ -105,12 +122,14 @@ export function ThreadView({ projectId }: { projectId: string }) {
   return <section className="thread-view">
     <div className="thread-toolbar">{activeThreadId && activeThread ? <><ThreadRunControls onStop={() => stop({ threadId: activeThreadId })} status={activeThread.status} stopRequested={activeThread.stopRequested ?? false} /><UsagePanel key={`${activeThreadId}:${usage?.budgetUsd ?? "none"}`} onBudgetChange={(budgetUsd) => setBudget({ budgetUsd, threadId: activeThreadId })} value={usage ?? EMPTY_USAGE_SUMMARY} />{activeThread.mode !== "plan" ? <ModelControls modelId={activeThread.modelId ?? DEFAULT_MODEL_ID} onChange={(selection) => updateSelection({ ...selection, threadId: activeThreadId })} thinkingLevel={activeThread.thinkingLevel ?? "none"} /> : null}</> : null}<button onClick={() => void startThread()} type="button">New thread</button><button onClick={() => void startThread("plan")} type="button">New plan thread</button></div>
     {activeThreadId ? <>
+      <McpServerPanel onCreate={(input) => createMcp({ ...input, projectId, threadId: activeThreadId })} onRemove={(serverId) => removeMcp({ serverId })} onUpdate={(input) => updateMcp(input)} servers={mcpServers ?? []} />
+      <McpElicitationCards items={mcpElicitations ?? []} onCancel={(elicitationId) => cancelElicitation({ elicitationId })} onSubmit={(input) => submitElicitation(input)} />
       <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
       {activeThread?.mode === "plan" && activeThread.planPhase ? <PlanPanel buildModelId={activeThread.buildModelId ?? DEFAULT_MODEL_ID} canConfigureModels={activeThread.status === "idle"} onApprove={(input) => approve({ ...input, threadId: activeThreadId })} onModelPairChange={(input) => savePlanModels({ ...input, threadId: activeThreadId })} onUpdateDraft={(input) => savePlanDraft({ ...input, threadId: activeThreadId })} plan={plan ?? null} planModelId={activeThread.planModelId ?? DEFAULT_MODEL_ID} phase={activeThread.planPhase} /> : null}
       <SubagentPanel onUpdateRole={(input) => saveRole(input)} roles={roles ?? []} runs={subagentRuns ?? []} />
       <ThreadMessages checkpoints={checkpoints ?? []} messages={messages ?? []} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
       <div className="activity-layout">
-        <section><h2>Activity</h2>{events?.filter((event) => event.kind === "tool.completed" || event.kind === "checkpoint.reverted").map((event) => <p className="activity-line" key={event._id}>{event.kind === "checkpoint.reverted" ? "Checkpoint restored" : `${event.tool}: ${event.summary}`}</p>)}</section>
+        <section><h2>Activity</h2>{events?.filter((event) => event.kind === "tool.completed" || event.kind === "checkpoint.reverted" || event.kind === "mcp.task").map((event) => <p className="activity-line" key={event._id}>{event.kind === "checkpoint.reverted" ? "Checkpoint restored" : event.kind === "mcp.task" ? `MCP task ${event.taskId}: ${event.status}` : `${event.tool}: ${event.summary}`}</p>)}</section>
         <section className="terminal"><h2>Terminal</h2><pre>{events?.filter((event) => event.kind === "command.output").map((event) => event.output).join("") || "No command output."}</pre>
           <form className="command-form" onSubmit={(event) => void submitCommand(event)}><input aria-label="Command" onChange={(event) => setCommand(event.target.value)} value={command} /><button type="submit">Run</button></form>
         </section>

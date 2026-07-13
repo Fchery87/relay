@@ -17,7 +17,8 @@ const completePlanningMutation = makeFunctionReference<"mutation", { content: st
 const claimCommandMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("commands:claim");
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; status: "complete" | "failed" }>("commands:complete");
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
-const appendToolCompletedMutation = makeFunctionReference<"mutation", { summary: string; threadId: string; tool: "bash" | "edit" | "read" | "task" }>("events:appendToolCompleted");
+const appendToolCompletedMutation = makeFunctionReference<"mutation", { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }>("events:appendToolCompleted");
+const appendMcpTaskStatusMutation = makeFunctionReference<"mutation", { serverId: string; status: string; taskId: string; threadId: string }>("events:appendMcpTaskStatus");
 const listThreadIdsQuery = makeFunctionReference<"query", Record<string, never>, string[]>("conversations:listThreadIds");
 const snapshotDiffMutation = makeFunctionReference<"mutation", { content: string; threadId: string }>("diffs:snapshot");
 const claimGitActionMutation = makeFunctionReference<"mutation", { deviceToken: string }, { action: "stage" | "commit" | "push"; actionId: string; message?: string; projectPath: string; threadId: string } | null>("git_actions:claim");
@@ -41,6 +42,10 @@ const completeSubagentMutation = makeFunctionReference<"mutation", { claimToken:
 const renewSubagentLeaseMutation = makeFunctionReference<"mutation", { claimToken: string; deviceToken: string; runId: string }, null>("subagents:renewLease");
 const getSubagentResultQuery = makeFunctionReference<"query", { deviceToken: string; runId: string }, { result?: SubagentResult; status: "queued" | "running" | "complete" | "failed"; threadId: string }>("subagents:getResult");
 const setCapabilityCeilingMutation = makeFunctionReference<"mutation", { capabilities: Capability[]; deviceToken: string }, null>("machines:setCapabilityCeiling");
+const listMcpServersQuery = makeFunctionReference<"query", { deviceToken: string }, unknown[]>("mcp_servers:listForDaemon");
+const reportMcpStatusMutation = makeFunctionReference<"mutation", { authorizationUrl?: string; deviceToken: string; error?: string; serverId: string; status: "connecting" | "authorizing" | "connected" | "error"; toolCount: number }, null>("mcp_servers:reportStatus");
+const createMcpElicitationMutation = makeFunctionReference<"mutation", { promptsJson: string; serverId: string; threadId: string; toolName: string }, string>("mcp_elicitations:create");
+const getMcpElicitationQuery = makeFunctionReference<"query", { elicitationId: string }, { responseJson?: string; status: "pending" | "submitted" | "cancelled" } | null>("mcp_elicitations:get");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -85,10 +90,24 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     completeAssistantMessage: ({ messageId, resolvedCommentIds, threadId }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, resolvedCommentIds, status: "done", threadId }),
     completePlanning: (input: { content: string; messageId: string; threadId: string }) => client.mutation(completePlanningMutation, input),
     enqueueSubagent: (input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }) => client.mutation(enqueueSubagentMutation, input),
-    recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" | "task" }) => client.mutation(appendToolCompletedMutation, input),
+    recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),
     isStopRequested: async (input: { deviceToken: string; threadId: string }) => stopStateSchema.parse(await client.query(getStopStateQuery, input)).requested,
     recordCheckpoint: (input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }) => client.mutation(recordCheckpointMutation, input),
+    recordMcpTaskStatus: (input: { serverId: string; status: string; taskId: string; threadId: string }) => client.mutation(appendMcpTaskStatusMutation, input),
+    requestMcpInput: async (input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }) => {
+      const elicitationId = await client.mutation(createMcpElicitationMutation, { promptsJson: JSON.stringify(input.prompts), serverId: input.serverId, threadId: input.threadId, toolName: input.toolName });
+      for (;;) {
+        const elicitation = await client.query(getMcpElicitationQuery, { elicitationId });
+        if (elicitation?.status === "submitted" && elicitation.responseJson) {
+          const response: unknown = JSON.parse(elicitation.responseJson);
+          if (typeof response !== "object" || response === null || Array.isArray(response)) throw new Error("Invalid MCP elicitation response");
+          return Object.fromEntries(Object.entries(response));
+        }
+        if (elicitation?.status === "cancelled") throw new Error("MCP elicitation was cancelled");
+        await Bun.sleep(200);
+      }
+    },
     recordUsage: (input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }) => client.mutation(recordUsageMutation, input),
     snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
     waitForSubagent: async ({ deviceToken, runId, threadId }: { deviceToken: string; runId: string; threadId: string }) => {
@@ -99,6 +118,14 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
         await Bun.sleep(200);
       }
     },
+  };
+}
+
+export function createConvexMcpServerGateway({ deploymentUrl, deviceToken }: { deploymentUrl: string; deviceToken: string }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    listServers: () => client.query(listMcpServersQuery, { deviceToken }),
+    reportStatus: (input: { authorizationUrl?: string; error?: string; serverId: string; status: "connecting" | "authorizing" | "connected" | "error"; toolCount: number }) => client.mutation(reportMcpStatusMutation, { ...input, deviceToken }),
   };
 }
 

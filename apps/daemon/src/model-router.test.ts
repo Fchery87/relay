@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { MODEL_CATALOG } from "@relay/shared";
-import { buildProviderRequest, resolveProviderConfig } from "./model-router";
+import { buildProviderRequest, buildProviderToolRequest, resolveProviderConfig } from "./model-router";
 import { LocalModelRouter } from "./catalog-provider-router";
 import { ScriptedModelProvider } from "./model-provider";
 
@@ -41,4 +41,14 @@ test("uses the scripted development provider when no local key is configured", (
   const fallback = new ScriptedModelProvider({ chunks: ["offline"] });
   const router = new LocalModelRouter({ env: {}, fallbackProvider: fallback });
   expect(router.resolve({ modelId: MODEL_CATALOG.defaultModelId, thinkingLevel: "none" })).toBe(fallback);
+});
+
+test("adds uniquely-addressed MCP schemas to provider tool definitions", () => {
+  const model = MODEL_CATALOG.models.find((entry) => entry.apiKind === "openai-completions")!;
+  const request = buildProviderToolRequest({ apiKey: "secret", mcpTools: [
+    { inputSchema: { type: "object" }, name: "same", risk: "low", serverId: "a" },
+    { inputSchema: { properties: { value: { type: "string" } }, type: "object" }, name: "same", risk: "high", serverId: "b" },
+  ], model, prompt: "use tools", thinkingValue: null });
+  const names = (request.body.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
+  expect(names.slice(-2)).toEqual(["mcp_0", "mcp_1"]);
 });

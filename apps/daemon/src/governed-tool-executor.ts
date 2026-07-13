@@ -12,10 +12,11 @@ export type GovernedToolResult =
   | { kind: "executed"; output: string; succeeded: boolean }
   | { kind: "refused"; output: string };
 
-export async function executeGovernedToolCall({ call, governance, onCompleted, onTask, platform, policy, root, threadId }: {
+export async function executeGovernedToolCall({ call, governance, onCompleted, onMcp, onTask, platform, policy, root, threadId }: {
   call: ToolCall;
   governance: GovernanceGateway;
-  onCompleted(event: { summary: string; tool: "bash" | "edit" | "read" | "task" }): Promise<void>;
+  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }): Promise<void>;
+  onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
   onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<string>;
   platform: MachinePlatform;
   policy: Policy;
@@ -35,7 +36,7 @@ export async function executeGovernedToolCall({ call, governance, onCompleted, o
   } else {
     await governance.recordDecision({ ...classification, decision, summary, threadId });
   }
-  return { kind: "executed", ...await executeToolCall({ call, onCompleted, onTask, platform, root }) };
+  return { kind: "executed", ...await executeToolCall({ call, onCompleted, onMcp, onTask, platform, root }) };
 }
 
 function refusal({ capability, reason, risk }: { capability: Capability; reason: "approval_denied" | "policy_denied"; risk: RiskTier }): string {
@@ -43,6 +44,7 @@ function refusal({ capability, reason, risk }: { capability: Capability; reason:
 }
 
 export function summarizeToolCall(call: ToolCall): string {
+  if (call.kind === "mcp") return `mcp ${call.serverId}/${call.name}`;
   if (call.kind === "task") return `task ${call.role}`;
   if (call.kind === "bash") return redactCredentials(call.command);
   return `${call.kind} ${call.path}`;

@@ -151,9 +151,9 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Governance: chokepoint, approval cards, audit log.
 
-- [ ] Streamable HTTP and stdio transports; server config UI with connection status
-- [ ] MCP tools surface in the loop and pass the chokepoint with appropriate risk tiers
-- [ ] End-to-end test against a fixture MCP server
+- [x] Streamable HTTP and stdio transports; server config UI with connection status
+- [x] MCP tools surface in the loop and pass the chokepoint with appropriate risk tiers
+- [x] End-to-end test against a fixture MCP server
 
 ## Real auth and machine pairing
 

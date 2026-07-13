@@ -60,6 +60,31 @@ test("a governed task call queues a narrowed subagent run", async () => {
   expect(waited).toBe(true);
 });
 
+test("surfaces discovered MCP tools to the provider and executes through governance", async () => {
+  const seenTools: unknown[] = [];
+  const calls: unknown[] = [];
+  const provider: ModelProvider = {
+    async *toolCalls({ tools = [] }) { seenTools.push(...tools); yield { arguments: { query: "relay" }, kind: "mcp", name: "search", risk: "low", serverId: "docs" }; },
+    async *streamReply() { yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } }; },
+  };
+  await runQueuedTurn({
+    deviceToken: "device", governance, policy,
+    gateway: { acknowledgeStop: async () => undefined, appendAssistantText: async () => undefined, beginAssistantMessage: async () => "assistant", claimQueuedMessage: async () => ({ content: "search", projectPath: "/tmp", threadId: "thread" }), claimSteeringMessages: async () => [], completeAssistantMessage: async () => undefined, isStopRequested: async () => false, recordUsage: async () => undefined },
+    mcp: { callTool: async (input) => { calls.push(input); return { content: "found" }; }, listTools: async () => [{ description: "Search docs", inputSchema: { type: "object" }, name: "search", risk: "low", serverId: "docs" }] },
+    provider,
+  });
+  expect(seenTools).toMatchObject([{ name: "search", serverId: "docs" }]);
+  expect(calls).toMatchObject([{ arguments: { query: "relay" }, name: "search", serverId: "docs" }]);
+});
+
+test("records MCP task progress as thread events", async () => {
+  const statuses: string[] = [];
+  await runQueuedTurn({ deviceToken: "device", governance, policy: { rules: [{ capability: "exec", decision: "allow", risk: "high" }] }, gateway: {
+    acknowledgeStop: async () => undefined, appendAssistantText: async () => undefined, beginAssistantMessage: async () => "assistant", claimQueuedMessage: async () => ({ content: "run", projectPath: "/tmp", threadId: "thread" }), claimSteeringMessages: async () => [], completeAssistantMessage: async () => undefined, isStopRequested: async () => false, recordMcpTaskStatus: async ({ status }) => { statuses.push(status); }, recordUsage: async () => undefined,
+  }, mcp: { listTools: async () => [], callTool: async ({ onTaskStatus }) => { onTaskStatus?.({ id: "task", status: "working" }); onTaskStatus?.({ id: "task", status: "completed" }); return {}; } }, provider: new ScriptedModelProvider({ chunks: ["done"], toolCalls: [{ arguments: {}, kind: "mcp", name: "long", risk: "high", serverId: "server" }] }) });
+  expect(statuses).toEqual(["working", "completed"]);
+});
+
 test("a top-level subagent cannot exceed the parent policy ceiling", async () => {
   let queued = false;
   const prompts: string[] = [];

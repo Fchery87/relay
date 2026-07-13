@@ -9,11 +9,12 @@ import { runQueuedGitAction } from "./git-worker";
 import { runQueuedCheckpointRestore } from "./checkpoint-worker";
 import { runQueuedCheckpointComparison } from "./checkpoint-comparison-worker";
 import { ScriptedModelProvider } from "./model-provider";
-import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, createConvexSubagentGateway, MachineReporter } from "./relay-client";
+import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, createConvexMcpServerGateway, createConvexSubagentGateway, MachineReporter } from "./relay-client";
 import { createNestedSubagentWorktree, integrateNestedSubagentWorktree, resolveSubagentParentRoot, ThreadWorktrees } from "./worktrees";
 import { runQueuedSubagent } from "./subagent-worker";
 import { loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
+import { McpRegistry } from "./mcp-registry";
 
 const config = loadDaemonConfig({ env: Bun.env, hostname });
 const reporter = new MachineReporter({
@@ -42,6 +43,16 @@ async function collectOrphanedWorktrees() {
 await collectOrphanedWorktrees();
 setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
 const provider = new LocalModelRouter({ env: Bun.env, fallbackProvider: new ScriptedModelProvider({ chunks: ["Relay received your message."] }) });
+const mcp = new McpRegistry({ env: Bun.env, gateway: createConvexMcpServerGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken }), governance });
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await mcp.close();
+  process.exit(0);
+}
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());
 const subagentGateway = createConvexSubagentGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken, depth: 1 });
 const nestedSubagentGateway = createConvexSubagentGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken, depth: 2 });
 await subagentGateway.seedDefaults();
@@ -68,6 +79,7 @@ setInterval(() => {
     deviceToken: config.registration.deviceToken,
     gateway: conversationGateway,
     governance,
+    mcp,
     policy,
     provider,
     platform: config.registration.platform,

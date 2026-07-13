@@ -6,15 +6,23 @@ export type ToolCall =
   | { content: string; kind: "edit"; path: string }
   | { kind: "read"; path: string }
   | { command: string; kind: "bash" }
-  | { capabilities: Capability[]; kind: "task"; role: string; task: string };
+  | { capabilities: Capability[]; kind: "task"; role: string; task: string }
+  | { arguments: Record<string, unknown>; kind: "mcp"; name: string; risk?: "low" | "high" | "critical"; serverId: string };
 
-export async function executeToolCall({ call, onCompleted, onTask, platform, root }: {
+export async function executeToolCall({ call, onCompleted, onMcp, onTask, platform, root }: {
   call: ToolCall;
-  onCompleted(event: { summary: string; tool: "bash" | "edit" | "read" | "task" }): Promise<void>;
+  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }): Promise<void>;
+  onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
   onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<string>;
   platform: MachinePlatform;
   root: string;
 }): Promise<{ output: string; succeeded: boolean }> {
+  if (call.kind === "mcp") {
+    if (!onMcp) throw new Error("MCP execution is not configured");
+    const output = await onMcp(call);
+    await onCompleted({ summary: `Called ${call.serverId}/${call.name}`, tool: "mcp" });
+    return { output: JSON.stringify(output), succeeded: true };
+  }
   if (call.kind === "task") {
     if (!onTask) throw new Error("Subagent execution is not configured");
     const output = await onTask(call);

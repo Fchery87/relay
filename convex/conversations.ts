@@ -122,6 +122,8 @@ export const listThreadIds = queryGeneric({
 export const removeThread = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    for await (const server of ctx.db.query("mcpServers").withIndex("by_approval_thread_id", (q) => q.eq("approvalThreadId", args.threadId))) await ctx.db.delete(server._id);
+    for await (const elicitation of ctx.db.query("mcpElicitations").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(elicitation._id);
     for await (const plan of ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(plan._id);
     for await (const run of ctx.db.query("subagentRuns").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(run._id);
     for await (const event of ctx.db.query("events").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(event._id);

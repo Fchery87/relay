@@ -17,6 +17,16 @@ export {
 } from "./conversations";
 export { toolEventSchema, type ToolEvent } from "./tools";
 export {
+  mcpRiskSchema,
+  mcpServerConfigSchema,
+  mcpToolSchema,
+  mcpTransportConfigSchema,
+  validateMcpToolSchema,
+  type McpRisk,
+  type McpServerConfig,
+  type McpTool,
+} from "./mcp";
+export {
   approvalResolutionSchema,
   queuedCommandSchema,
   queuedComparisonSchema,

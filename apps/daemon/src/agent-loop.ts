@@ -1,4 +1,4 @@
-import type { ModelProvider, ModelProviderRouter } from "./model-provider";
+import type { McpModelTool, ModelProvider, ModelProviderRouter } from "./model-provider";
 import { DEFAULT_MODEL_ID, narrowCapabilities, type Capability, type MachinePlatform, type SubagentResult, type TokenUsage } from "@relay/shared";
 import { executeGovernedToolCall, summarizeToolCall, type GovernanceGateway, type GovernedToolResult } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
@@ -16,11 +16,18 @@ export interface ConversationGateway {
   completePlanning?(input: { content: string; messageId: string; threadId: string }): Promise<unknown>;
   isStopRequested(input: { deviceToken: string; threadId: string }): Promise<boolean>;
   recordCheckpoint?(input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }): Promise<unknown>;
+  recordMcpTaskStatus?(input: { serverId: string; status: string; taskId: string; threadId: string }): Promise<unknown>;
+  requestMcpInput?(input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }): Promise<Record<string, unknown>>;
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
   waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
-  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" | "task" }): Promise<unknown>;
+  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
+}
+
+export interface McpToolGateway {
+  callTool(input: { arguments: Record<string, unknown>; name: string; onInputRequired?: (input: { prompts: unknown[] }) => Promise<Record<string, unknown>>; onTaskStatus?: (task: { id: string; status: string }) => Promise<void> | void; serverId: string }): Promise<unknown>;
+  listTools(): Promise<McpModelTool[]>;
 }
 
 export type ReviewComment = { commentId: string; content: string; endLine: number; filePath: string; startLine: number };
@@ -41,6 +48,7 @@ export async function runQueuedTurn({
   deviceToken,
   gateway,
   governance,
+  mcp,
   policy,
   provider,
   platform = "linux",
@@ -49,6 +57,7 @@ export async function runQueuedTurn({
   deviceToken: string;
   gateway: ConversationGateway;
   governance: GovernanceGateway;
+  mcp?: McpToolGateway;
   policy: Policy;
   provider: ModelProvider | ModelProviderRouter;
   platform?: MachinePlatform;
@@ -61,6 +70,7 @@ export async function runQueuedTurn({
     : provider;
   const reviewComments = queued.reviewComments ?? [];
   const prompt = buildTurnPrompt({ content: queued.content, reviewComments });
+  const mcpTools = mcp ? await mcp.listTools().catch(() => []) : [];
 
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
@@ -75,7 +85,7 @@ export async function runQueuedTurn({
     checkpointed = true;
   };
   if (turnProvider.toolCalls) {
-    for await (const call of turnProvider.toolCalls({ prompt })) {
+    for await (const call of turnProvider.toolCalls({ prompt, tools: mcpTools })) {
       if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
         await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
         return true;
@@ -91,6 +101,10 @@ export async function runQueuedTurn({
           return JSON.stringify(gateway.waitForSubagent ? await gateway.waitForSubagent({ deviceToken, runId, threadId: queued.threadId }) : { kind: "subagent_queued", runId });
         } : undefined,
         onCompleted: async (event) => { await gateway.recordToolCompleted?.({ ...event, threadId: queued.threadId }); },
+        onMcp: mcp ? async (mcpCall) => {
+          try { return await mcp.callTool({ arguments: mcpCall.arguments, name: mcpCall.name, onInputRequired: gateway.requestMcpInput ? (input) => gateway.requestMcpInput!({ ...input, serverId: mcpCall.serverId, threadId: queued.threadId, toolName: mcpCall.name }) : undefined, onTaskStatus: async (task) => { await gateway.recordMcpTaskStatus?.({ serverId: mcpCall.serverId, status: task.status, taskId: task.id, threadId: queued.threadId }); }, serverId: mcpCall.serverId }); }
+          catch (error) { if (error instanceof Error && error.message === "MCP elicitation was cancelled") return { kind: "mcp_elicitation_cancelled" }; throw error; }
+        } : undefined,
         platform,
         policy,
         root,

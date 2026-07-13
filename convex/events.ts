@@ -12,6 +12,11 @@ export const appendCommandOutput = mutationGeneric({
 });
 
 export const appendToolCompleted = mutationGeneric({
-  args: { summary: v.string(), threadId: v.id("threads"), tool: v.union(v.literal("bash"), v.literal("edit"), v.literal("read"), v.literal("task")) },
+  args: { summary: v.string(), threadId: v.id("threads"), tool: v.union(v.literal("bash"), v.literal("edit"), v.literal("mcp"), v.literal("read"), v.literal("task")) },
   handler: (ctx, args) => ctx.db.insert("events", { ...args, kind: "tool.completed" }),
+});
+
+export const appendMcpTaskStatus = mutationGeneric({
+  args: { serverId: v.string(), status: v.string(), taskId: v.string(), threadId: v.id("threads") },
+  handler: (ctx, args) => ctx.db.insert("events", { ...args, kind: "mcp.task" }),
 });

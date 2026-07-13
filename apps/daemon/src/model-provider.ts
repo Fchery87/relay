@@ -1,14 +1,16 @@
 import { tokenUsageSchema, type CatalogModel, type ThinkingLevel, type TokenUsage } from "@relay/shared";
 import { z } from "zod";
 
-import { buildProviderRequest, buildProviderToolRequest } from "./model-router";
+import { buildProviderRequest, buildProviderToolRequest, mcpModelName } from "./model-router";
 import type { ToolCall } from "./tool-executor";
 
 export interface ModelProvider {
   readonly modelId?: string;
   streamReply(input: { prompt: string; signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
-  toolCalls?(input: { prompt: string }): AsyncIterable<import("./tool-executor").ToolCall>;
+  toolCalls?(input: { prompt: string; tools?: McpModelTool[] }): AsyncIterable<import("./tool-executor").ToolCall>;
 }
+
+export type McpModelTool = { description?: string; inputSchema: Record<string, unknown>; name: string; risk: "low" | "high" | "critical"; serverId: string };
 
 export type ModelStreamEvent =
   | { kind: "text"; text: string }
@@ -79,12 +81,12 @@ export class CatalogModelProvider implements ModelProvider {
     }
   }
 
-  async *toolCalls({ prompt }: { prompt: string }): AsyncIterable<ToolCall> {
-    const request = buildProviderToolRequest({ apiKey: this.#apiKey, model: this.#model, prompt, thinkingValue: this.#thinkingValue });
+  async *toolCalls({ prompt, tools = [] }: { prompt: string; tools?: McpModelTool[] }): AsyncIterable<ToolCall> {
+    const request = buildProviderToolRequest({ apiKey: this.#apiKey, mcpTools: tools, model: this.#model, prompt, thinkingValue: this.#thinkingValue });
     const response = await this.#fetcher(request.url, { body: JSON.stringify(request.body), headers: request.headers, method: "POST" });
     if (!response.ok) throw new Error(`${this.#model.provider} tool response failed: ${response.status}`);
     const payload: unknown = await response.json();
-    for (const call of parseProviderToolCalls(payload, this.#model.apiKind)) yield call;
+    for (const call of parseProviderToolCalls(payload, this.#model.apiKind, tools)) yield call;
   }
 }
 
@@ -217,7 +219,7 @@ const toolCallSchema = z.discriminatedUnion("kind", [
   z.object({ capabilities: z.array(z.enum(["read", "edit", "exec", "task"])), kind: z.literal("task"), role: z.string(), task: z.string() }),
 ]);
 
-function parseProviderToolCalls(payload: unknown, apiKind: CatalogModel["apiKind"]): ToolCall[] {
+function parseProviderToolCalls(payload: unknown, apiKind: CatalogModel["apiKind"], mcpTools: McpModelTool[] = []): ToolCall[] {
   const raw: Array<{ arguments: unknown; name: unknown }> = [];
   if (typeof payload !== "object" || payload === null) return [];
   if (apiKind === "anthropic-messages" && "content" in payload && Array.isArray(payload.content)) {
@@ -230,8 +232,14 @@ function parseProviderToolCalls(payload: unknown, apiKind: CatalogModel["apiKind
       if (typeof item === "object" && item !== null && "function" in item && typeof item.function === "object" && item.function !== null && "name" in item.function && "arguments" in item.function) raw.push({ arguments: item.function.arguments, name: item.function.name });
     }
   }
-  return raw.map(({ arguments: args, name }) => toolCallSchema.parse({ ...parseArguments(args), kind: name }));
+  return raw.map(({ arguments: args, name }) => {
+    const modelName = typeof name === "string" ? name : "";
+    const mcpTool = mcpTools.find((tool, index) => mcpModelName(tool, index) === modelName);
+    if (mcpTool) return { arguments: parseArguments(args), kind: "mcp", name: mcpTool.name, risk: mcpTool.risk, serverId: mcpTool.serverId };
+    return toolCallSchema.parse({ ...parseArguments(args), kind: name });
+  });
 }
+
 
 function parseArguments(value: unknown): Record<string, unknown> {
   if (typeof value === "string") {

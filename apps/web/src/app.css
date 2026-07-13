@@ -56,7 +56,33 @@ h1 { font-size: 20px; font-weight: 650; margin: 0; }
 .model-controls { display: flex; gap: 6px; }
 .model-controls select { background: #252622; border: 1px solid #454640; color: inherit; font: inherit; min-width: 132px; padding: 8px; }
 .governance-panel { display: grid; gap: 12px; }
+.mcp-panel { border-top: 1px solid #353632; padding-top: 12px; }
+.mcp-panel header { align-items: center; display: flex; justify-content: space-between; }
+.mcp-panel h2 { font-size: 14px; margin: 0; }
+.mcp-panel header button { font-size: 12px; padding: 6px 8px; }
+.mcp-server-list { display: grid; gap: 6px; margin-top: 8px; }
+.mcp-server { border-bottom: 1px solid #353632; padding: 7px 0; }
+.mcp-server summary { align-items: center; cursor: pointer; display: flex; justify-content: space-between; }
+.mcp-server summary span { display: grid; gap: 2px; }
+.mcp-server summary small, .mcp-empty { color: #a9aaa4; font-size: 11px; }
+.mcp-status { background: #74756f; border-radius: 50%; height: 8px; width: 8px; }
+.mcp-status-connected { background: #49a774; }
+.mcp-status-connecting { background: #d6c77f; }
+.mcp-status-error { background: #b76f67; }
+.mcp-error { color: #e0a28b; font-size: 11px; margin: 7px 0; }
+.mcp-authorize { color: #f3d785; display: inline-block; font-size: 12px; margin-top: 7px; text-decoration: underline; }
+.mcp-form { display: grid; gap: 7px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 9px; }
+.mcp-form label { display: grid; font-size: 11px; gap: 3px; }
+.mcp-form input, .mcp-form select { background: #252622; border: 1px solid #454640; color: inherit; min-width: 0; padding: 6px; }
+.mcp-form-actions, .mcp-server-actions { align-items: center; display: flex; gap: 7px; justify-content: flex-end; }
+.mcp-form-actions { grid-column: 1 / -1; }
+.mcp-server-actions { font-size: 11px; margin-top: 8px; }
+.mcp-server-actions label { align-items: center; display: flex; gap: 4px; margin-right: auto; }
 .approval-card { background: #20211f; border: 1px solid #5c5540; display: grid; gap: 12px; grid-template-columns: minmax(150px, auto) minmax(0, 1fr) auto; padding: 12px; }
+.mcp-elicitation pre { background: #111210; font-size: 11px; margin: 0; max-height: 180px; overflow: auto; padding: 8px; white-space: pre-wrap; }
+.mcp-elicitation form { display: grid; gap: 6px; min-width: 220px; }
+.mcp-elicitation textarea { font-family: ui-monospace, monospace; min-height: 72px; resize: vertical; }
+.mcp-elicitation form p { color: #e0a28b; font-size: 11px; margin: 0; }
 .approval-card h2, .audit-log h2 { font-size: 14px; margin: 0; }
 .approval-card p { color: #b7b7af; font-size: 12px; margin: 3px 0 0; }
 .approval-card code { align-self: center; overflow-wrap: anywhere; }
@@ -144,6 +170,7 @@ button { cursor: pointer; }
   .activity-layout { grid-template-columns: 1fr; }
   .subagent-layout { grid-template-columns: 1fr; }
   .plan-models { grid-template-columns: 1fr; }
+  .mcp-form { grid-template-columns: 1fr; }
   .thread-toolbar { align-items: stretch; flex-direction: column; }
   .usage-panel summary { justify-content: space-between; overflow-x: auto; }
   .usage-breakdown { left: 0; max-width: 100%; right: auto; }
