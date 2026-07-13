@@ -13,6 +13,7 @@ const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceTok
 const beginAssistantMessageMutation = makeFunctionReference<"mutation", { threadId: string }, string>("conversations:beginAssistantMessage");
 const appendAssistantTextMutation = makeFunctionReference<"mutation", { content: string; messageId: string }>("conversations:appendAssistantText");
 const completeAssistantMessageMutation = makeFunctionReference<"mutation", { messageId: string; resolvedCommentIds?: string[]; threadId: string; status: "done" }>("conversations:completeAssistantMessage");
+const completePlanningMutation = makeFunctionReference<"mutation", { content: string; messageId: string; threadId: string }, null>("plans:completePlanning");
 const claimCommandMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("commands:claim");
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; status: "complete" | "failed" }>("commands:complete");
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { output: string; threadId: string }>("events:appendCommandOutput");
@@ -82,6 +83,7 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     claimQueuedMessage: async ({ deviceToken }: { deviceToken: string }) => queuedMessageSchema.nullable().parse(await client.mutation(claimQueuedMessageMutation, { deviceToken })),
     claimSteeringMessages: async (input: { deviceToken: string; threadId: string }) => steeringMessagesSchema.parse(await client.mutation(claimSteeringMessagesMutation, input)),
     completeAssistantMessage: ({ messageId, resolvedCommentIds, threadId }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => client.mutation(completeAssistantMessageMutation, { messageId, resolvedCommentIds, status: "done", threadId }),
+    completePlanning: (input: { content: string; messageId: string; threadId: string }) => client.mutation(completePlanningMutation, input),
     enqueueSubagent: (input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }) => client.mutation(enqueueSubagentMutation, input),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" | "task" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),

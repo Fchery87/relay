@@ -4,12 +4,16 @@ import { DEFAULT_MODEL_ID, MODEL_CATALOG, listThinkingLevels } from "@relay/shar
 
 const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("restoring"), v.literal("stopped"), v.literal("done"), v.literal("failed"));
 const removeUsageForThread = makeFunctionReference<"mutation", { threadId: string }, null>("usage:removeForThreadBatch");
+const MAX_PLAN_SECTION_BYTES = 400_000;
 
 export const createThread = mutationGeneric({
-  args: { projectId: v.id("projects"), title: v.string() },
+  args: { mode: v.optional(v.union(v.literal("chat"), v.literal("plan"))), projectId: v.id("projects"), title: v.string() },
   handler: (ctx, args) => ctx.db.insert("threads", {
     ...args,
+    buildModelId: args.mode === "plan" ? DEFAULT_MODEL_ID : undefined,
     modelId: DEFAULT_MODEL_ID,
+    planModelId: args.mode === "plan" ? DEFAULT_MODEL_ID : undefined,
+    planPhase: args.mode === "plan" ? "planning" : undefined,
     status: "idle",
     stopRequested: false,
     thinkingLevel: "none",
@@ -30,13 +34,22 @@ export const updateModelSelection = mutationGeneric({
 export const sendUserMessage = mutationGeneric({
   args: { content: v.string(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    const messageId = await ctx.db.insert("messages", { ...args, queuedThreadId: args.threadId, role: "user", status: "queued" });
     const thread = await ctx.db.get("threads", args.threadId);
     if (!thread) throw new Error("Thread not found");
+    if (thread.mode === "plan" && thread.planPhase === "review") throw new Error("Approve or edit the draft plan before sending another message");
+    if (thread.mode === "plan" && thread.planPhase === "planning") {
+      const queued = await ctx.db.query("messages").withIndex("by_queued_thread", (q) => q.eq("queuedThreadId", args.threadId)).take(100);
+      if (queued.length >= 100) throw new Error("Plan follow-up queue is full");
+      const queuedBytes = queued.reduce((total, message) => total + utf8Bytes(message.content), 0);
+      if (queuedBytes + utf8Bytes(args.content) > MAX_PLAN_SECTION_BYTES) throw new Error("Plan follow-up queue exceeds its size limit");
+    }
+    const messageId = await ctx.db.insert("messages", { ...args, queuedThreadId: args.threadId, role: "user", status: "queued" });
     if (thread.status !== "running" && thread.status !== "awaiting-approval" && thread.status !== "restoring") await ctx.db.patch(args.threadId, { status: "queued" });
     return messageId;
   },
 });
+
+function utf8Bytes(value: string): number { return new TextEncoder().encode(value).byteLength; }
 
 export const claimSteeringMessages = mutationGeneric({
   args: { deviceToken: v.string(), threadId: v.id("threads") },
@@ -109,6 +122,7 @@ export const listThreadIds = queryGeneric({
 export const removeThread = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    for await (const plan of ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(plan._id);
     for await (const run of ctx.db.query("subagentRuns").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(run._id);
     for await (const event of ctx.db.query("events").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(event._id);
     for await (const comparison of ctx.db.query("checkpointComparisons").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comparison._id);
@@ -133,6 +147,7 @@ export const claimQueuedMessage = mutationGeneric({
       const thread = await ctx.db.get("threads", message.threadId);
       if (!thread) continue;
       if (thread.status === "running" || thread.status === "awaiting-approval" || thread.status === "restoring" || thread.status === "stopped") continue;
+      if (thread.mode === "plan" && thread.planPhase === "review") continue;
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id) continue;
       const reviewComments = await ctx.db.query("diffComments")
@@ -143,7 +158,8 @@ export const claimQueuedMessage = mutationGeneric({
       await ctx.db.patch(thread._id, { status: "running" });
       return {
         content: message.content,
-        modelId: thread.modelId ?? DEFAULT_MODEL_ID,
+        modelId: thread.mode === "plan" ? (thread.planPhase === "planning" ? thread.planModelId : thread.buildModelId) ?? DEFAULT_MODEL_ID : thread.modelId ?? DEFAULT_MODEL_ID,
+        planPhase: thread.mode === "plan" ? thread.planPhase : undefined,
         projectPath: project.path,
         reviewComments: reviewComments.map((comment) => ({
           commentId: comment._id,
@@ -196,5 +212,6 @@ export const completeAssistantMessage = mutationGeneric({
       ? await ctx.db.query("messages").withIndex("by_queued_thread", (q) => q.eq("queuedThreadId", args.threadId)).first()
       : null;
     await ctx.db.patch(args.threadId, { activeAssistantMessageId: undefined, status: queued ? "queued" : args.status });
+    if (args.status === "done" && thread.mode === "plan" && thread.planPhase === "building") await ctx.db.patch(args.threadId, { planPhase: "complete" });
   },
 });

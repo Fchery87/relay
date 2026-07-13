@@ -142,8 +142,8 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Model catalog and routing.
 
-- [ ] Plan/build model pair selectable; plan rendered as an editable artifact
-- [ ] Build phase consumes the approved plan; plan visible alongside the running build
+- [x] Plan/build model pair selectable; plan rendered as an editable artifact
+- [x] Build phase consumes the approved plan; plan visible alongside the running build
 
 ## MCP client
 

@@ -15,6 +15,7 @@ export const reviewCommentTransportSchema = z.object({
 export const queuedMessageSchema = z.object({
   content: z.string().min(1).max(1_000_000),
   modelId: z.string().min(1).max(256),
+  planPhase: z.enum(["planning", "building", "complete"]).optional(),
   projectPath,
   reviewComments: z.array(reviewCommentTransportSchema).max(1_000),
   threadId: id,

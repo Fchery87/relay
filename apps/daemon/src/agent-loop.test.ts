@@ -173,6 +173,31 @@ test("resolves the model provider from the claimed thread selection", async () =
   expect(selections).toEqual([{ modelId: "openai/gpt-5-mini", thinkingLevel: "high" }]);
 });
 
+test("a planning turn persists an editable plan instead of completing a chat turn", async () => {
+  const plans: unknown[] = [];
+  const usageRoles: string[] = [];
+  let completed = false;
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined, appendAssistantText: async () => undefined, beginAssistantMessage: async () => "plan-message",
+      claimQueuedMessage: async () => ({ content: "Plan it", modelId: "deepseek/deepseek-chat", planPhase: "planning", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [], completeAssistantMessage: async () => { completed = true; }, completePlanning: async (input) => { plans.push(input); },
+      isStopRequested: async () => false, recordUsage: async ({ role }) => { usageRoles.push(role); },
+    },
+    governance, policy, provider: new ScriptedModelProvider({ chunks: ["1. Inspect\n2. Implement"] }),
+  });
+  expect(plans).toEqual([{ content: "1. Inspect\n2. Implement", messageId: "plan-message", threadId: "thread" }]);
+  expect(usageRoles).toEqual(["planner"]);
+  expect(completed).toBe(false);
+});
+
+test("planning cannot mutate the worktree before approval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-plan-readonly-"));
+  await runQueuedTurn({ deviceToken: "device", gateway: { acknowledgeStop: async () => undefined, appendAssistantText: async () => undefined, beginAssistantMessage: async () => "plan", claimQueuedMessage: async () => ({ content: "Plan", planPhase: "planning", projectPath: root, threadId: "thread" }), claimSteeringMessages: async () => [], completeAssistantMessage: async () => undefined, completePlanning: async () => undefined, isStopRequested: async () => false, recordUsage: async () => undefined }, governance, policy, provider: new ScriptedModelProvider({ chunks: ["Plan only"], toolCalls: [{ content: "not approved", kind: "edit", path: "blocked.txt" }] }) });
+  expect(access(join(root, "blocked.txt"))).rejects.toThrow();
+});
+
 test("submits normalized usage once when a scripted turn completes", async () => {
   const recorded: unknown[] = [];
   await runQueuedTurn({

@@ -10,10 +10,11 @@ import { EMPTY_USAGE_SUMMARY, UsagePanel, type UsageSummary } from "./usage-pane
 import { ThreadMessages, ThreadRunControls, type ThreadCheckpoint, type ThreadMessage, type ThreadStatus } from "./thread-messages";
 import { CheckpointComparison } from "./checkpoint-comparison";
 import { SubagentPanel, type RoleRecord, type SubagentRun } from "./subagent-panel";
+import { PlanPanel, type PlanArtifact, type PlanPhase } from "./plan-panel";
 
-const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; modelId?: string; status: ThreadStatus; stopRequested?: boolean; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
+const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; buildModelId?: string; mode?: "chat" | "plan"; modelId?: string; planModelId?: string; planPhase?: PlanPhase; status: ThreadStatus; stopRequested?: boolean; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
-const createThread = makeFunctionReference<"mutation", { projectId: string; title: string }, string>("conversations:createThread");
+const createThread = makeFunctionReference<"mutation", { mode?: "chat" | "plan"; projectId: string; title: string }, string>("conversations:createThread");
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
 const listEvents = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; kind: string; output?: string; summary?: string; tool?: string }>>("events:list");
 const enqueueCommand = makeFunctionReference<"mutation", { command: string; threadId: string }, string>("commands:enqueue");
@@ -36,6 +37,10 @@ const latestCheckpointComparison = makeFunctionReference<"query", { threadId: st
 const listRoles = makeFunctionReference<"query", Record<string, never>, RoleRecord[]>("subagents:listRoles");
 const updateRole = makeFunctionReference<"mutation", { capabilities?: Array<"read" | "edit" | "exec" | "task">; contextMode?: "fresh" | "forked"; description?: string; maxTurns?: number; modelId?: string; prompt?: string; roleId: string; thinkingLevel?: ThinkingLevel; writer?: boolean }, null>("subagents:updateRole");
 const listSubagentTree = makeFunctionReference<"query", { threadId: string }, SubagentRun[]>("subagents:listTree");
+const getPlan = makeFunctionReference<"query", { threadId: string }, PlanArtifact | null>("plans:getForThread");
+const updatePlanModels = makeFunctionReference<"mutation", { buildModelId: string; planModelId: string; threadId: string }, null>("plans:updateModelPair");
+const updatePlanDraft = makeFunctionReference<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:updateDraft");
+const approvePlan = makeFunctionReference<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:approve");
 
 export function ThreadView({ projectId }: { projectId: string }) {
   const threads = useQuery(listThreads, { projectId });
@@ -51,6 +56,9 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const restoreCheckpoint = useMutation(enqueueCheckpointRestore);
   const compareCheckpoints = useMutation(enqueueCheckpointComparison);
   const saveRole = useMutation(updateRole);
+  const savePlanModels = useMutation(updatePlanModels);
+  const savePlanDraft = useMutation(updatePlanDraft);
+  const approve = useMutation(approvePlan);
   const [threadId, setThreadId] = useState<string | undefined>();
   const [content, setContent] = useState("");
   const [command, setCommand] = useState("");
@@ -72,13 +80,14 @@ export function ThreadView({ projectId }: { projectId: string }) {
   const activeComparison = comparison?._id === requestedComparisonId ? comparison : null;
   const roles = useQuery(listRoles, {});
   const subagentRuns = useQuery(listSubagentTree, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const plan = useQuery(getPlan, activeThread?.mode === "plan" && activeThreadId ? { threadId: activeThreadId } : "skip");
   useEffect(() => {
     setShowComparison(false);
     setRequestedComparisonId(undefined);
   }, [activeThreadId]);
 
-  async function startThread() {
-    setThreadId(await create({ projectId, title: "New conversation" }));
+  async function startThread(mode: "chat" | "plan" = "chat") {
+    setThreadId(await create({ mode, projectId, title: mode === "plan" ? "New plan" : "New conversation" }));
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -94,9 +103,10 @@ export function ThreadView({ projectId }: { projectId: string }) {
   }
 
   return <section className="thread-view">
-    <div className="thread-toolbar">{activeThreadId && activeThread ? <><ThreadRunControls onStop={() => stop({ threadId: activeThreadId })} status={activeThread.status} stopRequested={activeThread.stopRequested ?? false} /><UsagePanel key={`${activeThreadId}:${usage?.budgetUsd ?? "none"}`} onBudgetChange={(budgetUsd) => setBudget({ budgetUsd, threadId: activeThreadId })} value={usage ?? EMPTY_USAGE_SUMMARY} /><ModelControls modelId={activeThread.modelId ?? DEFAULT_MODEL_ID} onChange={(selection) => updateSelection({ ...selection, threadId: activeThreadId })} thinkingLevel={activeThread.thinkingLevel ?? "none"} /></> : null}<button onClick={() => void startThread()} type="button">New thread</button></div>
+    <div className="thread-toolbar">{activeThreadId && activeThread ? <><ThreadRunControls onStop={() => stop({ threadId: activeThreadId })} status={activeThread.status} stopRequested={activeThread.stopRequested ?? false} /><UsagePanel key={`${activeThreadId}:${usage?.budgetUsd ?? "none"}`} onBudgetChange={(budgetUsd) => setBudget({ budgetUsd, threadId: activeThreadId })} value={usage ?? EMPTY_USAGE_SUMMARY} />{activeThread.mode !== "plan" ? <ModelControls modelId={activeThread.modelId ?? DEFAULT_MODEL_ID} onChange={(selection) => updateSelection({ ...selection, threadId: activeThreadId })} thinkingLevel={activeThread.thinkingLevel ?? "none"} /> : null}</> : null}<button onClick={() => void startThread()} type="button">New thread</button><button onClick={() => void startThread("plan")} type="button">New plan thread</button></div>
     {activeThreadId ? <>
       <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
+      {activeThread?.mode === "plan" && activeThread.planPhase ? <PlanPanel buildModelId={activeThread.buildModelId ?? DEFAULT_MODEL_ID} canConfigureModels={activeThread.status === "idle"} onApprove={(input) => approve({ ...input, threadId: activeThreadId })} onModelPairChange={(input) => savePlanModels({ ...input, threadId: activeThreadId })} onUpdateDraft={(input) => savePlanDraft({ ...input, threadId: activeThreadId })} plan={plan ?? null} planModelId={activeThread.planModelId ?? DEFAULT_MODEL_ID} phase={activeThread.planPhase} /> : null}
       <SubagentPanel onUpdateRole={(input) => saveRole(input)} roles={roles ?? []} runs={subagentRuns ?? []} />
       <ThreadMessages checkpoints={checkpoints ?? []} messages={messages ?? []} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
       <div className="activity-layout">
@@ -110,7 +120,7 @@ export function ThreadView({ projectId }: { projectId: string }) {
         <div className="ship-controls"><button onClick={() => void enqueueGit({ action: "stage", threadId: activeThreadId })} type="button">Stage all</button><input aria-label="Commit message" onChange={(event) => setCommitMessage(event.target.value)} value={commitMessage} /><button disabled={!commitMessage.trim()} onClick={() => void enqueueGit({ action: "commit", message: commitMessage.trim(), threadId: activeThreadId })} type="button">Commit</button><button onClick={() => void enqueueGit({ action: "push", threadId: activeThreadId })} type="button">Push</button></div>
         <p className="ship-status" aria-live="polite">{gitActions?.at(-1) ? `${gitActions.at(-1)?.action}: ${gitActions.at(-1)?.status}` : "No Git actions yet."}</p>
       </section>
-      <form className="composer" onSubmit={(event) => void submit(event)}><textarea aria-label="Message" onChange={(event) => setContent(event.target.value)} value={content} /><button type="submit">Send</button></form>
+      {activeThread?.mode === "plan" && activeThread.planPhase === "review" ? null : <form className="composer" onSubmit={(event) => void submit(event)}><textarea aria-label="Message" onChange={(event) => setContent(event.target.value)} value={content} /><button type="submit">Send</button></form>}
     </> : <p className="workspace-state">Create a thread to begin.</p>}
   </section>;
 }

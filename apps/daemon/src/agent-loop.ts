@@ -1,17 +1,19 @@
 import type { ModelProvider, ModelProviderRouter } from "./model-provider";
 import { DEFAULT_MODEL_ID, narrowCapabilities, type Capability, type MachinePlatform, type SubagentResult, type TokenUsage } from "@relay/shared";
-import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
+import { executeGovernedToolCall, summarizeToolCall, type GovernanceGateway, type GovernedToolResult } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
 import { createCheckpoint } from "./checkpoints";
 import type { Policy } from "./policy";
+import { classifyToolCall } from "./policy";
 
 export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
-  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
+  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
   claimSteeringMessages(input: { deviceToken: string; threadId: string }): Promise<Array<{ content: string }>>;
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; threadId: string }): Promise<unknown>;
+  completePlanning?(input: { content: string; messageId: string; threadId: string }): Promise<unknown>;
   isStopRequested(input: { deviceToken: string; threadId: string }): Promise<boolean>;
   recordCheckpoint?(input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }): Promise<unknown>;
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
@@ -78,7 +80,7 @@ export async function runQueuedTurn({
         await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
         return true;
       }
-      const toolResult = await executeGovernedToolCall({
+      const toolResult = queued.planPhase === "planning" && call.kind !== "read" ? await refusePlanningMutation({ call, governance, threadId: queued.threadId }) : await executeGovernedToolCall({
         call,
         governance,
         onTask: gateway.enqueueSubagent ? async (taskCall) => {
@@ -156,11 +158,17 @@ export async function runQueuedTurn({
     }
     if (!usage) throw new Error("Model provider did not report usage");
     const modelId = turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID;
-    await gateway.recordUsage({ callId: crypto.randomUUID(), messageId, modelId, role: "primary", threadId: queued.threadId, usage });
+    const role = queued.planPhase === "planning" ? "planner" : queued.planPhase === "building" ? "builder" : "primary";
+    await gateway.recordUsage({ callId: crypto.randomUUID(), messageId, modelId, role, threadId: queued.threadId, usage });
   } finally {
     await checkpointTurn();
   }
-  await gateway.completeAssistantMessage({ messageId, resolvedCommentIds: reviewComments.map((comment) => comment.commentId), threadId: queued.threadId });
+  if (queued.planPhase === "planning") {
+    if (!gateway.completePlanning) throw new Error("Planning completion is not configured");
+    await gateway.completePlanning({ content, messageId, threadId: queued.threadId });
+  } else {
+    await gateway.completeAssistantMessage({ messageId, resolvedCommentIds: reviewComments.map((comment) => comment.commentId), threadId: queued.threadId });
+  }
   return true;
 }
 
@@ -194,4 +202,10 @@ function isModelProviderRouter(provider: ModelProvider | ModelProviderRouter): p
 
 function policyCapabilities(policy: Policy): Capability[] {
   return [...new Set(policy.rules.filter((rule) => rule.decision !== "deny").map((rule) => rule.capability))];
+}
+
+async function refusePlanningMutation({ call, governance, threadId }: { call: Parameters<typeof classifyToolCall>[0]; governance: GovernanceGateway; threadId: string }): Promise<GovernedToolResult> {
+  const classification = classifyToolCall(call);
+  await governance.recordDecision({ ...classification, decision: "deny", summary: summarizeToolCall(call), threadId });
+  return { kind: "refused", output: JSON.stringify({ capability: classification.capability, kind: "tool_refusal", reason: "plan_requires_approval", risk: classification.risk }) };
 }

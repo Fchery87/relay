@@ -19,6 +19,10 @@ export default defineSchema({
     activeAssistantMessageId: v.optional(v.id("messages")),
     budgetUsd: v.optional(v.number()),
     modelId: v.optional(v.string()),
+    mode: v.optional(v.union(v.literal("chat"), v.literal("plan"))),
+    planModelId: v.optional(v.string()),
+    buildModelId: v.optional(v.string()),
+    planPhase: v.optional(v.union(v.literal("planning"), v.literal("review"), v.literal("building"), v.literal("complete"))),
     projectId: v.id("projects"),
     status: v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("restoring"), v.literal("stopped"), v.literal("done"), v.literal("failed")),
     stopRequested: v.optional(v.boolean()),
@@ -34,6 +38,12 @@ export default defineSchema({
       thinkingTokensUnavailableCalls: v.number(),
     })),
   }).index("by_project", ["projectId"]),
+  plans: defineTable({
+    content: v.string(),
+    revision: v.number(),
+    status: v.union(v.literal("draft"), v.literal("approved")),
+    threadId: v.id("threads"),
+  }).index("by_thread", ["threadId"]),
   messages: defineTable({
     content: v.string(),
     queuedThreadId: v.optional(v.id("threads")),

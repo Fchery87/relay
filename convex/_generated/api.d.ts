@@ -19,6 +19,7 @@ import type * as events from "../events.js";
 import type * as git_actions from "../git_actions.js";
 import type * as machine_summaries from "../machine_summaries.js";
 import type * as machines from "../machines.js";
+import type * as plans from "../plans.js";
 import type * as subagents from "../subagents.js";
 import type * as usage from "../usage.js";
 
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   git_actions: typeof git_actions;
   machine_summaries: typeof machine_summaries;
   machines: typeof machines;
+  plans: typeof plans;
   subagents: typeof subagents;
   usage: typeof usage;
 }>;
