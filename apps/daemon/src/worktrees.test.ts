@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-import { createThreadWorktree } from "./worktrees";
+import { createThreadWorktree, ThreadWorktrees } from "./worktrees";
+import { createCheckpoint } from "./checkpoints";
 import { editFile } from "./tools";
 import { runCommand } from "./tools";
 
@@ -36,3 +37,21 @@ test("two thread worktrees mutate the same file without touching each other", as
   expect(await readFile(join(second, "shared.txt"), "utf8")).toBe("second");
   expect(await readFile(join(repo, "shared.txt"), "utf8")).toBe("base");
 });
+
+test("garbage collection deletes an inactive thread checkpoint namespace", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "relay-gc-repo-"));
+  await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test", platform: "linux", root: repo });
+  await writeFile(join(repo, "shared.txt"), "base");
+  await runCommand({ command: "git add . && git commit -m base", platform: "linux", root: repo });
+  const home = await mkdtemp(join(tmpdir(), "relay-gc-home-"));
+  const worktrees = new ThreadWorktrees({ daemonHome: home });
+  const inactive = await worktrees.resolve({ repoPath: repo, threadId: "inactive" });
+  const active = await worktrees.resolve({ repoPath: repo, threadId: "active" });
+  await createCheckpoint({ root: inactive, threadId: "inactive", turnId: "turn-1" });
+  await createCheckpoint({ root: active, threadId: "active", turnId: "turn-1" });
+
+  await worktrees.gc({ activeThreadIds: new Set(["active"]) });
+
+  expect((await runCommand({ command: "git show-ref --verify --quiet refs/relay/checkpoints/inactive/turn-1", platform: "linux", root: repo })).exitCode).not.toBe(0);
+  expect((await runCommand({ command: "git show-ref --verify --quiet refs/relay/checkpoints/active/turn-1", platform: "linux", root: repo })).exitCode).toBe(0);
+}, 15_000);

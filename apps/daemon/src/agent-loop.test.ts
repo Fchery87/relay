@@ -42,6 +42,7 @@ test("coalesces rapid scripted chunks into a final persisted response", async ()
 
 test("an agent edit produces a diff document and commits in the fixture repo", async () => {
   const root = await mkdtemp(join(tmpdir(), "relay-agent-turn-"));
+  const checkpoints: Array<{ commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }> = [];
   const events: string[] = [];
   const diffs: string[] = [];
   await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test", platform: "linux", root });
@@ -57,6 +58,7 @@ test("an agent edit produces a diff document and commits in the fixture repo", a
       claimSteeringMessages: async () => [],
       completeAssistantMessage: async () => undefined,
       isStopRequested: async () => false,
+      recordCheckpoint: async (input) => { checkpoints.push(input); },
       recordUsage: async () => undefined,
       recordToolCompleted: async ({ summary }) => { events.push(summary); },
       snapshotDiff: async ({ content }) => { diffs.push(content); },
@@ -68,6 +70,9 @@ test("an agent edit produces a diff document and commits in the fixture repo", a
   expect(events).toEqual(["Edited result.txt"]);
   expect(diffs).toHaveLength(1);
   expect(diffs[0]).toContain("+agent edit");
+  expect(checkpoints).toHaveLength(1);
+  expect(checkpoints[0]).toMatchObject({ messageId: "assistant-message", ref: "refs/relay/checkpoints/thread/assistant-message", threadId: "thread" });
+  expect((await runCommand({ command: "git show refs/relay/checkpoints/thread/assistant-message:result.txt", platform: "linux", root })).stdout).toBe("agent edit");
 
   await stageAll({ root });
   const commit = await commitChanges({ message: "Apply agent edit", root });
@@ -168,26 +173,34 @@ test("submits normalized usage once when a scripted turn completes", async () =>
 });
 
 test("does not complete a turn when the provider omits usage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-agent-missing-usage-"));
+  await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test && git commit --allow-empty -m base", platform: "linux", root });
   let completed = false;
   let recorded = false;
+  const checkpoints: string[] = [];
   await expect(runQueuedTurn({
     deviceToken: "device",
     gateway: {
       acknowledgeStop: async () => undefined,
       appendAssistantText: async () => undefined,
       beginAssistantMessage: async () => "assistant-message",
-      claimQueuedMessage: async () => ({ content: "hello", projectPath: "/tmp", threadId: "thread" }),
+      claimQueuedMessage: async () => ({ content: "hello", projectPath: root, threadId: "thread" }),
       claimSteeringMessages: async () => [],
       completeAssistantMessage: async () => { completed = true; },
       isStopRequested: async () => false,
+      recordCheckpoint: async ({ commit }) => { checkpoints.push(commit); },
       recordUsage: async () => { recorded = true; },
     },
     governance,
     policy,
-    provider: { async *streamReply() { yield { kind: "text", text: "partial" } as const; } },
+    provider: {
+      async *streamReply() { yield { kind: "text", text: "partial" } as const; },
+      async *toolCalls() { yield { content: "changed", kind: "edit", path: "result.txt" } as const; },
+    },
   })).rejects.toThrow("did not report usage");
   expect(recorded).toBe(false);
   expect(completed).toBe(false);
+  expect(checkpoints).toHaveLength(1);
 });
 
 test("injects a queued steer after an in-flight tool call completes", async () => {
@@ -309,4 +322,42 @@ test("Stop aborts an in-flight model stream and persists its partial text", asyn
 
   expect(acknowledged).toBe(true);
   expect(updates.at(-1)).toBe("partial");
+});
+
+test("Stop during streaming checkpoints mutations before ending the turn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-agent-stream-stop-"));
+  await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test && git commit --allow-empty -m base", platform: "linux", root });
+  let stopChecks = 0;
+  const checkpoints: string[] = [];
+  const provider: ModelProvider = {
+    async *streamReply({ signal }) {
+      yield { kind: "text", text: "partial" };
+      while (!signal.aborted) await Bun.sleep(5);
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    },
+    async *toolCalls() { yield { content: "changed", kind: "edit", path: "result.txt" }; },
+  };
+
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "start", projectPath: root, threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => { stopChecks += 1; return stopChecks > 3; },
+      recordCheckpoint: async ({ commit }) => { checkpoints.push(commit); },
+      recordUsage: async () => undefined,
+    },
+    governance,
+    policy,
+    provider,
+  });
+
+  expect(checkpoints).toHaveLength(1);
+  expect((await runCommand({ command: `git show ${checkpoints[0]}:result.txt`, platform: "linux", root })).stdout).toBe("changed");
 });

@@ -72,6 +72,8 @@ button, textarea { background: #252622; border: 1px solid #454640; color: inheri
 button { cursor: pointer; }
 .messages { display: grid; gap: 8px; min-height: 240px; }
 .message { margin: 0; max-width: 72ch; white-space: pre-wrap; }
+.message-assistant { align-items: start; display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr) auto; }
+.checkpoint-restore { color: #b7b7af; font-size: 11px; padding: 4px 7px; white-space: nowrap; }
 .message-user { color: #f3d785; }
 .message-pending { color: #b9aa72; opacity: 0.78; }
 .pending-label { color: #a9aaa4; font-size: 11px; margin-left: 8px; }
@@ -88,6 +90,10 @@ button { cursor: pointer; }
 .command-form input { background: #252622; border: 1px solid #454640; color: inherit; min-width: 0; padding: 8px; }
 .diff-panel { border-top: 1px solid #353632; padding-top: 16px; }
 .diff-panel h2 { font-size: 14px; }
+.checkpoint-comparison { display: grid; gap: 6px; grid-template-columns: minmax(100px, auto) minmax(100px, auto) auto; margin: 0 0 10px; width: fit-content; }
+.checkpoint-comparison select { background: #252622; border: 1px solid #454640; color: inherit; padding: 6px 8px; }
+.current-diff { font-size: 11px; margin-bottom: 8px; padding: 5px 8px; }
+.comparison-status { color: #a9aaa4; font-size: 11px; margin: 0 0 8px; min-height: 14px; }
 .diff-files { display: grid; gap: 12px; }
 .diff-file h3 { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; margin: 0 0 5px; }
 .diff-editor { border: 1px solid #353632; max-height: 360px; overflow: auto; }

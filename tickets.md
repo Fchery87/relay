@@ -119,9 +119,9 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Threads run on disposable worktrees.
 
-- [ ] Snapshot per mutating turn under a dedicated ref namespace with retention policy
-- [ ] Revert-to-turn from the thread timeline restores the worktree and records the action
-- [ ] End-to-end test: edit → snapshot → revert restores prior file state
+- [x] Snapshot per mutating turn under a dedicated ref namespace with retention policy
+- [x] Revert-to-turn from the thread timeline restores the worktree and records the action
+- [x] End-to-end test: edit → snapshot → revert restores prior file state
 
 ## Subagents: roster, narrowing, contracts
 

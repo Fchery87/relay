@@ -2,7 +2,7 @@ import { makeFunctionReference, mutationGeneric, queryGeneric } from "convex/ser
 import { v } from "convex/values";
 import { DEFAULT_MODEL_ID, MODEL_CATALOG, listThinkingLevels } from "@relay/shared";
 
-const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("stopped"), v.literal("done"), v.literal("failed"));
+const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("restoring"), v.literal("stopped"), v.literal("done"), v.literal("failed"));
 const removeUsageForThread = makeFunctionReference<"mutation", { threadId: string }, null>("usage:removeForThreadBatch");
 
 export const createThread = mutationGeneric({
@@ -33,7 +33,7 @@ export const sendUserMessage = mutationGeneric({
     const messageId = await ctx.db.insert("messages", { ...args, queuedThreadId: args.threadId, role: "user", status: "queued" });
     const thread = await ctx.db.get("threads", args.threadId);
     if (!thread) throw new Error("Thread not found");
-    if (thread.status !== "running" && thread.status !== "awaiting-approval") await ctx.db.patch(args.threadId, { status: "queued" });
+    if (thread.status !== "running" && thread.status !== "awaiting-approval" && thread.status !== "restoring") await ctx.db.patch(args.threadId, { status: "queued" });
     return messageId;
   },
 });
@@ -109,6 +109,10 @@ export const listThreadIds = queryGeneric({
 export const removeThread = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    for await (const event of ctx.db.query("events").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(event._id);
+    for await (const comparison of ctx.db.query("checkpointComparisons").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comparison._id);
+    for await (const action of ctx.db.query("checkpointActions").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(action._id);
+    for await (const checkpoint of ctx.db.query("checkpoints").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(checkpoint._id);
     for await (const message of ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(message._id);
     for await (const comment of ctx.db.query("diffComments").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comment._id);
     for await (const approval of ctx.db.query("approvals").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(approval._id);
@@ -127,7 +131,7 @@ export const claimQueuedMessage = mutationGeneric({
     for await (const message of ctx.db.query("messages").withIndex("by_status", (q) => q.eq("status", "queued"))) {
       const thread = await ctx.db.get("threads", message.threadId);
       if (!thread) continue;
-      if (thread.status === "running" || thread.status === "awaiting-approval" || thread.status === "stopped") continue;
+      if (thread.status === "running" || thread.status === "awaiting-approval" || thread.status === "restoring" || thread.status === "stopped") continue;
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id) continue;
       const reviewComments = await ctx.db.query("diffComments")

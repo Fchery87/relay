@@ -2,6 +2,7 @@ import type { ModelProvider, ModelProviderRouter } from "./model-provider";
 import { DEFAULT_MODEL_ID, type MachinePlatform, type TokenUsage } from "@relay/shared";
 import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
+import { createCheckpoint } from "./checkpoints";
 import type { Policy } from "./policy";
 
 export interface ConversationGateway {
@@ -12,6 +13,7 @@ export interface ConversationGateway {
   claimSteeringMessages(input: { deviceToken: string; threadId: string }): Promise<Array<{ content: string }>>;
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; threadId: string }): Promise<unknown>;
   isStopRequested(input: { deviceToken: string; threadId: string }): Promise<boolean>;
+  recordCheckpoint?(input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }): Promise<unknown>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
   recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
@@ -60,8 +62,15 @@ export async function runQueuedTurn({
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   const steeringMessages: string[] = [];
   const toolResults: string[] = [];
+  let checkpointed = false;
+  let mutated = false;
+  const checkpointTurn = async () => {
+    if (!mutated || checkpointed || !gateway.recordCheckpoint) return;
+    const checkpoint = await createCheckpoint({ root, threadId: queued.threadId, turnId: messageId });
+    await gateway.recordCheckpoint({ ...checkpoint, deviceToken, messageId, threadId: queued.threadId });
+    checkpointed = true;
+  };
   if (turnProvider.toolCalls) {
-    let mutated = false;
     for await (const call of turnProvider.toolCalls({ prompt })) {
       if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
         await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
@@ -77,9 +86,10 @@ export async function runQueuedTurn({
         threadId: queued.threadId,
       });
       toolResults.push(toolResult.output);
-      if (call.kind === "edit" || call.kind === "bash") mutated = true;
+      if (toolResult.kind === "executed" && (call.kind === "edit" || call.kind === "bash")) mutated = true;
       if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
         if (mutated) await gateway.snapshotDiff?.({ content: await computeDiff({ root, startCommit: "HEAD" }), threadId: queued.threadId });
+        await checkpointTurn();
         await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
         return true;
       }
@@ -96,46 +106,51 @@ export async function runQueuedTurn({
   const steeringContext = steeringMessages.length === 0 ? "" : `\n\n<steering_messages>\n${steeringMessages.map((message) => `<message>${escapeXml(message)}</message>`).join("\n")}\n</steering_messages>`;
   const responsePrompt = `${prompt}${toolContext}${steeringContext}`;
   if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
+    await checkpointTurn();
     await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
     return true;
   }
-  const abortController = new AbortController();
-  let monitoring = true;
-  let stopped = false;
-  const stopMonitor = monitorStop({
-    deviceToken,
-    gateway,
-    onStop: () => { stopped = true; abortController.abort(); },
-    shouldContinue: () => monitoring,
-    threadId: queued.threadId,
-  });
   try {
-    for await (const event of turnProvider.streamReply({ prompt: responsePrompt, signal: abortController.signal })) {
-      if (event.kind === "usage") {
-        usage = event.usage;
-        continue;
+    const abortController = new AbortController();
+    let monitoring = true;
+    let stopped = false;
+    const stopMonitor = monitorStop({
+      deviceToken,
+      gateway,
+      onStop: () => { stopped = true; abortController.abort(); },
+      shouldContinue: () => monitoring,
+      threadId: queued.threadId,
+    });
+    try {
+      for await (const event of turnProvider.streamReply({ prompt: responsePrompt, signal: abortController.signal })) {
+        if (event.kind === "usage") {
+          usage = event.usage;
+          continue;
+        }
+        content += event.text;
+        if (Date.now() - lastFlushAt >= 200) {
+          await gateway.appendAssistantText({ content, messageId });
+          lastFlushAt = Date.now();
+        }
       }
-      content += event.text;
-      if (Date.now() - lastFlushAt >= 200) {
-        await gateway.appendAssistantText({ content, messageId });
-        lastFlushAt = Date.now();
-      }
+    } catch (error) {
+      if (!stopped || !isAbortError(error)) throw error;
+    } finally {
+      monitoring = false;
+      abortController.abort();
+      await stopMonitor;
     }
-  } catch (error) {
-    if (!stopped || !isAbortError(error)) throw error;
+    await gateway.appendAssistantText({ content, messageId });
+    if (stopped) {
+      await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
+      return true;
+    }
+    if (!usage) throw new Error("Model provider did not report usage");
+    const modelId = turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID;
+    await gateway.recordUsage({ callId: crypto.randomUUID(), messageId, modelId, role: "primary", threadId: queued.threadId, usage });
   } finally {
-    monitoring = false;
-    abortController.abort();
-    await stopMonitor;
+    await checkpointTurn();
   }
-  await gateway.appendAssistantText({ content, messageId });
-  if (stopped) {
-    await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
-    return true;
-  }
-  if (!usage) throw new Error("Model provider did not report usage");
-  const modelId = turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID;
-  await gateway.recordUsage({ callId: crypto.randomUUID(), messageId, modelId, role: "primary", threadId: queued.threadId, usage });
   await gateway.completeAssistantMessage({ messageId, resolvedCommentIds: reviewComments.map((comment) => comment.commentId), threadId: queued.threadId });
   return true;
 }

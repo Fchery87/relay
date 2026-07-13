@@ -24,4 +24,16 @@ test("renders Stop only for a running turn and disables it while the request is 
   expect(stopping).toContain("disabled");
   expect(idle).not.toContain("Stop");
   expect(idle).toContain("Awaiting input");
+  expect(renderToStaticMarkup(<ThreadRunControls onStop={async () => undefined} status="restoring" stopRequested={false} />)).toContain("Restoring...");
+});
+
+test("renders a restore action beside the assistant turn that owns a checkpoint", () => {
+  const markup = renderToStaticMarkup(<ThreadMessages
+    checkpoints={[{ _id: "checkpoint-1", messageId: "message-1" }]}
+    messages={[{ _id: "message-1", content: "Implemented the change", role: "assistant", status: "complete" }]}
+    onRestore={async () => undefined}
+  />);
+  expect(markup).toContain("Implemented the change");
+  expect(markup).toContain("Restore");
+  expect(markup).toContain('aria-label="Restore checkpoint for this turn"');
 });

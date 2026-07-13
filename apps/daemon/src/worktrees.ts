@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runCommand } from "./tools";
+import { deleteCheckpointNamespace } from "./checkpoints";
 
 export async function assertGitAvailable(): Promise<void> {
   const result = await runCommand({ command: "git --version", platform: process.platform === "win32" ? "win32" : "linux", root: process.cwd() });
@@ -44,6 +45,7 @@ export class ThreadWorktrees {
     await this.#load();
     for (const [threadId, entry] of this.#entries) {
       if (activeThreadIds.has(threadId)) continue;
+      await deleteCheckpointNamespace({ root: entry.worktreePath, threadId });
       await removeThreadWorktree(entry);
       this.#entries.delete(threadId);
     }

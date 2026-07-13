@@ -10,6 +10,7 @@
 
 import type * as approvals from "../approvals.js";
 import type * as audit_log from "../audit_log.js";
+import type * as checkpoints from "../checkpoints.js";
 import type * as commands from "../commands.js";
 import type * as conversations from "../conversations.js";
 import type * as diff_comments from "../diff_comments.js";
@@ -29,6 +30,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   approvals: typeof approvals;
   audit_log: typeof audit_log;
+  checkpoints: typeof checkpoints;
   commands: typeof commands;
   conversations: typeof conversations;
   diff_comments: typeof diff_comments;

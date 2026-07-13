@@ -3,7 +3,12 @@ import { v } from "convex/values";
 
 export const enqueue = mutationGeneric({
   args: { command: v.string(), threadId: v.id("threads") },
-  handler: (ctx, args) => ctx.db.insert("commands", { ...args, status: "queued" }),
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get("threads", args.threadId);
+    if (!thread) throw new Error("Thread not found");
+    if (thread.status === "restoring") throw new Error("Cannot run a command during checkpoint restore");
+    return ctx.db.insert("commands", { ...args, status: "queued" });
+  },
 });
 
 export const listForThread = queryGeneric({
@@ -20,7 +25,7 @@ export const claim = mutationGeneric({
     for (const command of queued) {
       const thread = await ctx.db.get("threads", command.threadId);
       if (!thread) continue;
-      if (thread.status === "running" || thread.status === "awaiting-approval") continue;
+      if (thread.status === "running" || thread.status === "awaiting-approval" || thread.status === "restoring") continue;
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id) continue;
       await ctx.db.patch(command._id, { status: "running" });

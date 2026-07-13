@@ -22,14 +22,15 @@ export function isReviewableDiff(content: string): boolean {
 export function DiffView({ comments, content, onCreateComment }: {
   comments: DiffComment[];
   content: string;
-  onCreateComment(input: { content: string; endLine: number; filePath: string; startLine: number }): Promise<unknown>;
+  onCreateComment?(input: { content: string; endLine: number; filePath: string; startLine: number }): Promise<unknown>;
 }) {
   const files = splitFiles(content);
   const commentsByFile = groupCommentsByFile(comments);
-  const reviewable = isReviewableDiff(content);
+  const reviewable = Boolean(onCreateComment) && isReviewableDiff(content);
+  const createComment = onCreateComment ?? (async () => undefined);
   return <div className="diff-files">{files.map((file) => <section className="diff-file" key={file.name}>
     <h3>{file.name}</h3>
-    <DiffFile comments={commentsByFile.get(file.name) ?? []} content={file.content} filePath={file.name} onCreateComment={onCreateComment} reviewable={reviewable} />
+    <DiffFile comments={commentsByFile.get(file.name) ?? []} content={file.content} filePath={file.name} onCreateComment={createComment} reviewable={reviewable} />
   </section>)}</div>;
 }
 

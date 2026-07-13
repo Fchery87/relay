@@ -33,8 +33,26 @@ export const approvalResolutionSchema = z.object({
 
 export const steeringMessagesSchema = z.array(z.object({ content: z.string().min(1).max(1_000_000) })).max(100);
 export const stopStateSchema = z.object({ requested: z.boolean() });
+export const queuedRestoreSchema = z.object({
+  actionId: id,
+  claimToken: id,
+  checkpointId: id,
+  commit: z.string().regex(/^[0-9a-f]{4,64}$/i),
+  projectPath,
+  threadId: id,
+});
+export const queuedComparisonSchema = z.object({
+  claimToken: id,
+  comparisonId: id,
+  fromCommit: z.string().regex(/^[0-9a-f]{4,64}$/i),
+  projectPath,
+  threadId: id,
+  toCommit: z.string().regex(/^[0-9a-f]{4,64}$/i),
+});
 
 export type QueuedCommand = z.infer<typeof queuedCommandSchema>;
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type SteeringMessages = z.infer<typeof steeringMessagesSchema>;
 export type StopState = z.infer<typeof stopStateSchema>;
+export type QueuedRestore = z.infer<typeof queuedRestoreSchema>;
+export type QueuedComparison = z.infer<typeof queuedComparisonSchema>;

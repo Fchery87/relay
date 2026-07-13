@@ -1,7 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 
-import { approvalResolutionSchema, queuedCommandSchema, queuedMessageSchema, steeringMessagesSchema, stopStateSchema, type MachineRegistration, type TokenUsage } from "@relay/shared";
+import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, queuedMessageSchema, queuedRestoreSchema, steeringMessagesSchema, stopStateSchema, type MachineRegistration, type TokenUsage } from "@relay/shared";
 
 const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: string }>(
   "machines:heartbeat",
@@ -28,6 +28,11 @@ const recordUsageMutation = makeFunctionReference<"mutation", { callId: string; 
 const claimSteeringMessagesMutation = makeFunctionReference<"mutation", { deviceToken: string; threadId: string }, unknown>("conversations:claimSteeringMessages");
 const getStopStateQuery = makeFunctionReference<"query", { deviceToken: string; threadId: string }, unknown>("conversations:getStopState");
 const acknowledgeStopMutation = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; threadId: string }, null>("conversations:acknowledgeStop");
+const recordCheckpointMutation = makeFunctionReference<"mutation", { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }, string>("checkpoints:record");
+const claimCheckpointRestoreMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("checkpoints:claimRestore");
+const completeCheckpointRestoreMutation = makeFunctionReference<"mutation", { actionId: string; claimToken: string; deviceToken: string; status: "complete" | "failed" }, null>("checkpoints:completeRestore");
+const claimCheckpointComparisonMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("checkpoints:claimComparison");
+const completeCheckpointComparisonMutation = makeFunctionReference<"mutation", { claimToken: string; comparisonId: string; content: string; deviceToken: string; status: "complete" | "failed" }, null>("checkpoints:completeComparison");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -73,8 +78,26 @@ export function createConvexConversationGateway({ deploymentUrl }: { deploymentU
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "read" }) => client.mutation(appendToolCompletedMutation, input),
     listThreadIds: () => client.query(listThreadIdsQuery, {}),
     isStopRequested: async (input: { deviceToken: string; threadId: string }) => stopStateSchema.parse(await client.query(getStopStateQuery, input)).requested,
+    recordCheckpoint: (input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }) => client.mutation(recordCheckpointMutation, input),
     recordUsage: (input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }) => client.mutation(recordUsageMutation, input),
     snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
+  };
+}
+
+export function createConvexCheckpointGateway({ deploymentUrl, deviceToken }: { deploymentUrl: string; deviceToken: string }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    claim: async () => queuedRestoreSchema.nullable().parse(await client.mutation(claimCheckpointRestoreMutation, { deviceToken })),
+    complete: (input: { actionId: string; claimToken: string; status: "complete" | "failed" }) => client.mutation(completeCheckpointRestoreMutation, { ...input, deviceToken }),
+    snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, input),
+  };
+}
+
+export function createConvexCheckpointComparisonGateway({ deploymentUrl, deviceToken }: { deploymentUrl: string; deviceToken: string }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    claim: async () => queuedComparisonSchema.nullable().parse(await client.mutation(claimCheckpointComparisonMutation, { deviceToken })),
+    complete: (input: { claimToken: string; comparisonId: string; content: string; status: "complete" | "failed" }) => client.mutation(completeCheckpointComparisonMutation, { ...input, deviceToken }),
   };
 }
 

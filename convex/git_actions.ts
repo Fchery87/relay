@@ -5,7 +5,12 @@ const action = v.union(v.literal("stage"), v.literal("commit"), v.literal("push"
 
 export const enqueue = mutationGeneric({
   args: { action, message: v.optional(v.string()), threadId: v.id("threads") },
-  handler: (ctx, args) => ctx.db.insert("gitActions", { ...args, status: "queued" }),
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get("threads", args.threadId);
+    if (!thread) throw new Error("Thread not found");
+    if (thread.status === "restoring") throw new Error("Cannot run a Git action during checkpoint restore");
+    return ctx.db.insert("gitActions", { ...args, status: "queued" });
+  },
 });
 
 export const listForThread = queryGeneric({
@@ -22,6 +27,7 @@ export const claim = mutationGeneric({
     for (const item of queued) {
       const thread = await ctx.db.get("threads", item.threadId);
       if (!thread) continue;
+      if (thread.status === "restoring") continue;
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id) continue;
       await ctx.db.patch(item._id, { status: "running" });

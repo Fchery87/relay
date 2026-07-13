@@ -6,8 +6,10 @@ import { loadDaemonConfig } from "./config";
 import { runQueuedTurn } from "./agent-loop";
 import { runQueuedCommand } from "./command-worker";
 import { runQueuedGitAction } from "./git-worker";
+import { runQueuedCheckpointRestore } from "./checkpoint-worker";
+import { runQueuedCheckpointComparison } from "./checkpoint-comparison-worker";
 import { ScriptedModelProvider } from "./model-provider";
-import { createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
+import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, MachineReporter } from "./relay-client";
 import { ThreadWorktrees } from "./worktrees";
 import { loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
@@ -50,6 +52,16 @@ setInterval(() => {
     resolveProjectRoot: (input) => worktrees.resolve(input),
   }).catch((error: unknown) => console.error("Relay turn failed", error));
 }, 200);
+
+const checkpointComparisonGateway = createConvexCheckpointComparisonGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
+let checkpointComparisonRunning = false;
+setInterval(() => {
+  if (checkpointComparisonRunning) return;
+  checkpointComparisonRunning = true;
+  void runQueuedCheckpointComparison({ gateway: checkpointComparisonGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
+    .catch((error: unknown) => console.error("Relay checkpoint comparison failed", error))
+    .finally(() => { checkpointComparisonRunning = false; });
+}, 200);
 const gitGateway = createConvexGitGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let gitActionRunning = false;
 setInterval(() => {
@@ -58,6 +70,16 @@ setInterval(() => {
   void runQueuedGitAction({ gateway: gitGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay git action failed", error))
     .finally(() => { gitActionRunning = false; });
+}, 200);
+
+const checkpointGateway = createConvexCheckpointGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
+let checkpointRestoreRunning = false;
+setInterval(() => {
+  if (checkpointRestoreRunning) return;
+  checkpointRestoreRunning = true;
+  void runQueuedCheckpointRestore({ gateway: checkpointGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
+    .catch((error: unknown) => console.error("Relay checkpoint restore failed", error))
+    .finally(() => { checkpointRestoreRunning = false; });
 }, 200);
 
 const commandGateway = createConvexCommandGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });

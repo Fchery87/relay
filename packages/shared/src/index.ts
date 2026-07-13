@@ -19,12 +19,16 @@ export { toolEventSchema, type ToolEvent } from "./tools";
 export {
   approvalResolutionSchema,
   queuedCommandSchema,
+  queuedComparisonSchema,
   queuedMessageSchema,
+  queuedRestoreSchema,
   reviewCommentTransportSchema,
   steeringMessagesSchema,
   stopStateSchema,
   type QueuedCommand,
+  type QueuedComparison,
   type QueuedMessage,
+  type QueuedRestore,
   type SteeringMessages,
   type StopState,
 } from "./transport";
