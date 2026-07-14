@@ -16,9 +16,10 @@ async function withDaemonHome(run: (daemonHome: string) => Promise<void>) {
 
 test("stores paired device credentials in an owner-only file", async () => {
   await withDaemonHome(async (daemonHome) => {
-    await saveDeviceCredentials({ daemonHome, deviceToken: "paired-device-token" });
+    await saveDeviceCredentials({ daemonHome, deploymentUrl: "https://relay.convex.cloud", deviceToken: "paired-device-token" });
 
     expect(await loadDeviceCredentials({ daemonHome })).toEqual({
+      deploymentUrl: "https://relay.convex.cloud",
       deviceToken: "paired-device-token",
     });
     const credentialsStat = await stat(join(daemonHome, "device.json"));

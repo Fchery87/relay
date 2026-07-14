@@ -1,0 +1,19 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions: { contents: write }
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run release:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-release-${{ github.ref_name }}
+          path: dist/release
+      - run: gh release create "$GITHUB_REF_NAME" dist/release/* --generate-notes
+        env: { GH_TOKEN: ${{ github.token }} }

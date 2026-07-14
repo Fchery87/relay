@@ -13,16 +13,17 @@ type PairingState = { status: "waiting" | "claimed" | "expired" };
 
 type PairDeviceInput = {
   daemonHome: string;
+  deploymentUrl: string;
   deviceToken: string;
   generateCode: () => string;
   output: (line: string) => void;
   pollIntervalMs: number;
   start: (input: { code: string; deviceToken: string }) => Promise<unknown>;
   waitForClaim: (input: { code: string }) => Promise<PairingState>;
-  writeCredentials: (input: { daemonHome: string; deviceToken: string }) => Promise<void>;
+  writeCredentials: (input: { daemonHome: string; deploymentUrl: string; deviceToken: string }) => Promise<void>;
 };
 
-export async function pairDevice({ daemonHome, deviceToken, generateCode, output, pollIntervalMs, start, waitForClaim, writeCredentials }: PairDeviceInput): Promise<void> {
+export async function pairDevice({ daemonHome, deploymentUrl, deviceToken, generateCode, output, pollIntervalMs, start, waitForClaim, writeCredentials }: PairDeviceInput): Promise<void> {
   const code = generateCode();
   await start({ code, deviceToken });
   output(`Pair this daemon in Relay with code: ${code}`);
@@ -30,7 +31,7 @@ export async function pairDevice({ daemonHome, deviceToken, generateCode, output
   for (;;) {
     const pairing = await waitForClaim({ code });
     if (pairing.status === "claimed") {
-      await writeCredentials({ daemonHome, deviceToken });
+      await writeCredentials({ daemonHome, deploymentUrl, deviceToken });
       return;
     }
     if (pairing.status === "expired") {
@@ -60,6 +61,7 @@ export async function runConnect({
   const client = new ConvexHttpClient(deploymentUrl);
   await pairDevice({
     daemonHome,
+    deploymentUrl,
     deviceToken: randomOpaqueValue(48),
     generateCode: () => randomOpaqueValue(10),
     output: (line) => console.info(line),

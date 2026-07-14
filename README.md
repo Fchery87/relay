@@ -1,6 +1,6 @@
 # Relay
 
-Relay is a browser control surface for a local coding-agent daemon. This initial walking skeleton registers a development machine and its projects in Convex, then renders its heartbeat state in the web sidebar.
+Relay is a browser control surface for a local coding-agent daemon. It pairs a locally running daemon with the Convex-backed workspace and renders its machine state in the web sidebar.
 
 ## Development
 
@@ -16,7 +16,11 @@ RELAY_PROJECTS='[{"name":"relay","path":"/absolute/path/to/relay"}]' \
 bun run daemon:dev
 ```
 
-The sidebar marks a machine offline 30 seconds after its last heartbeat. Production authentication and pairing are separate follow-on work.
+The sidebar marks a machine offline 30 seconds after its last heartbeat.
+
+## Production
+
+The production distribution includes compiled Linux, macOS, and Windows daemon binaries, installers, release automation, and a Cloudflare Pages deployment workflow. Follow [the production deployment guide](docs/production-deployment.md) to configure Cloudflare and Convex credentials, create a release, install the daemon, pair it, and start it.
 
 ## Verification
 

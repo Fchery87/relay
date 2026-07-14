@@ -26,7 +26,7 @@ const appendAssistantText = makeFunctionReference<"mutation", { content: string;
 const completeAssistantMessage = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; threadId: string; status: "done" }, null>("conversations:completeAssistantMessage");
 const getStopState = makeFunctionReference<"query", { deviceToken: string; threadId: string }, { requested: boolean }>("conversations:getStopState");
 const acknowledgeStop = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; threadId: string }, null>("conversations:acknowledgeStop");
-const recordUsage = makeFunctionReference<"mutation", Parameters<ConversationGateway["recordUsage"]>[0], string>("usage:record");
+const recordUsage = makeFunctionReference<"mutation", Parameters<ConversationGateway["recordUsage"]>[0] & { deviceToken: string }, string>("usage:record");
 const listThreadMessages = makeFunctionReference<"query", { threadId: string }, Array<{ content: string; status: string }>>("conversations:listThreadMessages");
 
 const governance: GovernanceGateway = { recordDecision: async () => undefined, requestApproval: async () => "allow" };

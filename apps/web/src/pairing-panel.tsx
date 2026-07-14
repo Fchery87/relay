@@ -24,5 +24,5 @@ export function PairingForm({ onSubmit }: { onSubmit: (code: string) => Promise<
 
 export function PairingPanel() {
   const claim = useMutation(claimPairing);
-  return <PairingForm onSubmit={(code) => claim({ code })} />;
+  return <PairingForm onSubmit={async (code) => { await claim({ code }); }} />;
 }

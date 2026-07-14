@@ -32,7 +32,7 @@ function AuthenticatedWorkspace() {
   const machines = useQuery(listMachinesAndProjects, {});
   const revoke = useMutation(revokeMachine);
   const { signOut } = useAuthActions();
-  return <Workspace machines={machines} onRevoke={(machineId) => revoke({ machineId })} onSignOut={signOut} state={machines === undefined ? "loading" : "ready"} />;
+  return <Workspace machines={machines} onRevoke={async (machineId) => { await revoke({ machineId }); }} onSignOut={signOut} state={machines === undefined ? "loading" : "ready"} />;
 }
 
 export function UnconfiguredWorkspace() {
@@ -46,7 +46,7 @@ function Workspace({
   state,
 }: {
   machines: MachineSummary[] | undefined;
-  onRevoke?: (machineId: string) => Promise<unknown>;
+  onRevoke?: (machineId: string) => Promise<void>;
   onSignOut?: () => Promise<void>;
   state: "loading" | "ready" | "unconfigured";
 }) {

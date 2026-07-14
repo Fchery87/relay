@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { loadDaemonConfig } from "./config";
+import { resolveDaemonHome } from "./daemon-home";
 import { loadDeviceCredentials } from "./device-credentials";
 import { isDeviceTokenRejected } from "./device-auth";
 import { runQueuedTurn } from "./agent-loop";
@@ -18,9 +19,10 @@ import { loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
 import { McpRegistry } from "./mcp-registry";
 
-const daemonHome = Bun.env.RELAY_DAEMON_HOME ?? join(homedir(), ".relay");
+export async function runDaemon(): Promise<void> {
+const daemonHome = resolveDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform });
 const storedCredentials = await loadDeviceCredentials({ daemonHome });
-const config = loadDaemonConfig({ env: Bun.env, hostname, storedDeviceToken: storedCredentials?.deviceToken });
+const config = loadDaemonConfig({ env: Bun.env, hostname, storedDeploymentUrl: storedCredentials?.deploymentUrl, storedDeviceToken: storedCredentials?.deviceToken });
 const reporter = new MachineReporter({
   gateway: createConvexMachineGateway({ deploymentUrl: config.deploymentUrl }),
   registration: config.registration,
@@ -133,3 +135,11 @@ setInterval(() => {
     .catch((error: unknown) => console.error("Relay command failed", error))
     .finally(() => { commandRunning = false; });
 }, 200);
+}
+
+if (import.meta.main) {
+  runDaemon().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

@@ -1,0 +1,18 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions: { contents: read }
+jobs:
+  test:
+    strategy: { matrix: { os: [ubuntu-latest, macos-latest, windows-latest] } }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run daemon:build:native
+      - run: bun run release:smoke

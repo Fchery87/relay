@@ -36,7 +36,9 @@ test("prefers the paired device token over the development environment fallback"
     },
     hostname: () => "dev-machine",
     storedDeviceToken: "paired-device-token",
+    storedDeploymentUrl: "https://paired.convex.cloud",
   });
 
   expect(config.registration.deviceToken).toBe("paired-device-token");
+  expect(config.deploymentUrl).toBe("https://paired.convex.cloud");
 });

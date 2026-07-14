@@ -171,10 +171,10 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Real auth and machine pairing.
 
-- [ ] Single-file compiled daemon binaries for linux-x64/arm64, darwin-x64/arm64, windows-x64
-- [ ] curl|sh and PowerShell installers; daemon home in platform config dirs
-- [ ] CI matrix builds and smoke-tests the daemon on all three OSes
-- [ ] Hosted SPA deploy and production Convex deployment documented and scripted
+- [x] Single-file compiled daemon binaries for linux-x64/arm64, darwin-x64/arm64, windows-x64
+- [x] curl|sh and PowerShell installers; daemon home in platform config dirs
+- [x] CI matrix builds and smoke-tests the daemon on all three OSes
+- [x] Hosted SPA deploy and production Convex deployment documented and scripted
 
 ## Performance and polish pass
 

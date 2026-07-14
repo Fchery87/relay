@@ -25,7 +25,7 @@ const updatePair = ref<"mutation", { buildModelId: string; planModelId: string; 
 const updateDraft = ref<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:updateDraft");
 const approve = ref<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:approve");
 const getPlan = ref<"query", { threadId: string }, { content: string; status: string } | null>("plans:getForThread");
-const recordUsage = ref<"mutation", Parameters<ConversationGateway["recordUsage"]>[0], string>("usage:record");
+const recordUsage = ref<"mutation", Parameters<ConversationGateway["recordUsage"]>[0] & { deviceToken: string }, string>("usage:record");
 
 test("approved planner output is consumed by a different build model in the same thread", async () => {
   const t = convexTest(schema, modules);

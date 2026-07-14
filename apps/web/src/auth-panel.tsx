@@ -34,5 +34,5 @@ export function AuthForm({ onSubmit }: { onSubmit: (input: { email: string; mode
 
 export function AuthPanel() {
   const { signIn } = useAuthActions();
-  return <AuthForm onSubmit={({ email, mode, password }) => signIn("password", { email, flow: mode, password })} />;
+  return <AuthForm onSubmit={async ({ email, mode, password }) => { await signIn("password", { email, flow: mode, password }); }} />;
 }

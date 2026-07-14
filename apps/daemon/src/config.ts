@@ -20,10 +20,12 @@ function requiredEnv(env: Readonly<Record<string, string | undefined>>, name: st
 export function loadDaemonConfig({
   env,
   hostname,
+  storedDeploymentUrl,
   storedDeviceToken,
 }: {
   env: Readonly<Record<string, string | undefined>>;
   hostname: () => string;
+  storedDeploymentUrl?: string;
   storedDeviceToken?: string;
 }): DaemonConfig {
   const parsedPlatform = machinePlatformSchema.safeParse(process.platform);
@@ -35,7 +37,7 @@ export function loadDaemonConfig({
   const projects = projectsSchema.parse(projectsInput);
 
   return {
-    deploymentUrl: requiredEnv(env, "RELAY_CONVEX_URL"),
+    deploymentUrl: storedDeploymentUrl ?? requiredEnv(env, "RELAY_CONVEX_URL"),
     heartbeatIntervalMs: 10_000,
     registration: {
       daemonVersion: env.RELAY_DAEMON_VERSION ?? "0.0.0-dev",

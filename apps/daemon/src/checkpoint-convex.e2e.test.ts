@@ -33,7 +33,7 @@ const claimRestore = ref<"mutation", { deviceToken: string }, unknown>("checkpoi
 const completeRestore = ref<"mutation", { actionId: string; claimToken: string; deviceToken: string; status: "complete" | "failed" }, null>("checkpoints:completeRestore");
 const snapshotDiff = ref<"mutation", { content: string; deviceToken: string; threadId: string }, string>("diffs:snapshot");
 const listEvents = ref<"query", { threadId: string }, Array<{ kind: string }>>("events:list");
-const recordUsage = ref<"mutation", Parameters<ConversationGateway["recordUsage"]>[0], string>("usage:record");
+const recordUsage = ref<"mutation", Parameters<ConversationGateway["recordUsage"]>[0] & { deviceToken: string }, string>("usage:record");
 
 test("a Convex checkpoint action restores an agent turn and records the timeline event", async () => {
   const t = convexTest(schema, modules);
