@@ -26,3 +26,17 @@ test("loads daemon registration from environment", () => {
     },
   });
 });
+
+test("prefers the paired device token over the development environment fallback", () => {
+  const config = loadDaemonConfig({
+    env: {
+      RELAY_CONVEX_URL: "https://relay.convex.cloud",
+      RELAY_DEVICE_TOKEN: "development-device-token",
+      RELAY_PROJECTS: '[{"name":"relay","path":"/workspace/relay"}]',
+    },
+    hostname: () => "dev-machine",
+    storedDeviceToken: "paired-device-token",
+  });
+
+  expect(config.registration.deviceToken).toBe("paired-device-token");
+});

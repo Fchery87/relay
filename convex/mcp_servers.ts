@@ -1,5 +1,6 @@
 import { mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
+import { requireActiveMachine, requireOwnedProject, requireUser } from "./auth_helpers";
 
 const transport = v.union(
   v.object({ authEnvVar: v.optional(v.string()), kind: v.literal("http"), oauthIssuer: v.optional(v.string()), url: v.string() }),
@@ -10,6 +11,7 @@ const status = v.union(v.literal("disconnected"), v.literal("connecting"), v.lit
 export const create = mutationGeneric({
   args: { name: v.string(), projectId: v.id("projects"), threadId: v.id("threads"), transport },
   handler: async (ctx, args) => {
+    await requireOwnedProject(ctx, await requireUser(ctx), args.projectId);
     validateServerInput(args.name, args.transport);
     if (!(await ctx.db.get("projects", args.projectId))) throw new Error("MCP project not found");
     const thread = await ctx.db.get("threads", args.threadId);
@@ -24,6 +26,7 @@ export const update = mutationGeneric({
     validateServerInput(args.name, args.transport);
     const server = await ctx.db.get("mcpServers", args.serverId);
     if (!server) throw new Error("MCP server not found");
+    await requireOwnedProject(ctx, await requireUser(ctx), server.projectId);
     await ctx.db.patch(server._id, { authorizationUrl: undefined, enabled: args.enabled, error: undefined, name: args.name, status: "disconnected", toolCount: undefined, transport: args.transport });
   },
 });
@@ -52,20 +55,23 @@ export const remove = mutationGeneric({
   handler: async (ctx, args) => {
     const server = await ctx.db.get("mcpServers", args.serverId);
     if (!server) throw new Error("MCP server not found");
+    await requireOwnedProject(ctx, await requireUser(ctx), server.projectId);
     await ctx.db.delete(server._id);
   },
 });
 
 export const listForProject = queryGeneric({
   args: { projectId: v.id("projects") },
-  handler: (ctx, args) => ctx.db.query("mcpServers").withIndex("by_project", (q) => q.eq("projectId", args.projectId)).take(100),
+  handler: async (ctx, args) => {
+    await requireOwnedProject(ctx, await requireUser(ctx), args.projectId);
+    return ctx.db.query("mcpServers").withIndex("by_project", (q) => q.eq("projectId", args.projectId)).take(100);
+  },
 });
 
 export const listForDaemon = queryGeneric({
   args: { deviceToken: v.string() },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) throw new Error("Unknown development device token");
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
     const projects = await ctx.db.query("projects").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).take(100);
     const nested = await Promise.all(projects.map((project) => ctx.db.query("mcpServers").withIndex("by_project", (q) => q.eq("projectId", project._id)).take(100)));
     return nested.flat();
@@ -78,8 +84,9 @@ export const reportStatus = mutationGeneric({
     const server = await ctx.db.get("mcpServers", args.serverId);
     if (!server) throw new Error("MCP server not found");
     const project = await ctx.db.get("projects", server.projectId);
-    const machine = project ? await ctx.db.get("machines", project.machineId) : null;
-    if (!machine || machine.deviceToken !== args.deviceToken) throw new Error("Daemon does not own MCP server");
+    if (!project) throw new Error("MCP server project not found");
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
+    if (project.machineId !== machine._id) throw new Error("Daemon does not own MCP server");
     await ctx.db.patch(server._id, { authorizationUrl: args.authorizationUrl, error: args.error, status: args.status, toolCount: args.toolCount });
   },
 });

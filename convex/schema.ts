@@ -1,15 +1,27 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 export default defineSchema({
+  ...authTables,
   machines: defineTable({
     capabilityCeiling: v.optional(v.array(v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task")))),
-    deviceToken: v.string(),
+    deviceToken: v.optional(v.string()),
+    deviceTokenHash: v.optional(v.string()),
     name: v.string(),
+    ownerId: v.optional(v.id("users")),
     platform: v.union(v.literal("darwin"), v.literal("linux"), v.literal("win32")),
     daemonVersion: v.string(),
     lastHeartbeatAt: v.number(),
-  }).index("by_device_token", ["deviceToken"]),
+    revokedAt: v.optional(v.number()),
+  }).index("by_device_token", ["deviceToken"]).index("by_device_token_hash", ["deviceTokenHash"]).index("by_owner", ["ownerId"]),
+  pairings: defineTable({
+    codeHash: v.string(),
+    deviceTokenHash: v.string(),
+    expiresAt: v.number(),
+    ownerId: v.optional(v.id("users")),
+    status: v.union(v.literal("waiting"), v.literal("claimed")),
+  }).index("by_code_hash", ["codeHash"]).index("by_device_token_hash", ["deviceTokenHash"]),
   projects: defineTable({
     machineId: v.id("machines"),
     name: v.string(),

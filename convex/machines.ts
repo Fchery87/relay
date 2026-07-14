@@ -1,6 +1,7 @@
 import { mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
 
+import { digestSecret, requireUser } from "./auth_helpers";
 import { toProjectSummary } from "./machine_summaries";
 
 const platformValidator = v.union(v.literal("darwin"), v.literal("linux"), v.literal("win32"));
@@ -16,17 +17,22 @@ export const registerMachine = mutationGeneric({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
+    const deviceTokenHash = await digestSecret(args.deviceToken);
     const existing = await ctx.db
       .query("machines")
-      .withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken))
+      .withIndex("by_device_token_hash", (q) => q.eq("deviceTokenHash", deviceTokenHash))
       .unique();
+    if (existing?.revokedAt) throw new Error("Device token has been revoked");
+    const pairing = existing ? null : await ctx.db.query("pairings").withIndex("by_device_token_hash", (q) => q.eq("deviceTokenHash", deviceTokenHash)).unique();
+    if (!existing && (!pairing || pairing.status !== "claimed" || !pairing.ownerId || pairing.expiresAt <= now)) throw new Error("Device token has not been paired");
     const machineId = existing
       ? existing._id
       : await ctx.db.insert("machines", {
           daemonVersion: args.daemonVersion,
-          deviceToken: args.deviceToken,
+          deviceTokenHash,
           lastHeartbeatAt: now,
           name: args.name,
+          ownerId: pairing!.ownerId,
           platform: args.platform,
         });
 
@@ -52,11 +58,7 @@ export const registerMachine = mutationGeneric({
     }
 
     for (const project of args.projects) {
-      const existingProject = await ctx.db
-        .query("projects")
-        .withIndex("by_machine", (q) => q.eq("machineId", machineId))
-        .filter((q) => q.eq(q.field("path"), project.path))
-        .unique();
+      const existingProject = existingProjects.find((existing) => existing.path === project.path);
 
       if (existingProject) {
         await ctx.db.patch(existingProject._id, { name: project.name });
@@ -72,14 +74,16 @@ export const registerMachine = mutationGeneric({
 export const heartbeat = mutationGeneric({
   args: { deviceToken: v.string() },
   handler: async (ctx, args) => {
+    const deviceTokenHash = await digestSecret(args.deviceToken);
     const machine = await ctx.db
       .query("machines")
-      .withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken))
+      .withIndex("by_device_token_hash", (q) => q.eq("deviceTokenHash", deviceTokenHash))
       .unique();
 
     if (!machine) {
-      throw new Error("Unknown development device token");
+      throw new Error("Unknown device token");
     }
+    if (machine.revokedAt) throw new Error("Device token has been revoked");
 
     await ctx.db.patch(machine._id, { lastHeartbeatAt: Date.now() });
   },
@@ -88,8 +92,9 @@ export const heartbeat = mutationGeneric({
 export const setCapabilityCeiling = mutationGeneric({
   args: { capabilities: v.array(v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task"))), deviceToken: v.string() },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) throw new Error("Unknown development device token");
+    const deviceTokenHash = await digestSecret(args.deviceToken);
+    const machine = await ctx.db.query("machines").withIndex("by_device_token_hash", (q) => q.eq("deviceTokenHash", deviceTokenHash)).unique();
+    if (!machine || machine.revokedAt) throw new Error("Unknown or revoked device token");
     await ctx.db.patch(machine._id, { capabilityCeiling: [...new Set(args.capabilities)] });
   },
 });
@@ -97,7 +102,8 @@ export const setCapabilityCeiling = mutationGeneric({
 export const listMachinesAndProjects = queryGeneric({
   args: {},
   handler: async (ctx) => {
-    const machines = await ctx.db.query("machines").collect();
+    const userId = await requireUser(ctx);
+    const machines = await ctx.db.query("machines").withIndex("by_owner", (q) => q.eq("ownerId", userId)).collect();
 
     return Promise.all(
       machines.map(async (machine) => ({
@@ -112,5 +118,15 @@ export const listMachinesAndProjects = queryGeneric({
           .collect()).map(toProjectSummary),
       })),
     );
+  },
+});
+
+export const revoke = mutationGeneric({
+  args: { machineId: v.id("machines") },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const machine = await ctx.db.get(args.machineId);
+    if (!machine || machine.ownerId !== userId) throw new Error("Machine does not belong to the current user");
+    await ctx.db.patch(machine._id, { revokedAt: Date.now() });
   },
 });

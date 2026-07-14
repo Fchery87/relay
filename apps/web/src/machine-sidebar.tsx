@@ -13,9 +13,11 @@ const OFFLINE_AFTER_MS = 30_000;
 export function MachineSidebar({
   machines,
   now,
+  onRevoke,
 }: {
   machines: ReadonlyArray<MachineSummary>;
   now: number;
+  onRevoke?: (machineId: string) => Promise<void>;
 }) {
   return (
     <aside className="sidebar" aria-label="Machines and projects">
@@ -34,6 +36,7 @@ export function MachineSidebar({
                 <span className={`presence presence-${presence}`} aria-hidden="true" />
                 <span className="machine-name">{machine.name}</span>
                 <span className="machine-status">{presence === "online" ? "Online" : "Offline"}</span>
+                {onRevoke ? <button aria-label={`Disconnect ${machine.name}`} onClick={() => void onRevoke(machine.id)} type="button">Disconnect</button> : null}
               </div>
               <ul className="project-list">
                 {machine.projects.map((project) => (

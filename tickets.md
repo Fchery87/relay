@@ -161,9 +161,9 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Walking skeleton: paired daemon shows up in the browser.
 
-- [ ] Convex Auth sign-in; all queries scoped to the authenticated user
-- [ ] Pairing-code flow issues a device token stored in the daemon's platform config dir
-- [ ] Token revocation from the machines UI disconnects the daemon
+- [x] Convex Auth sign-in; all queries scoped to the authenticated user
+- [x] Pairing-code flow issues a device token stored in the daemon's platform config dir
+- [x] Token revocation from the machines UI disconnects the daemon
 
 ## Production distribution
 

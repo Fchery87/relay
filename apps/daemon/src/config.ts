@@ -20,9 +20,11 @@ function requiredEnv(env: Readonly<Record<string, string | undefined>>, name: st
 export function loadDaemonConfig({
   env,
   hostname,
+  storedDeviceToken,
 }: {
   env: Readonly<Record<string, string | undefined>>;
   hostname: () => string;
+  storedDeviceToken?: string;
 }): DaemonConfig {
   const parsedPlatform = machinePlatformSchema.safeParse(process.platform);
   if (!parsedPlatform.success) {
@@ -37,7 +39,7 @@ export function loadDaemonConfig({
     heartbeatIntervalMs: 10_000,
     registration: {
       daemonVersion: env.RELAY_DAEMON_VERSION ?? "0.0.0-dev",
-      deviceToken: requiredEnv(env, "RELAY_DEVICE_TOKEN"),
+      deviceToken: storedDeviceToken ?? requiredEnv(env, "RELAY_DEVICE_TOKEN"),
       name: env.RELAY_MACHINE_NAME ?? hostname(),
       platform: parsedPlatform.data,
       projects,

@@ -27,3 +27,10 @@ test("shows a machine as offline once its heartbeat expires", () => {
 test("explains how to configure the web client", () => {
   expect(renderToStaticMarkup(<UnconfiguredWorkspace />)).toContain("VITE_CONVEX_URL");
 });
+
+test("renders a disconnect control for each machine", () => {
+  const markup = renderToStaticMarkup(<MachineSidebar machines={[{
+    id: "machine-1", lastHeartbeatAt: 1_000, name: "dev-machine", platform: "linux", projects: [],
+  }]} now={1_000} onRevoke={async () => undefined} />);
+  expect(markup).toContain("Disconnect");
+});

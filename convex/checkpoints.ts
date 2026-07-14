@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireActiveMachine, requireDeviceForThread, requireOwnedThread, requireUser } from "./auth_helpers";
 
 export const record = mutation({
   args: {
@@ -10,7 +11,7 @@ export const record = mutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
+    const machine = await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     const thread = await ctx.db.get("threads", args.threadId);
     const project = thread ? await ctx.db.get("projects", thread.projectId) : null;
     const message = await ctx.db.get("messages", args.messageId);
@@ -25,12 +26,13 @@ export const record = mutation({
 
 export const listForThread = query({
   args: { threadId: v.id("threads") },
-  handler: (ctx, args) => ctx.db.query("checkpoints").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect(),
+  handler: async (ctx, args) => { await requireOwnedThread(ctx, await requireUser(ctx), args.threadId); return ctx.db.query("checkpoints").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect(); },
 });
 
 export const enqueueComparison = mutation({
   args: { fromCheckpointId: v.id("checkpoints"), threadId: v.id("threads"), toCheckpointId: v.id("checkpoints") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     const [from, to] = await Promise.all([ctx.db.get("checkpoints", args.fromCheckpointId), ctx.db.get("checkpoints", args.toCheckpointId)]);
     if (!from || !to || from.threadId !== args.threadId || to.threadId !== args.threadId) throw new Error("Checkpoints do not belong to thread");
     return ctx.db.insert("checkpointComparisons", { fromCheckpointId: from._id, status: "queued", threadId: args.threadId, toCheckpointId: to._id });
@@ -39,14 +41,13 @@ export const enqueueComparison = mutation({
 
 export const latestComparison = query({
   args: { threadId: v.id("threads") },
-  handler: (ctx, args) => ctx.db.query("checkpointComparisons").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).order("desc").first(),
+  handler: async (ctx, args) => { await requireOwnedThread(ctx, await requireUser(ctx), args.threadId); return ctx.db.query("checkpointComparisons").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).order("desc").first(); },
 });
 
 export const claimComparison = mutation({
   args: { deviceToken: v.string() },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) return null;
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
     const now = Date.now();
     const queued = await ctx.db.query("checkpointComparisons").withIndex("by_status", (q) => q.eq("status", "queued")).take(100);
     const running = await ctx.db.query("checkpointComparisons").withIndex("by_status", (q) => q.eq("status", "running")).take(100);
@@ -65,13 +66,10 @@ export const claimComparison = mutation({
 export const completeComparison = mutation({
   args: { claimToken: v.string(), comparisonId: v.id("checkpointComparisons"), content: v.string(), deviceToken: v.string(), status: v.union(v.literal("complete"), v.literal("failed")) },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
     const comparison = await ctx.db.get("checkpointComparisons", args.comparisonId);
     if (!comparison || comparison.status !== "running") return null;
     if (comparison.claimToken !== args.claimToken) throw new Error("Comparison lease is no longer active");
-    const thread = await ctx.db.get("threads", comparison.threadId);
-    const project = thread ? await ctx.db.get("projects", thread.projectId) : null;
-    if (!machine || !project || project.machineId !== machine._id) throw new Error("Checkpoint comparison does not belong to this machine");
+    await requireDeviceForThread(ctx, args.deviceToken, comparison.threadId);
     await ctx.db.patch(comparison._id, { claimToken: undefined, content: args.content, leaseExpiresAt: undefined, status: args.status });
     return null;
   },
@@ -80,6 +78,7 @@ export const completeComparison = mutation({
 export const enqueueRestore = mutation({
   args: { checkpointId: v.id("checkpoints"), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     const checkpoint = await ctx.db.get("checkpoints", args.checkpointId);
     if (!checkpoint || checkpoint.threadId !== args.threadId) throw new Error("Checkpoint does not belong to thread");
     const thread = await ctx.db.get("threads", args.threadId);
@@ -99,8 +98,7 @@ export const enqueueRestore = mutation({
 export const claimRestore = mutation({
   args: { deviceToken: v.string() },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) return null;
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
     const now = Date.now();
     const queued = await ctx.db.query("checkpointActions").withIndex("by_status", (q) => q.eq("status", "queued")).take(100);
     const running = await ctx.db.query("checkpointActions").withIndex("by_status", (q) => q.eq("status", "running")).take(100);
@@ -121,13 +119,12 @@ export const claimRestore = mutation({
 export const completeRestore = mutation({
   args: { actionId: v.id("checkpointActions"), claimToken: v.string(), deviceToken: v.string(), status: v.union(v.literal("complete"), v.literal("failed")) },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
     const action = await ctx.db.get("checkpointActions", args.actionId);
     if (!action || action.status !== "running") return null;
     if (action.claimToken !== args.claimToken) throw new Error("Restore lease is no longer active");
     const thread = await ctx.db.get("threads", action.threadId);
-    const project = thread ? await ctx.db.get("projects", thread.projectId) : null;
-    if (!machine || !thread || !project || project.machineId !== machine._id) throw new Error("Restore action does not belong to this machine");
+    if (!thread) throw new Error("Restore thread not found");
+    await requireDeviceForThread(ctx, args.deviceToken, action.threadId);
     await ctx.db.patch(action._id, { claimToken: undefined, leaseExpiresAt: undefined, status: args.status });
     if (args.status === "complete") await ctx.db.insert("events", { checkpointId: action.checkpointId, kind: "checkpoint.reverted", threadId: action.threadId });
     const queuedMessage = await ctx.db.query("messages").withIndex("by_queued_thread", (q) => q.eq("queuedThreadId", action.threadId)).first();

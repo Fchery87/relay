@@ -24,66 +24,71 @@ const ref = <Kind extends "mutation" | "query", Args extends DefaultFunctionArgs
 const createThread = ref<"mutation", { projectId: string; title: string }, string>("conversations:createThread");
 const sendMessage = ref<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
 const claimMessage = ref<"mutation", { deviceToken: string }, unknown>("conversations:claimQueuedMessage");
-const beginMessage = ref<"mutation", { threadId: string }, string>("conversations:beginAssistantMessage");
-const appendText = ref<"mutation", { content: string; messageId: string }, null>("conversations:appendAssistantText");
-const completeMessage = ref<"mutation", { messageId: string; status: "done"; threadId: string }, null>("conversations:completeAssistantMessage");
+const beginMessage = ref<"mutation", { deviceToken: string; threadId: string }, string>("conversations:beginAssistantMessage");
+const appendText = ref<"mutation", { content: string; deviceToken: string; messageId: string }, null>("conversations:appendAssistantText");
+const completeMessage = ref<"mutation", { deviceToken: string; messageId: string; status: "done"; threadId: string }, null>("conversations:completeAssistantMessage");
 const recordCheckpoint = ref<"mutation", { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }, string>("checkpoints:record");
 const enqueueRestore = ref<"mutation", { checkpointId: string; threadId: string }, string>("checkpoints:enqueueRestore");
 const claimRestore = ref<"mutation", { deviceToken: string }, unknown>("checkpoints:claimRestore");
 const completeRestore = ref<"mutation", { actionId: string; claimToken: string; deviceToken: string; status: "complete" | "failed" }, null>("checkpoints:completeRestore");
-const snapshotDiff = ref<"mutation", { content: string; threadId: string }, string>("diffs:snapshot");
+const snapshotDiff = ref<"mutation", { content: string; deviceToken: string; threadId: string }, string>("diffs:snapshot");
 const listEvents = ref<"query", { threadId: string }, Array<{ kind: string }>>("events:list");
 const recordUsage = ref<"mutation", Parameters<ConversationGateway["recordUsage"]>[0], string>("usage:record");
 
 test("a Convex checkpoint action restores an agent turn and records the timeline event", async () => {
   const t = convexTest(schema, modules);
+  const deviceToken = "d".repeat(32);
+  const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+  const owner = t.withIdentity({ subject: `${userId}|session` });
   const root = await mkdtemp(join(tmpdir(), "relay-checkpoint-convex-"));
   await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test && git commit --allow-empty -m base", platform: "linux", root });
   const projectId = await t.run(async (ctx) => {
-    const machineId = await ctx.db.insert("machines", { daemonVersion: "test", deviceToken: "device", lastHeartbeatAt: Date.now(), name: "machine", platform: "linux" });
+    const machineId = await ctx.db.insert("machines", { daemonVersion: "test", deviceTokenHash: await digest(deviceToken), lastHeartbeatAt: Date.now(), name: "machine", ownerId: userId, platform: "linux" });
     return ctx.db.insert("projects", { machineId, name: "relay", path: root });
   });
-  const threadId = await t.mutation(createThread, { projectId, title: "checkpoint e2e" });
-  await t.mutation(sendMessage, { content: "edit", threadId });
+  const threadId = await owner.mutation(createThread, { projectId, title: "checkpoint e2e" });
+  await owner.mutation(sendMessage, { content: "edit", threadId });
   let checkpointId = "";
   const gateway: ConversationGateway = {
     acknowledgeStop: async () => undefined,
-    appendAssistantText: (input) => t.mutation(appendText, input),
-    beginAssistantMessage: (input) => t.mutation(beginMessage, input),
+    appendAssistantText: (input) => t.mutation(appendText, { ...input, deviceToken }),
+    beginAssistantMessage: (input) => t.mutation(beginMessage, { ...input, deviceToken }),
     claimQueuedMessage: async (input) => {
       const value = await t.mutation(claimMessage, input);
       if (typeof value !== "object" || value === null || !("content" in value) || !("projectPath" in value) || !("threadId" in value)) throw new Error("Invalid queued message");
       return { content: String(value.content), projectPath: String(value.projectPath), threadId: String(value.threadId) };
     },
     claimSteeringMessages: async () => [],
-    completeAssistantMessage: ({ messageId, threadId: id }) => t.mutation(completeMessage, { messageId, status: "done", threadId: id }),
+    completeAssistantMessage: ({ messageId, threadId: id }) => t.mutation(completeMessage, { deviceToken, messageId, status: "done", threadId: id }),
     isStopRequested: async () => false,
     recordCheckpoint: async (input) => { checkpointId = await t.mutation(recordCheckpoint, input); },
-    recordUsage: (input) => t.mutation(recordUsage, input),
+    recordUsage: (input) => t.mutation(recordUsage, { ...input, deviceToken }),
   };
   await runQueuedTurn({
-    deviceToken: "device",
+    deviceToken,
     gateway,
     governance: { recordDecision: async () => undefined, requestApproval: async () => "allow" },
     policy: { rules: [{ capability: "edit", decision: "allow", risk: "low" }] },
     provider: new ScriptedModelProvider({ chunks: ["done"], toolCalls: [{ content: "turn one\n", kind: "edit", path: "result.txt" }] }),
   });
   await writeFile(join(root, "result.txt"), "turn two\n");
-  await t.mutation(enqueueRestore, { checkpointId, threadId });
+  await owner.mutation(enqueueRestore, { checkpointId, threadId });
 
   await runQueuedCheckpointRestore({
     gateway: {
       claim: async () => {
-        const value = await t.mutation(claimRestore, { deviceToken: "device" });
+        const value = await t.mutation(claimRestore, { deviceToken });
         if (typeof value !== "object" || value === null) return null;
         return value as { actionId: string; checkpointId: string; claimToken: string; commit: string; projectPath: string; threadId: string };
       },
-      complete: (input) => t.mutation(completeRestore, { ...input, deviceToken: "device" }),
-      snapshotDiff: (input) => t.mutation(snapshotDiff, input),
+      complete: (input) => t.mutation(completeRestore, { ...input, deviceToken }),
+      snapshotDiff: (input) => t.mutation(snapshotDiff, { ...input, deviceToken }),
     },
     resolveProjectRoot: async () => root,
   });
 
   expect(await readFile(join(root, "result.txt"), "utf8")).toBe("turn one\n");
-  expect(await t.query(listEvents, { threadId })).toMatchObject([{ kind: "checkpoint.reverted" }]);
+  expect(await owner.query(listEvents, { threadId })).toMatchObject([{ kind: "checkpoint.reverted" }]);
 });
+
+async function digest(value: string): Promise<string> { return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join(""); }

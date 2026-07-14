@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "convex/react";
+import { Authenticated, AuthLoading, Unauthenticated, useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
+import { useAuthActions } from "@convex-dev/auth/react";
 
+import { AuthPanel } from "./auth-panel";
 import { MachineSidebar, type MachineSummary } from "./machine-sidebar";
+import { PairingPanel } from "./pairing-panel";
 import { ThreadView } from "./thread-view";
 
 const listMachinesAndProjects = makeFunctionReference<"query", Record<string, never>, MachineSummary[]>(
   "machines:listMachinesAndProjects",
 );
+const revokeMachine = makeFunctionReference<"mutation", { machineId: string }, null>("machines:revoke");
 
 function useCurrentTime(): number {
   const [now, setNow] = useState(() => Date.now());
@@ -21,8 +25,14 @@ function useCurrentTime(): number {
 }
 
 export function ConnectedWorkspace() {
+  return <><AuthLoading><main className="auth-workspace"><p>Loading Relay...</p></main></AuthLoading><Unauthenticated><AuthPanel /></Unauthenticated><Authenticated><AuthenticatedWorkspace /></Authenticated></>;
+}
+
+function AuthenticatedWorkspace() {
   const machines = useQuery(listMachinesAndProjects, {});
-  return <Workspace machines={machines} state={machines === undefined ? "loading" : "ready"} />;
+  const revoke = useMutation(revokeMachine);
+  const { signOut } = useAuthActions();
+  return <Workspace machines={machines} onRevoke={(machineId) => revoke({ machineId })} onSignOut={signOut} state={machines === undefined ? "loading" : "ready"} />;
 }
 
 export function UnconfiguredWorkspace() {
@@ -31,9 +41,13 @@ export function UnconfiguredWorkspace() {
 
 function Workspace({
   machines,
+  onRevoke,
+  onSignOut,
   state,
 }: {
   machines: MachineSummary[] | undefined;
+  onRevoke?: (machineId: string) => Promise<unknown>;
+  onSignOut?: () => Promise<void>;
   state: "loading" | "ready" | "unconfigured";
 }) {
   const now = useCurrentTime();
@@ -42,17 +56,18 @@ function Workspace({
 
   return (
     <div className="app-shell">
-      <MachineSidebar machines={machines ?? []} now={now} />
+      <MachineSidebar machines={machines ?? []} now={now} onRevoke={onRevoke} />
       <main className="workspace">
         <header className="workspace-header">
           <h1>Projects</h1>
+          {onSignOut ? <button onClick={() => void onSignOut()} type="button">Sign out</button> : null}
         </header>
         {state === "unconfigured" ? (
           <p className="workspace-state">Set VITE_CONVEX_URL to connect this browser.</p>
         ) : state === "loading" ? (
           <p className="workspace-state">Connecting to Relay...</p>
         ) : machineCount === 0 ? (
-          <p className="workspace-state">No machines connected.</p>
+          <PairingPanel />
         ) : (
           <ThreadView projectId={firstProject!.id} />
         )}

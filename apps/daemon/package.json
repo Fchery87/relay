@@ -3,7 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "relay": "src/connect.ts"
+  },
   "scripts": {
+    "connect": "bun run src/connect.ts",
     "dev": "bun run src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test"

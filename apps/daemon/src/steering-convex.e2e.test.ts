@@ -21,9 +21,9 @@ const createThread = makeFunctionReference<"mutation", { projectId: string; titl
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
 const claimQueuedMessage = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("conversations:claimQueuedMessage");
 const claimSteeringMessages = makeFunctionReference<"mutation", { deviceToken: string; threadId: string }, Array<{ content: string }>>("conversations:claimSteeringMessages");
-const beginAssistantMessage = makeFunctionReference<"mutation", { threadId: string }, string>("conversations:beginAssistantMessage");
-const appendAssistantText = makeFunctionReference<"mutation", { content: string; messageId: string }, null>("conversations:appendAssistantText");
-const completeAssistantMessage = makeFunctionReference<"mutation", { messageId: string; threadId: string; status: "done" }, null>("conversations:completeAssistantMessage");
+const beginAssistantMessage = makeFunctionReference<"mutation", { deviceToken: string; threadId: string }, string>("conversations:beginAssistantMessage");
+const appendAssistantText = makeFunctionReference<"mutation", { content: string; deviceToken: string; messageId: string }, null>("conversations:appendAssistantText");
+const completeAssistantMessage = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; threadId: string; status: "done" }, null>("conversations:completeAssistantMessage");
 const getStopState = makeFunctionReference<"query", { deviceToken: string; threadId: string }, { requested: boolean }>("conversations:getStopState");
 const acknowledgeStop = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; threadId: string }, null>("conversations:acknowledgeStop");
 const recordUsage = makeFunctionReference<"mutation", Parameters<ConversationGateway["recordUsage"]>[0], string>("usage:record");
@@ -34,13 +34,16 @@ const policy: Policy = { rules: [{ capability: "exec", decision: "allow", risk: 
 
 test("a Convex message sent during a long tool is injected at that tool boundary", async () => {
   const t = convexTest(schema, modules);
+  const deviceToken = "d".repeat(32);
+  const userId = await t.run((ctx) => ctx.db.insert("users", {}));
+  const owner = t.withIdentity({ subject: `${userId}|session` });
   const root = await mkdtemp(join(tmpdir(), "relay-steering-convex-"));
   const projectId = await t.run(async (ctx) => {
-    const machineId = await ctx.db.insert("machines", { daemonVersion: "test", deviceToken: "device", lastHeartbeatAt: Date.now(), name: "machine", platform: "linux" });
+    const machineId = await ctx.db.insert("machines", { daemonVersion: "test", deviceTokenHash: await digest(deviceToken), lastHeartbeatAt: Date.now(), name: "machine", ownerId: userId, platform: "linux" });
     return ctx.db.insert("projects", { machineId, name: "relay", path: root });
   });
-  const threadId = await t.mutation(createThread, { projectId, title: "steering e2e" });
-  await t.mutation(sendUserMessage, { content: "start", threadId });
+  const threadId = await owner.mutation(createThread, { projectId, title: "steering e2e" });
+  await owner.mutation(sendUserMessage, { content: "start", threadId });
 
   const prompts: string[] = [];
   const provider: ModelProvider = {
@@ -53,8 +56,8 @@ test("a Convex message sent during a long tool is injected at that tool boundary
   };
   const gateway: ConversationGateway = {
     acknowledgeStop: (input) => t.mutation(acknowledgeStop, input),
-    appendAssistantText: (input) => t.mutation(appendAssistantText, input),
-    beginAssistantMessage: (input) => t.mutation(beginAssistantMessage, input),
+    appendAssistantText: (input) => t.mutation(appendAssistantText, { ...input, deviceToken }),
+    beginAssistantMessage: (input) => t.mutation(beginAssistantMessage, { ...input, deviceToken }),
     claimQueuedMessage: async (input) => {
       const value = await t.mutation(claimQueuedMessage, input);
       if (typeof value !== "object" || value === null || !("content" in value) || !("projectPath" in value) || !("threadId" in value)) throw new Error("Invalid queued message fixture");
@@ -62,16 +65,18 @@ test("a Convex message sent during a long tool is injected at that tool boundary
       return { content: value.content, projectPath: value.projectPath, threadId: value.threadId };
     },
     claimSteeringMessages: (input) => t.mutation(claimSteeringMessages, input),
-    completeAssistantMessage: ({ messageId, threadId }) => t.mutation(completeAssistantMessage, { messageId, status: "done", threadId }),
+    completeAssistantMessage: ({ messageId, threadId }) => t.mutation(completeAssistantMessage, { deviceToken, messageId, status: "done", threadId }),
     isStopRequested: async (input) => (await t.query(getStopState, input)).requested,
-    recordUsage: (input) => t.mutation(recordUsage, input),
+    recordUsage: (input) => t.mutation(recordUsage, { ...input, deviceToken }),
   };
 
-  const turn = runQueuedTurn({ deviceToken: "device", gateway, governance, policy, provider });
+  const turn = runQueuedTurn({ deviceToken, gateway, governance, policy, provider });
   await Bun.sleep(20);
-  await t.mutation(sendUserMessage, { content: "change direction", threadId });
+  await owner.mutation(sendUserMessage, { content: "change direction", threadId });
   await turn;
 
   expect(prompts[0]).toContain("change direction");
-  expect((await t.query(listThreadMessages, { threadId })).find((message) => message.content === "change direction")?.status).toBe("complete");
+  expect((await owner.query(listThreadMessages, { threadId })).find((message) => message.content === "change direction")?.status).toBe("complete");
 });
+
+async function digest(value: string): Promise<string> { return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join(""); }

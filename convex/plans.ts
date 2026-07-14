@@ -1,17 +1,22 @@
 import { DEFAULT_MODEL_ID, MODEL_CATALOG } from "@relay/shared";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireDeviceForThread, requireOwnedThread, requireUser } from "./auth_helpers";
 
 const MAX_PLAN_SECTION_BYTES = 400_000;
 
 export const getForThread = query({
   args: { threadId: v.id("threads") },
-  handler: (ctx, args) => ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).unique(),
+  handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
+    return ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).unique();
+  },
 });
 
 export const updateModelPair = mutation({
   args: { buildModelId: v.string(), planModelId: v.string(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     const thread = await ctx.db.get("threads", args.threadId);
     if (!thread || thread.mode !== "plan") throw new Error("Thread is not in plan mode");
     if (!MODEL_CATALOG.models.some((model) => model.id === args.planModelId) || !MODEL_CATALOG.models.some((model) => model.id === args.buildModelId)) throw new Error("Model is not in the catalog");
@@ -21,8 +26,9 @@ export const updateModelPair = mutation({
 });
 
 export const completePlanning = mutation({
-  args: { content: v.string(), messageId: v.id("messages"), threadId: v.id("threads") },
+  args: { content: v.string(), deviceToken: v.string(), messageId: v.id("messages"), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     if (utf8Bytes(args.content) > MAX_PLAN_SECTION_BYTES) throw new Error("Plan exceeds its size limit");
     const [thread, message] = await Promise.all([ctx.db.get("threads", args.threadId), ctx.db.get("messages", args.messageId)]);
     if (!thread || thread.mode !== "plan" || thread.planPhase !== "planning" || thread.activeAssistantMessageId !== args.messageId || !message || message.threadId !== args.threadId) throw new Error("Planning completion does not match the active plan turn");
@@ -43,6 +49,7 @@ export const completePlanning = mutation({
 export const updateDraft = mutation({
   args: { content: v.string(), expectedRevision: v.number(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     if (utf8Bytes(args.content) > MAX_PLAN_SECTION_BYTES) throw new Error("Plan exceeds its size limit");
     const thread = await ctx.db.get("threads", args.threadId);
     const plan = await ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).unique();
@@ -55,6 +62,7 @@ export const updateDraft = mutation({
 export const approve = mutation({
   args: { content: v.string(), expectedRevision: v.number(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     if (utf8Bytes(args.content) > MAX_PLAN_SECTION_BYTES) throw new Error("Plan exceeds its size limit");
     const thread = await ctx.db.get("threads", args.threadId);
     const plan = await ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).unique();

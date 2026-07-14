@@ -9,6 +9,8 @@
     "test:convex": "vitest run -c vitest.config.ts"
   },
   "dependencies": {
+    "@auth/core": "0.41.1",
+    "@convex-dev/auth": "^0.0.94",
     "@relay/shared": "workspace:*",
     "convex": "^1.31.0"
   }

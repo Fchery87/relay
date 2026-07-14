@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { loadDaemonConfig } from "./config";
+import { loadDeviceCredentials } from "./device-credentials";
+import { isDeviceTokenRejected } from "./device-auth";
 import { runQueuedTurn } from "./agent-loop";
 import { runQueuedCommand } from "./command-worker";
 import { runQueuedGitAction } from "./git-worker";
@@ -16,7 +18,9 @@ import { loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
 import { McpRegistry } from "./mcp-registry";
 
-const config = loadDaemonConfig({ env: Bun.env, hostname });
+const daemonHome = Bun.env.RELAY_DAEMON_HOME ?? join(homedir(), ".relay");
+const storedCredentials = await loadDeviceCredentials({ daemonHome });
+const config = loadDaemonConfig({ env: Bun.env, hostname, storedDeviceToken: storedCredentials?.deviceToken });
 const reporter = new MachineReporter({
   gateway: createConvexMachineGateway({ deploymentUrl: config.deploymentUrl }),
   registration: config.registration,
@@ -27,14 +31,18 @@ console.info(`Relay daemon connected as ${config.registration.name}`);
 
 setInterval(() => {
   void reporter.heartbeatOnce().catch((error: unknown) => {
+    if (isDeviceTokenRejected(error)) {
+      console.error("Relay device token is no longer active; stopping daemon.");
+      void shutdown();
+      return;
+    }
     console.error("Relay heartbeat failed", error);
   });
 }, config.heartbeatIntervalMs);
 
-const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl });
-const governance = createConvexGovernanceGateway({ deploymentUrl: config.deploymentUrl });
+const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
+const governance = createConvexGovernanceGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 const policy = await loadPolicy({ path: Bun.env.RELAY_POLICY_PATH ?? join(import.meta.dir, "..", "policy.json") });
-const daemonHome = Bun.env.RELAY_DAEMON_HOME ?? join(homedir(), ".relay");
 const worktrees = new ThreadWorktrees({ daemonHome });
 async function collectOrphanedWorktrees() {
   const activeThreadIds = new Set(await conversationGateway.listThreadIds());

@@ -33,7 +33,7 @@ a { color: inherit; text-decoration: none; }
 .project-link:hover, .project-link:focus-visible { background: #30312d; color: #fff9e8; outline: none; }
 
 .workspace { background: #171816; padding: 24px 28px; }
-.workspace-header { border-bottom: 1px solid #353632; padding-bottom: 16px; }
+.workspace-header { align-items: center; border-bottom: 1px solid #353632; display: flex; justify-content: space-between; padding-bottom: 16px; }
 h1 { font-size: 20px; font-weight: 650; margin: 0; }
 .workspace-state { color: #b7b7af; font-size: 14px; margin: 20px 0; }
 .thread-view { display: grid; gap: 16px; padding-top: 20px; }
@@ -96,6 +96,15 @@ h1 { font-size: 20px; font-weight: 650; margin: 0; }
 .audit-log code { overflow-wrap: anywhere; }
 button, textarea { background: #252622; border: 1px solid #454640; color: inherit; font: inherit; padding: 8px 10px; }
 button { cursor: pointer; }
+.machine-row button { font-size: 11px; grid-column: 2 / -1; justify-self: start; padding: 4px 7px; }
+.auth-workspace { align-items: center; display: flex; justify-content: center; min-height: 100vh; padding: 24px; }
+.auth-form, .pairing-panel { border: 1px solid #454640; display: grid; gap: 14px; max-width: 360px; padding: 20px; width: 100%; }
+.auth-form label, .pairing-panel label { display: grid; font-size: 13px; gap: 5px; }
+.auth-form input, .pairing-panel input { background: #252622; border: 1px solid #454640; color: inherit; padding: 8px; }
+.auth-actions { display: flex; gap: 8px; }
+.auth-form [role="alert"], .pairing-panel [role="alert"] { color: #e0a28b; font-size: 12px; margin: 0; }
+.pairing-panel { margin-top: 20px; }
+.pairing-panel form { display: grid; gap: 10px; }
 .messages { display: grid; gap: 8px; min-height: 240px; }
 .message { margin: 0; max-width: 72ch; white-space: pre-wrap; }
 .message-assistant { align-items: start; display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr) auto; }

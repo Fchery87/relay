@@ -1,6 +1,7 @@
 import { internalMutationGeneric, makeFunctionReference, mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
 import { computeUsageCost, MODEL_CATALOG } from "@relay/shared";
+import { requireDeviceForThread, requireOwnedThread, requireUser } from "./auth_helpers";
 
 const tokenUsage = v.object({
   cacheReadTokens: v.number(),
@@ -35,6 +36,7 @@ const removeForThreadBatchReference = makeFunctionReference<"mutation", { thread
 export const record = mutationGeneric({
   args: {
     callId: v.string(),
+    deviceToken: v.string(),
     messageId: v.id("messages"),
     modelId: v.string(),
     role: v.string(),
@@ -42,6 +44,7 @@ export const record = mutationGeneric({
     usage: tokenUsage,
   },
   handler: async (ctx, args) => {
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     const existing = await ctx.db.query("usage").withIndex("by_call_id", (q) => q.eq("callId", args.callId)).unique();
     if (existing) {
       if (!matchesExisting(existing, args)) throw new Error("Conflicting usage payload for call ID");
@@ -77,6 +80,7 @@ export const record = mutationGeneric({
 export const forThread = queryGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     const thread = await ctx.db.get("threads", args.threadId);
     if (!thread) return null;
     const boundedRecords = await ctx.db.query("usage").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).order("desc").take(201);
@@ -87,6 +91,7 @@ export const forThread = queryGeneric({
 export const setBudget = mutationGeneric({
   args: { budgetUsd: v.union(v.number(), v.null()), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     if (args.budgetUsd !== null && (!Number.isFinite(args.budgetUsd) || args.budgetUsd <= 0)) throw new Error("Budget must be a positive finite amount");
     await ctx.db.patch(args.threadId, { budgetUsd: args.budgetUsd ?? undefined });
   },

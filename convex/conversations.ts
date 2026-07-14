@@ -1,6 +1,7 @@
 import { makeFunctionReference, mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
 import { DEFAULT_MODEL_ID, MODEL_CATALOG, listThinkingLevels } from "@relay/shared";
+import { requireActiveMachine, requireDeviceForThread, requireOwnedProject, requireOwnedThread, requireUser } from "./auth_helpers";
 
 const threadStatus = v.union(v.literal("idle"), v.literal("queued"), v.literal("running"), v.literal("awaiting-approval"), v.literal("restoring"), v.literal("stopped"), v.literal("done"), v.literal("failed"));
 const removeUsageForThread = makeFunctionReference<"mutation", { threadId: string }, null>("usage:removeForThreadBatch");
@@ -8,7 +9,9 @@ const MAX_PLAN_SECTION_BYTES = 400_000;
 
 export const createThread = mutationGeneric({
   args: { mode: v.optional(v.union(v.literal("chat"), v.literal("plan"))), projectId: v.id("projects"), title: v.string() },
-  handler: (ctx, args) => ctx.db.insert("threads", {
+  handler: async (ctx, args) => {
+    await requireOwnedProject(ctx, await requireUser(ctx), args.projectId);
+    return ctx.db.insert("threads", {
     ...args,
     buildModelId: args.mode === "plan" ? DEFAULT_MODEL_ID : undefined,
     modelId: DEFAULT_MODEL_ID,
@@ -18,12 +21,14 @@ export const createThread = mutationGeneric({
     stopRequested: false,
     thinkingLevel: "none",
     usageTotals: { cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, thinkingTokensUnavailableCalls: 0 },
-  }),
+    });
+  },
 });
 
 export const updateModelSelection = mutationGeneric({
   args: { modelId: v.string(), thinkingLevel: v.union(v.literal("none"), v.literal("low"), v.literal("medium"), v.literal("high")), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     const model = MODEL_CATALOG.models.find((entry) => entry.id === args.modelId);
     if (!model) throw new Error("Model is not in the catalog");
     if (!listThinkingLevels(model).includes(args.thinkingLevel)) throw new Error("Thinking level is not supported by this model");
@@ -34,8 +39,7 @@ export const updateModelSelection = mutationGeneric({
 export const sendUserMessage = mutationGeneric({
   args: { content: v.string(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    const thread = await ctx.db.get("threads", args.threadId);
-    if (!thread) throw new Error("Thread not found");
+    const thread = await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     if (thread.mode === "plan" && thread.planPhase === "review") throw new Error("Approve or edit the draft plan before sending another message");
     if (thread.mode === "plan" && thread.planPhase === "planning") {
       const queued = await ctx.db.query("messages").withIndex("by_queued_thread", (q) => q.eq("queuedThreadId", args.threadId)).take(100);
@@ -54,12 +58,9 @@ function utf8Bytes(value: string): number { return new TextEncoder().encode(valu
 export const claimSteeringMessages = mutationGeneric({
   args: { deviceToken: v.string(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) throw new Error("Unknown development device token");
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     const thread = await ctx.db.get("threads", args.threadId);
     if (!thread || thread.status !== "running" || thread.stopRequested === true) return [];
-    const project = await ctx.db.get("projects", thread.projectId);
-    if (!project || project.machineId !== machine._id) return [];
     const messages = await ctx.db.query("messages").withIndex("by_queued_thread", (q) => q.eq("queuedThreadId", args.threadId)).take(100);
     for (const message of messages) await ctx.db.patch(message._id, { queuedThreadId: undefined, status: "complete" });
     return messages.map(({ content }) => ({ content }));
@@ -69,8 +70,7 @@ export const claimSteeringMessages = mutationGeneric({
 export const requestStop = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    const thread = await ctx.db.get("threads", args.threadId);
-    if (!thread) throw new Error("Thread not found");
+    const thread = await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     if (thread.status !== "running") throw new Error("Only a running thread can be stopped");
     await ctx.db.patch(args.threadId, { stopRequested: true });
   },
@@ -79,25 +79,22 @@ export const requestStop = mutationGeneric({
 export const getStopState = queryGeneric({
   args: { deviceToken: v.string(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) throw new Error("Unknown development device token");
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     const thread = await ctx.db.get("threads", args.threadId);
-    if (!thread) return { requested: false };
-    const project = await ctx.db.get("projects", thread.projectId);
-    return { requested: project?.machineId === machine._id && thread.stopRequested === true };
+    if (!thread) throw new Error("Thread not found");
+    return { requested: thread.stopRequested === true };
   },
 });
 
 export const acknowledgeStop = mutationGeneric({
   args: { deviceToken: v.string(), messageId: v.id("messages"), threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) throw new Error("Unknown development device token");
-    const [message, thread] = await Promise.all([ctx.db.get("messages", args.messageId), ctx.db.get("threads", args.threadId)]);
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
+    const thread = await ctx.db.get("threads", args.threadId);
+    if (!thread) throw new Error("Thread not found");
+    const message = await ctx.db.get("messages", args.messageId);
     if (!message || message.threadId !== args.threadId || !thread || thread.activeAssistantMessageId !== args.messageId) throw new Error("Stop acknowledgement does not match the active turn");
     if (thread.status !== "running" || thread.stopRequested !== true) throw new Error("Stop was not requested for the active turn");
-    const project = await ctx.db.get("projects", thread.projectId);
-    if (!project || project.machineId !== machine._id) throw new Error("Stop acknowledgement does not belong to this machine");
     await ctx.db.patch(args.messageId, { status: "complete" });
     const queued = await ctx.db.query("messages").withIndex("by_queued_thread", (q) => q.eq("queuedThreadId", args.threadId)).first();
     await ctx.db.patch(args.threadId, { activeAssistantMessageId: undefined, status: queued ? "queued" : "stopped", stopRequested: false });
@@ -106,22 +103,34 @@ export const acknowledgeStop = mutationGeneric({
 
 export const listThreadMessages = queryGeneric({
   args: { threadId: v.id("threads") },
-  handler: (ctx, args) => ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect(),
+  handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
+    return ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect();
+  },
 });
 
 export const listProjectThreads = queryGeneric({
   args: { projectId: v.id("projects") },
-  handler: (ctx, args) => ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", args.projectId)).collect(),
+  handler: async (ctx, args) => {
+    await requireOwnedProject(ctx, await requireUser(ctx), args.projectId);
+    return ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", args.projectId)).collect();
+  },
 });
 
 export const listThreadIds = queryGeneric({
-  args: {},
-  handler: async (ctx) => (await ctx.db.query("threads").collect()).map((thread) => thread._id),
+  args: { deviceToken: v.string() },
+  handler: async (ctx, args) => {
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
+    const projects = await ctx.db.query("projects").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).collect();
+    const threadIds = await Promise.all(projects.map(async (project) => (await ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", project._id)).collect()).map((thread) => thread._id)));
+    return threadIds.flat();
+  },
 });
 
 export const removeThread = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     for await (const server of ctx.db.query("mcpServers").withIndex("by_approval_thread_id", (q) => q.eq("approvalThreadId", args.threadId))) await ctx.db.delete(server._id);
     for await (const elicitation of ctx.db.query("mcpElicitations").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(elicitation._id);
     for await (const plan of ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(plan._id);
@@ -142,8 +151,7 @@ export const removeThread = mutationGeneric({
 export const claimQueuedMessage = mutationGeneric({
   args: { deviceToken: v.string() },
   handler: async (ctx, args) => {
-    const machine = await ctx.db.query("machines").withIndex("by_device_token", (q) => q.eq("deviceToken", args.deviceToken)).unique();
-    if (!machine) throw new Error("Unknown development device token");
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
 
     for await (const message of ctx.db.query("messages").withIndex("by_status", (q) => q.eq("status", "queued"))) {
       const thread = await ctx.db.get("threads", message.threadId);
@@ -179,8 +187,9 @@ export const claimQueuedMessage = mutationGeneric({
 });
 
 export const beginAssistantMessage = mutationGeneric({
-  args: { threadId: v.id("threads") },
+  args: { deviceToken: v.string(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     const messageId = await ctx.db.insert("messages", { content: "", role: "assistant", status: "streaming", threadId: args.threadId });
     await ctx.db.patch(args.threadId, { activeAssistantMessageId: messageId });
     return messageId;
@@ -188,14 +197,22 @@ export const beginAssistantMessage = mutationGeneric({
 });
 
 export const appendAssistantText = mutationGeneric({
-  args: { content: v.string(), messageId: v.id("messages") },
-  handler: (ctx, args) => ctx.db.patch(args.messageId, { content: args.content }),
+  args: { content: v.string(), deviceToken: v.string(), messageId: v.id("messages") },
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get("messages", args.messageId);
+    if (!message) throw new Error("Assistant message not found");
+    await requireDeviceForThread(ctx, args.deviceToken, message.threadId);
+    await ctx.db.patch(args.messageId, { content: args.content });
+  },
 });
 
 export const completeAssistantMessage = mutationGeneric({
-  args: { messageId: v.id("messages"), resolvedCommentIds: v.optional(v.array(v.id("diffComments"))), threadId: v.id("threads"), status: threadStatus },
+  args: { deviceToken: v.string(), messageId: v.id("messages"), resolvedCommentIds: v.optional(v.array(v.id("diffComments"))), threadId: v.id("threads"), status: threadStatus },
   handler: async (ctx, args) => {
-    const [message, thread] = await Promise.all([ctx.db.get("messages", args.messageId), ctx.db.get("threads", args.threadId)]);
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
+    const thread = await ctx.db.get("threads", args.threadId);
+    if (!thread) throw new Error("Thread not found");
+    const message = await ctx.db.get("messages", args.messageId);
     if (!message || message.threadId !== args.threadId || !thread || thread.activeAssistantMessageId !== args.messageId) throw new Error("Assistant completion does not match the active turn");
     if (args.status === "done" && thread.stopRequested === true) {
       await ctx.db.patch(args.messageId, { status: "complete" });

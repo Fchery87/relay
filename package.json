@@ -8,6 +8,7 @@
     "test": "bun run --filter '*' test && bun run --cwd convex test:convex",
     "build": "bun run --filter @relay/web build",
     "convex:dev": "bunx convex dev",
+    "daemon:connect": "bun --cwd apps/daemon run connect",
     "daemon:dev": "bun --cwd apps/daemon run dev",
     "web:dev": "bun --cwd apps/web run dev"
   },
