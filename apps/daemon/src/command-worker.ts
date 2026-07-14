@@ -13,16 +13,21 @@ export async function runQueuedCommand({ gateway, governance, platform, policy, 
   const queued = await gateway.claim();
   if (!queued) return false;
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
+  let emittedOutput = false;
   const result = await executeGovernedToolCall({
     call: { command: queued.command, kind: "bash" },
     governance,
     onCompleted: async () => undefined,
+    onOutput: async (output) => {
+      emittedOutput = true;
+      await gateway.appendOutput({ output, threadId: queued.threadId });
+    },
     platform,
     policy,
     root,
     threadId: queued.threadId,
   });
-  await gateway.appendOutput({ output: result.output, threadId: queued.threadId });
+  if (!emittedOutput) await gateway.appendOutput({ output: result.output, threadId: queued.threadId });
   await gateway.complete({ commandId: queued.commandId, status: result.kind === "executed" && result.succeeded ? "complete" : "failed" });
   return true;
 }

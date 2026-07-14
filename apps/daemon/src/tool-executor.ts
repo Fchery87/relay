@@ -9,10 +9,11 @@ export type ToolCall =
   | { capabilities: Capability[]; kind: "task"; role: string; task: string }
   | { arguments: Record<string, unknown>; kind: "mcp"; name: string; risk?: "low" | "high" | "critical"; serverId: string };
 
-export async function executeToolCall({ call, onCompleted, onMcp, onTask, platform, root }: {
+export async function executeToolCall({ call, onCompleted, onMcp, onOutput, onTask, platform, root }: {
   call: ToolCall;
   onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }): Promise<void>;
   onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
+  onOutput?: (output: string) => Promise<void>;
   onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<string>;
   platform: MachinePlatform;
   root: string;
@@ -39,7 +40,7 @@ export async function executeToolCall({ call, onCompleted, onMcp, onTask, platfo
     await onCompleted({ summary: `Read ${call.path}`, tool: "read" });
     return { output: content, succeeded: true };
   }
-  const result = await runCommand({ command: call.command, platform, root });
+  const result = await runCommand({ command: call.command, onOutput, platform, root });
   await onCompleted({ summary: `Ran ${call.command}`, tool: "bash" });
   return { output: `${result.stdout}${result.stderr}`, succeeded: result.exitCode === 0 };
 }

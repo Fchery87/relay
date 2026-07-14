@@ -182,6 +182,6 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 **Blocked by:** Diff review and ship; Usage and cost tracking; Subagents: roster, narrowing, contracts.
 
-- [ ] Virtualized message and event lists
-- [ ] Bundle budget enforced in CI (no Monaco-class dependencies)
-- [ ] Latency tests: prompt-to-first-visible-token and command chunk latency within the ≤ 200 ms flush budget
+- [x] Virtualized message and event lists
+- [x] Bundle budget enforced in CI (no Monaco-class dependencies)
+- [x] Latency tests: prompt-to-first-visible-token and command chunk latency within the ≤ 200 ms flush budget

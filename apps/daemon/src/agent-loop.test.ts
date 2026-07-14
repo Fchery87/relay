@@ -17,7 +17,7 @@ const policy: Policy = { rules: [
   { capability: "exec", decision: "allow", risk: "low" },
 ] };
 
-test("coalesces rapid scripted chunks into a final persisted response", async () => {
+test("flushes the first token then coalesces rapid scripted chunks", async () => {
   const updates: string[] = [];
   const handled = await runQueuedTurn({
     deviceToken: "device",
@@ -37,7 +37,7 @@ test("coalesces rapid scripted chunks into a final persisted response", async ()
   });
 
   expect(handled).toBe(true);
-  expect(updates).toEqual(["Hello world"]);
+  expect(updates).toEqual(["Hello", "Hello world"]);
 });
 
 test("a governed task call queues a narrowed subagent run", async () => {
@@ -404,6 +404,39 @@ test("Stop aborts an in-flight model stream and persists its partial text", asyn
 
   expect(acknowledged).toBe(true);
   expect(updates.at(-1)).toBe("partial");
+});
+
+test("flushes the first streamed token within the 200 ms latency budget", async () => {
+  const flushTimes: number[] = [];
+  let firstTokenAt = 0;
+  const provider: ModelProvider = {
+    async *streamReply() {
+      firstTokenAt = Date.now();
+      yield { kind: "text", text: "first" } as const;
+      await Bun.sleep(250);
+      yield { kind: "text", text: "second" } as const;
+      yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } } as const;
+    },
+  };
+
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => { flushTimes.push(Date.now()); },
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "Stream a reply", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    governance: { recordDecision: async () => undefined, requestApproval: async () => "allow" },
+    policy: { rules: [] },
+    provider,
+  });
+
+  expect(flushTimes[0]! - firstTokenAt).toBeLessThanOrEqual(200);
 });
 
 test("Stop during streaming checkpoints mutations before ending the turn", async () => {

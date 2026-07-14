@@ -126,7 +126,8 @@ export async function runQueuedTurn({
   }
   let content = "";
   let usage: TokenUsage | null = null;
-  let lastFlushAt = Date.now();
+  let lastFlushAt: number | undefined;
+  let lastFlushedContent = "";
   const toolContext = toolResults.length === 0 ? "" : `\n\n<tool_results>\n${toolResults.map(escapeXml).join("\n")}\n</tool_results>`;
   const steeringContext = steeringMessages.length === 0 ? "" : `\n\n<steering_messages>\n${steeringMessages.map((message) => `<message>${escapeXml(message)}</message>`).join("\n")}\n</steering_messages>`;
   const responsePrompt = `${prompt}${toolContext}${steeringContext}`;
@@ -153,9 +154,10 @@ export async function runQueuedTurn({
           continue;
         }
         content += event.text;
-        if (Date.now() - lastFlushAt >= 200) {
+        if (lastFlushAt === undefined || Date.now() - lastFlushAt >= 200) {
           await gateway.appendAssistantText({ content, messageId });
           lastFlushAt = Date.now();
+          lastFlushedContent = content;
         }
       }
     } catch (error) {
@@ -165,7 +167,7 @@ export async function runQueuedTurn({
       abortController.abort();
       await stopMonitor;
     }
-    await gateway.appendAssistantText({ content, messageId });
+    if (content !== lastFlushedContent) await gateway.appendAssistantText({ content, messageId });
     if (stopped) {
       await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
       return true;

@@ -39,3 +39,20 @@ test("a denied high-risk queued command is refused without execution", async () 
   expect(approvals).toEqual(["rm -f keep.txt"]);
   expect(audit).toEqual(["ask", "deny"]);
 });
+
+test("flushes the first command output chunk within the 200 ms latency budget", async () => {
+  const outputTimes: number[] = [];
+  const startedAt = Date.now();
+  await runQueuedCommand({
+    gateway: {
+      appendOutput: async () => { outputTimes.push(Date.now()); },
+      claim: async () => ({ command: "printf first; sleep 0.25; printf second", commandId: "command", projectPath: "/tmp", threadId: "thread" }),
+      complete: async () => undefined,
+    },
+    governance: { recordDecision: async () => undefined, requestApproval: async () => "allow" },
+    platform: "linux",
+    policy: { rules: [{ capability: "exec", decision: "allow", risk: "low" }] },
+  });
+
+  expect(outputTimes[0]! - startedAt).toBeLessThanOrEqual(200);
+});

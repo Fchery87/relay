@@ -14,5 +14,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run test
+      - run: bun run build
+      - run: bun run bundle:check
       - run: bun run daemon:build:native
       - run: bun run release:smoke

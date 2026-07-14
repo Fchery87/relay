@@ -14,12 +14,13 @@ import { PlanPanel, type PlanArtifact, type PlanPhase } from "./plan-panel";
 import { McpServerPanel, type McpServer } from "./mcp-server-panel";
 import type { McpServerConfig } from "@relay/shared";
 import { McpElicitationCards, type McpElicitation } from "./mcp-elicitation-card";
+import { ThreadActivity, ThreadTerminal, type ThreadEvent } from "./thread-activity";
 
 const listThreads = makeFunctionReference<"query", { projectId: string }, Array<{ _id: string; buildModelId?: string; mode?: "chat" | "plan"; modelId?: string; planModelId?: string; planPhase?: PlanPhase; status: ThreadStatus; stopRequested?: boolean; thinkingLevel?: ThinkingLevel; title: string }>>("conversations:listProjectThreads");
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
 const createThread = makeFunctionReference<"mutation", { mode?: "chat" | "plan"; projectId: string; title: string }, string>("conversations:createThread");
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
-const listEvents = makeFunctionReference<"query", { threadId: string }, Array<{ _id: string; kind: string; output?: string; serverId?: string; status?: string; summary?: string; taskId?: string; tool?: string }>>("events:list");
+const listEvents = makeFunctionReference<"query", { threadId: string }, ThreadEvent[]>("events:list");
 const enqueueCommand = makeFunctionReference<"mutation", { command: string; threadId: string }, string>("commands:enqueue");
 const latestDiff = makeFunctionReference<"query", { threadId: string }, { content: string } | null>("diffs:latest");
 const enqueueGitAction = makeFunctionReference<"mutation", { action: "stage" | "commit" | "push"; message?: string; threadId: string }, string>("git_actions:enqueue");
@@ -129,10 +130,10 @@ export function ThreadView({ projectId }: { projectId: string }) {
       <SubagentPanel onUpdateRole={(input) => saveRole(input)} roles={roles ?? []} runs={subagentRuns ?? []} />
       <ThreadMessages checkpoints={checkpoints ?? []} messages={messages ?? []} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
       <div className="activity-layout">
-        <section><h2>Activity</h2>{events?.filter((event) => event.kind === "tool.completed" || event.kind === "checkpoint.reverted" || event.kind === "mcp.task").map((event) => <p className="activity-line" key={event._id}>{event.kind === "checkpoint.reverted" ? "Checkpoint restored" : event.kind === "mcp.task" ? `MCP task ${event.taskId}: ${event.status}` : `${event.tool}: ${event.summary}`}</p>)}</section>
-        <section className="terminal"><h2>Terminal</h2><pre>{events?.filter((event) => event.kind === "command.output").map((event) => event.output).join("") || "No command output."}</pre>
+        <ThreadActivity events={events ?? []} />
+        <ThreadTerminal events={events ?? []}>
           <form className="command-form" onSubmit={(event) => void submitCommand(event)}><input aria-label="Command" onChange={(event) => setCommand(event.target.value)} value={command} /><button type="submit">Run</button></form>
-        </section>
+        </ThreadTerminal>
       </div>
       <section className="diff-panel"><h2>Changes</h2><CheckpointComparison checkpoints={checkpoints ?? []} onCompare={async (input) => { const comparisonId = await compareCheckpoints({ ...input, threadId: activeThreadId }); setRequestedComparisonId(comparisonId); setShowComparison(true); }} />{showComparison ? <button className="current-diff" onClick={() => setShowComparison(false)} type="button">Current changes</button> : null}<p aria-live="polite" className="comparison-status">{showComparison ? `Comparison: ${activeComparison?.status ?? "queued"}` : ""}</p><DiffView comments={showComparison ? [] : diffComments ?? []} content={showComparison && activeComparison?.status === "complete" ? activeComparison.content ?? "No differences." : diff?.content ?? "No changes."} onCreateComment={showComparison ? undefined : (input) => createComment({ ...input, threadId: activeThreadId })} />
         {!showComparison && diffComments?.some((comment) => !comment.resolved) ? <button className="address-comments" onClick={() => void send({ content: "Address the unresolved review comments.", threadId: activeThreadId })} type="button">Address comments</button> : null}

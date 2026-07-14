@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test && bun run --cwd convex test:convex",
-    "build": "bun run --filter @relay/web build",
+    "build": "bun run --cwd apps/web build",
+    "bundle:check": "bun run scripts/check-bundle-budget.ts",
     "daemon:build:native": "bun build --compile apps/daemon/src/cli.ts --outfile dist/relay",
     "convex:dev": "bunx convex dev",
     "daemon:connect": "bun --cwd apps/daemon run connect",

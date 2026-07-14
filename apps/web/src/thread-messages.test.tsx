@@ -37,3 +37,16 @@ test("renders a restore action beside the assistant turn that owns a checkpoint"
   expect(markup).toContain("Restore");
   expect(markup).toContain('aria-label="Restore checkpoint for this turn"');
 });
+
+test("virtualizes a long thread instead of mounting every message row", () => {
+  const markup = renderToStaticMarkup(<ThreadMessages messages={Array.from({ length: 100 }, (_, index) => ({
+    _id: `message-${index}`,
+    content: `message ${index}`,
+    role: "assistant" as const,
+    status: "complete" as const,
+  }))} />);
+
+  expect(markup).toContain('data-virtual-list="true"');
+  expect(markup).toContain("message 0");
+  expect(markup).not.toContain("message 40");
+});

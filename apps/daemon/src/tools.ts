@@ -24,13 +24,30 @@ export async function editFile({ content, path, root }: { content: string; path:
   await writeFile(target, content, "utf8");
 }
 
-export async function runCommand({ command, platform, root }: { command: string; platform: MachinePlatform; root: string }) {
+export async function runCommand({ command, onOutput, platform, root }: { command: string; onOutput?: (chunk: string) => Promise<void>; platform: MachinePlatform; root: string }) {
   const invocation = shellInvocation({ command, platform });
   const process = Bun.spawn([invocation.executable, ...invocation.args], { cwd: root, stderr: "pipe", stdout: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
+    collectOutput({ onOutput, stream: process.stdout }),
+    collectOutput({ onOutput, stream: process.stderr }),
     process.exited,
   ]);
   return { exitCode, stderr, stdout };
+}
+
+async function collectOutput({ onOutput, stream }: { onOutput?: (chunk: string) => Promise<void>; stream: ReadableStream<Uint8Array> }): Promise<string> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let output = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    output += chunk;
+    if (chunk) await onOutput?.(chunk);
+  }
+  const remaining = decoder.decode();
+  output += remaining;
+  if (remaining) await onOutput?.(remaining);
+  return output;
 }
