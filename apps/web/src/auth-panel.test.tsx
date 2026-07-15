@@ -9,4 +9,6 @@ test("renders email-password sign-in and account creation controls", () => {
   expect(html).toContain('type="password"');
   expect(html).toContain("Sign in");
   expect(html).toContain("Create account");
+  expect(html).toContain('data-relay-mark="switchboard"');
+  expect(html).toContain("Continue to your agent workbench");
 });

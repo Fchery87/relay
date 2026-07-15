@@ -107,6 +107,7 @@ export const listMachinesAndProjects = queryGeneric({
 
     return Promise.all(
       machines.map(async (machine) => ({
+        capabilityCeiling: machine.capabilityCeiling,
         daemonVersion: machine.daemonVersion,
         id: machine._id,
         lastHeartbeatAt: machine.lastHeartbeatAt,

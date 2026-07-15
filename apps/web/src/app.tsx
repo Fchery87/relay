@@ -6,6 +6,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { AuthPanel } from "./auth-panel";
 import { MachineSidebar, type MachineSummary } from "./machine-sidebar";
 import { PairingPanel } from "./pairing-panel";
+import { RelayBrand } from "./relay-brand";
 import { ThreadView } from "./thread-view";
 
 const listMachinesAndProjects = makeFunctionReference<"query", Record<string, never>, MachineSummary[]>(
@@ -25,7 +26,7 @@ function useCurrentTime(): number {
 }
 
 export function ConnectedWorkspace() {
-  return <><AuthLoading><main className="auth-workspace"><p>Loading Relay...</p></main></AuthLoading><Unauthenticated><AuthPanel /></Unauthenticated><Authenticated><AuthenticatedWorkspace /></Authenticated></>;
+  return <><AuthLoading><main className="auth-workspace"><div className="loading-state"><RelayBrand /><p>Connecting to your workbench</p></div></main></AuthLoading><Unauthenticated><AuthPanel /></Unauthenticated><Authenticated><AuthenticatedWorkspace /></Authenticated></>;
 }
 
 function AuthenticatedWorkspace() {
@@ -51,15 +52,23 @@ function Workspace({
   state: "loading" | "ready" | "unconfigured";
 }) {
   const now = useCurrentTime();
+  const [selectedProjectId, setSelectedProjectId] = useState<string>();
   const machineCount = machines?.length ?? 0;
-  const firstProject = machines?.[0]?.projects[0];
+  const projects = (machines ?? []).flatMap((machine) => machine.projects.map((project) => ({
+    ...project,
+    capabilityCeiling: machine.capabilityCeiling,
+  })));
+  const activeProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0];
 
   return (
     <div className="app-shell">
-      <MachineSidebar machines={machines ?? []} now={now} onRevoke={onRevoke} />
+      <MachineSidebar machines={machines ?? []} now={now} onRevoke={onRevoke} onSelectProject={setSelectedProjectId} selectedProjectId={activeProject?.id} />
       <main className="workspace">
         <header className="workspace-header">
-          <h1>Projects</h1>
+          <div className="workspace-title">
+            <h1>{activeProject?.name ?? "Workbench"}</h1>
+            <span aria-label="Workspace status">{state === "ready" ? `${machineCount} connected ${machineCount === 1 ? "machine" : "machines"}` : state === "loading" ? "Connecting" : "Configuration required"}</span>
+          </div>
           {onSignOut ? <button onClick={() => void onSignOut()} type="button">Sign out</button> : null}
         </header>
         {state === "unconfigured" ? (
@@ -68,8 +77,10 @@ function Workspace({
           <p className="workspace-state">Connecting to Relay...</p>
         ) : machineCount === 0 ? (
           <PairingPanel />
+        ) : !activeProject ? (
+          <p className="workspace-state">No projects discovered on the connected machines.</p>
         ) : (
-          <ThreadView projectId={firstProject!.id} />
+          <ThreadView capabilityCeiling={activeProject.capabilityCeiling} key={activeProject.id} projectId={activeProject.id} />
         )}
       </main>
     </div>

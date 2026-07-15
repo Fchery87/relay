@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
 
+import { RelayBrand } from "./relay-brand";
+
 type AuthMode = "signIn" | "signUp";
 
 export function AuthForm({ onSubmit }: { onSubmit: (input: { email: string; mode: AuthMode; password: string }) => Promise<void> }) {
@@ -24,7 +26,8 @@ export function AuthForm({ onSubmit }: { onSubmit: (input: { email: string; mode
   }
 
   return <main className="auth-workspace"><form className="auth-form" onSubmit={(event) => void submit(event)}>
-    <h1>Relay</h1>
+    <RelayBrand />
+    <header className="auth-header"><h1>Sign in</h1><p>Continue to your agent workbench</p></header>
     <label>Email<input autoComplete="email" name="email" required type="email" /></label>
     <label>Password<input autoComplete="current-password" minLength={8} name="password" required type="password" /></label>
     {error ? <p role="alert">{error}</p> : null}

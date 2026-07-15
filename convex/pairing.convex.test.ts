@@ -30,8 +30,9 @@ test("pairs a daemon to one authenticated owner and hides it from other users", 
     platform: "linux",
     projects: [{ name: "relay", path: "/repo/relay" }],
   });
+  await t.mutation(api.machines.setCapabilityCeiling, { capabilities: ["read", "edit"], deviceToken });
 
-  await expect(owner.query(api.machines.listMachinesAndProjects, {})).resolves.toMatchObject([{ name: "owner-machine" }]);
+  await expect(owner.query(api.machines.listMachinesAndProjects, {})).resolves.toMatchObject([{ capabilityCeiling: ["read", "edit"], name: "owner-machine" }]);
   await expect(otherUser.query(api.machines.listMachinesAndProjects, {})).resolves.toEqual([]);
 });
 
