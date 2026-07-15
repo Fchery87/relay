@@ -1,0 +1,1529 @@
+<!doctype html>
+<html lang="en" data-density="compact">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relay Workbench Design System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;550;600&family=Geist+Mono:wght@400;450;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+
+      --color-canvas: #0D100E;
+      --color-surface: #131714;
+      --color-surface-raised: #1A1F1B;
+      --color-surface-hover: #222820;
+      --color-border: #2C332D;
+      --color-border-strong: #424B42;
+      --color-on-surface: #F0F0E8;
+      --color-on-surface-muted: #A8AA9F;
+      --color-on-surface-subtle: #7D8277;
+      --color-primary: #C7A95D;
+      --color-on-primary: #171207;
+      --color-accent: #E1C779;
+      --color-on-accent: #171207;
+      --color-success: #77A681;
+      --color-on-success: #07130B;
+      --color-warning: #C58D58;
+      --color-on-warning: #180D05;
+      --color-error: #C8726B;
+      --color-on-error: #190706;
+      --color-info: #7E9F97;
+      --color-on-info: #071310;
+      --color-terminal: #090C0A;
+      --color-terminal-text: #D7DBD1;
+
+      --type-h1-family: "Geist", "Geist Sans", sans-serif;
+      --type-h1-size: 22px;
+      --type-h1-weight: 600;
+      --type-h1-line: 1.2;
+      --type-h1-tracking: -0.02em;
+      --type-h2-family: "Geist", "Geist Sans", sans-serif;
+      --type-h2-size: 16px;
+      --type-h2-weight: 600;
+      --type-h2-line: 1.35;
+      --type-h2-tracking: -0.015em;
+      --type-h3-family: "Geist", "Geist Sans", sans-serif;
+      --type-h3-size: 13px;
+      --type-h3-weight: 600;
+      --type-h3-line: 1.4;
+      --type-body-family: "Geist", "Geist Sans", sans-serif;
+      --type-body-size: 14px;
+      --type-body-weight: 400;
+      --type-body-line: 1.5;
+      --type-body-strong-family: "Geist", "Geist Sans", sans-serif;
+      --type-body-strong-size: 14px;
+      --type-body-strong-weight: 550;
+      --type-body-strong-line: 1.5;
+      --type-label-family: "Geist", "Geist Sans", sans-serif;
+      --type-label-size: 12px;
+      --type-label-weight: 550;
+      --type-label-line: 1.4;
+      --type-caption-family: "Geist", "Geist Sans", sans-serif;
+      --type-caption-size: 11px;
+      --type-caption-weight: 450;
+      --type-caption-line: 1.45;
+      --type-caption-features: "tnum" 1;
+      --type-mono-family: "Geist Mono", monospace;
+      --type-mono-size: 13px;
+      --type-mono-weight: 450;
+      --type-mono-line: 1.55;
+      --type-mono-features: "tnum" 1, "ss01" 1;
+      --type-mono-small-family: "Geist Mono", monospace;
+      --type-mono-small-size: 11px;
+      --type-mono-small-weight: 450;
+      --type-mono-small-line: 1.5;
+      --type-mono-small-features: "tnum" 1, "ss01" 1;
+
+      --rounded-none: 0px;
+      --rounded-xs: 3px;
+      --rounded-sm: 5px;
+      --rounded-md: 7px;
+      --rounded-lg: 10px;
+      --rounded-full: 999px;
+
+      --space-0: 0px;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      --space-control-compact: 32px;
+      --space-control-comfortable: 40px;
+      --space-row-compact: 28px;
+      --space-row-comfortable: 36px;
+
+      --component-button-primary-bg: var(--color-primary);
+      --component-button-primary-text: var(--color-on-primary);
+      --component-button-primary-family: var(--type-label-family);
+      --component-button-primary-size: var(--type-label-size);
+      --component-button-primary-weight: var(--type-label-weight);
+      --component-button-primary-line: var(--type-label-line);
+      --component-button-primary-radius: var(--rounded-sm);
+      --component-button-primary-padding: var(--space-2) var(--space-3);
+      --component-button-primary-height: var(--space-control-compact);
+
+      --component-button-primary-hover-bg: var(--color-accent);
+      --component-button-primary-hover-text: var(--color-on-accent);
+      --component-button-primary-hover-family: var(--type-label-family);
+      --component-button-primary-hover-size: var(--type-label-size);
+      --component-button-primary-hover-weight: var(--type-label-weight);
+      --component-button-primary-hover-line: var(--type-label-line);
+      --component-button-primary-hover-radius: var(--rounded-sm);
+      --component-button-primary-hover-padding: var(--space-2) var(--space-3);
+      --component-button-primary-hover-height: var(--space-control-compact);
+
+      --component-button-secondary-bg: var(--color-surface-raised);
+      --component-button-secondary-text: var(--color-on-surface);
+      --component-button-secondary-family: var(--type-label-family);
+      --component-button-secondary-size: var(--type-label-size);
+      --component-button-secondary-weight: var(--type-label-weight);
+      --component-button-secondary-line: var(--type-label-line);
+      --component-button-secondary-radius: var(--rounded-sm);
+      --component-button-secondary-padding: var(--space-2) var(--space-3);
+      --component-button-secondary-height: var(--space-control-compact);
+
+      --component-button-danger-bg: var(--color-error);
+      --component-button-danger-text: var(--color-on-error);
+      --component-button-danger-family: var(--type-label-family);
+      --component-button-danger-size: var(--type-label-size);
+      --component-button-danger-weight: var(--type-label-weight);
+      --component-button-danger-line: var(--type-label-line);
+      --component-button-danger-radius: var(--rounded-sm);
+      --component-button-danger-padding: var(--space-2) var(--space-3);
+      --component-button-danger-height: var(--space-control-compact);
+
+      --component-input-bg: var(--color-surface-raised);
+      --component-input-text: var(--color-on-surface);
+      --component-input-family: var(--type-body-family);
+      --component-input-size: var(--type-body-size);
+      --component-input-weight: var(--type-body-weight);
+      --component-input-line: var(--type-body-line);
+      --component-input-radius: var(--rounded-sm);
+      --component-input-padding: var(--space-2) var(--space-3);
+      --component-input-height: var(--space-control-compact);
+
+      --component-composer-bg: var(--color-surface-raised);
+      --component-composer-text: var(--color-on-surface);
+      --component-composer-family: var(--type-body-family);
+      --component-composer-size: var(--type-body-size);
+      --component-composer-weight: var(--type-body-weight);
+      --component-composer-line: var(--type-body-line);
+      --component-composer-radius: var(--rounded-lg);
+      --component-composer-padding: var(--space-4);
+      --component-composer-height: 120px;
+
+      --component-navigation-bg: var(--color-surface);
+      --component-navigation-text: var(--color-on-surface-muted);
+      --component-navigation-family: var(--type-body-family);
+      --component-navigation-size: var(--type-body-size);
+      --component-navigation-weight: var(--type-body-weight);
+      --component-navigation-line: var(--type-body-line);
+      --component-navigation-radius: var(--rounded-sm);
+      --component-navigation-padding: var(--space-1) var(--space-2);
+      --component-navigation-height: var(--space-row-compact);
+
+      --component-navigation-active-bg: var(--color-surface-hover);
+      --component-navigation-active-text: var(--color-on-surface);
+      --component-navigation-active-family: var(--type-body-strong-family);
+      --component-navigation-active-size: var(--type-body-strong-size);
+      --component-navigation-active-weight: var(--type-body-strong-weight);
+      --component-navigation-active-line: var(--type-body-strong-line);
+      --component-navigation-active-radius: var(--rounded-sm);
+      --component-navigation-active-padding: var(--space-1) var(--space-2);
+      --component-navigation-active-height: var(--space-row-compact);
+
+      --component-operation-bg: var(--color-surface-raised);
+      --component-operation-text: var(--color-on-surface);
+      --component-operation-family: var(--type-body-family);
+      --component-operation-size: var(--type-body-size);
+      --component-operation-weight: var(--type-body-weight);
+      --component-operation-line: var(--type-body-line);
+      --component-operation-radius: var(--rounded-md);
+      --component-operation-padding: var(--space-3);
+
+      --component-workspace-bg: var(--color-surface);
+      --component-workspace-text: var(--color-on-surface);
+      --component-workspace-family: var(--type-body-family);
+      --component-workspace-size: var(--type-body-size);
+      --component-workspace-weight: var(--type-body-weight);
+      --component-workspace-line: var(--type-body-line);
+      --component-workspace-radius: var(--rounded-none);
+      --component-workspace-padding: var(--space-4);
+
+      --guide-content: 1240px;
+      --guide-section-gap: var(--space-5);
+      --shadow-overlay: 0 10px 28px rgb(3 6 4 / 44%);
+      --transition-fast: 160ms ease-out;
+    }
+
+    [data-density="comfortable"] {
+      --component-button-primary-height: var(--space-control-comfortable);
+      --component-button-primary-hover-height: var(--space-control-comfortable);
+      --component-button-secondary-height: var(--space-control-comfortable);
+      --component-button-danger-height: var(--space-control-comfortable);
+      --component-input-height: var(--space-control-comfortable);
+      --component-composer-height: 136px;
+      --component-navigation-height: var(--space-row-comfortable);
+      --component-navigation-active-height: var(--space-row-comfortable);
+      --component-operation-padding: var(--space-4);
+      --component-workspace-padding: var(--space-5);
+      --guide-section-gap: var(--space-6);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--color-canvas);
+      color: var(--color-on-surface);
+      font-family: var(--type-body-family);
+      font-size: var(--type-body-size);
+      line-height: var(--type-body-line);
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+
+    .guide-header,
+    .guide-main {
+      margin: 0 auto;
+      max-width: var(--guide-content);
+      padding-left: var(--space-5);
+      padding-right: var(--space-5);
+    }
+
+    .guide-header {
+      padding-bottom: calc(var(--space-6) + var(--space-4));
+      padding-top: calc(var(--space-6) + var(--space-4));
+    }
+
+    .header-row {
+      align-items: end;
+      display: grid;
+      gap: var(--space-5);
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .guide-title {
+      font: var(--type-h1-weight) var(--type-h1-size)/var(--type-h1-line) var(--type-h1-family);
+      letter-spacing: var(--type-h1-tracking);
+      margin: 0 0 var(--space-2);
+    }
+
+    .guide-description {
+      color: var(--color-on-surface-muted);
+      margin: 0;
+      max-width: 700px;
+    }
+
+    .mirror-note {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      font-feature-settings: var(--type-caption-features);
+      margin: var(--space-3) 0 0;
+    }
+
+    .density-control {
+      align-items: center;
+      border: 1px solid var(--color-border);
+      border-radius: var(--rounded-sm);
+      display: flex;
+      padding: 2px;
+    }
+
+    .density-control button {
+      background: transparent;
+      border: 0;
+      border-radius: var(--rounded-xs);
+      color: var(--color-on-surface-muted);
+      font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family);
+      height: var(--space-row-compact);
+      padding: 0 var(--space-3);
+      transition: background-color var(--transition-fast), color var(--transition-fast);
+    }
+
+    .density-control button:hover {
+      color: var(--color-on-surface);
+    }
+
+    .density-control button[aria-pressed="true"] {
+      background: var(--color-surface-hover);
+      color: var(--color-on-surface);
+    }
+
+    .handoff {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      margin-top: var(--space-6);
+      padding: var(--space-4);
+    }
+
+    .handoff-head {
+      align-items: baseline;
+      display: flex;
+      gap: var(--space-3);
+      justify-content: space-between;
+      margin-bottom: var(--space-4);
+    }
+
+    .handoff-head h2 {
+      font: var(--type-h3-weight) var(--type-h3-size)/var(--type-h3-line) var(--type-h3-family);
+      margin: 0;
+    }
+
+    .handoff-head span {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+      font-feature-settings: var(--type-mono-small-features);
+    }
+
+    .handoff-track {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .handoff-stage {
+      border-top: 2px solid var(--color-border-strong);
+      display: grid;
+      gap: var(--space-1);
+      min-width: 0;
+      padding: var(--space-3) var(--space-3) 0 0;
+      position: relative;
+    }
+
+    .handoff-stage::before {
+      background: var(--color-surface);
+      border: 2px solid var(--color-border-strong);
+      content: "";
+      height: var(--space-3);
+      position: absolute;
+      top: -7px;
+      width: var(--space-3);
+    }
+
+    .handoff-stage.is-complete {
+      border-top-color: var(--color-primary);
+    }
+
+    .handoff-stage.is-complete::before {
+      background: var(--color-primary);
+      border-color: var(--color-primary);
+    }
+
+    .handoff-stage.is-current {
+      border-top-color: var(--color-primary);
+    }
+
+    .handoff-stage.is-current::before {
+      background: var(--color-surface);
+      border-color: var(--color-accent);
+    }
+
+    .handoff-index {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+      font-feature-settings: var(--type-mono-small-features);
+    }
+
+    .handoff-name {
+      font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family);
+    }
+
+    .handoff-state {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      font-feature-settings: var(--type-caption-features);
+    }
+
+    .handoff-stage.is-current .handoff-state {
+      color: var(--color-primary);
+    }
+
+    .guide-section {
+      border-top: 1px solid var(--color-border);
+      display: grid;
+      gap: var(--space-6);
+      grid-template-columns: 200px minmax(0, 1fr);
+      padding-bottom: calc(var(--space-6) + var(--space-5));
+      padding-top: calc(var(--space-6) + var(--space-5));
+    }
+
+    .section-heading {
+      position: sticky;
+      top: var(--space-4);
+    }
+
+    .section-heading h2 {
+      font: var(--type-h2-weight) var(--type-h2-size)/var(--type-h2-line) var(--type-h2-family);
+      letter-spacing: var(--type-h2-tracking);
+      margin: 0 0 var(--space-2);
+    }
+
+    .section-heading p {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      font-feature-settings: var(--type-caption-features);
+      margin: 0;
+    }
+
+    .section-content {
+      min-width: 0;
+    }
+
+    .subsection-title {
+      font: var(--type-h3-weight) var(--type-h3-size)/var(--type-h3-line) var(--type-h3-family);
+      margin: 0 0 var(--space-3);
+    }
+
+    .token-name {
+      color: var(--color-on-surface);
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+      font-feature-settings: var(--type-mono-small-features);
+    }
+
+    .token-value,
+    .spec {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      font-feature-settings: var(--type-caption-features);
+    }
+
+    .palette-ledger {
+      border-top: 1px solid var(--color-border);
+    }
+
+    .palette-row {
+      align-items: stretch;
+      border-bottom: 1px solid var(--color-border);
+      display: grid;
+      grid-template-columns: 190px minmax(220px, 1fr) 110px;
+      min-height: calc(var(--space-6) + var(--space-5));
+    }
+
+    .palette-token,
+    .palette-value {
+      align-items: center;
+      display: flex;
+      padding: var(--space-3);
+    }
+
+    .palette-value {
+      justify-content: flex-end;
+    }
+
+    .palette-swatch {
+      align-items: center;
+      display: flex;
+      font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family);
+      padding: var(--space-3);
+    }
+
+    .ledger-heading {
+      border-top: 0;
+      margin-top: var(--space-5);
+    }
+
+    .type-list {
+      border-top: 1px solid var(--color-border);
+    }
+
+    .type-row {
+      align-items: baseline;
+      border-bottom: 1px solid var(--color-border);
+      display: grid;
+      gap: var(--space-4);
+      grid-template-columns: minmax(0, 1fr) 270px;
+      padding: var(--space-4) 0;
+    }
+
+    .type-sample {
+      margin: 0;
+    }
+
+    .type-meta {
+      display: grid;
+      gap: var(--space-1);
+    }
+
+    .type-h1 { font: var(--type-h1-weight) var(--type-h1-size)/var(--type-h1-line) var(--type-h1-family); letter-spacing: var(--type-h1-tracking); }
+    .type-h2 { font: var(--type-h2-weight) var(--type-h2-size)/var(--type-h2-line) var(--type-h2-family); letter-spacing: var(--type-h2-tracking); }
+    .type-h3 { font: var(--type-h3-weight) var(--type-h3-size)/var(--type-h3-line) var(--type-h3-family); }
+    .type-body { font: var(--type-body-weight) var(--type-body-size)/var(--type-body-line) var(--type-body-family); }
+    .type-body-strong { font: var(--type-body-strong-weight) var(--type-body-strong-size)/var(--type-body-strong-line) var(--type-body-strong-family); }
+    .type-label { font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family); }
+    .type-caption { font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family); font-feature-settings: var(--type-caption-features); }
+    .type-mono { font: var(--type-mono-weight) var(--type-mono-size)/var(--type-mono-line) var(--type-mono-family); font-feature-settings: var(--type-mono-features); }
+    .type-mono-small { font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family); font-feature-settings: var(--type-mono-small-features); }
+
+    .spacing-list,
+    .radius-grid,
+    .depth-grid,
+    .component-stack {
+      display: grid;
+      gap: var(--space-3);
+    }
+
+    .spacing-row {
+      align-items: center;
+      display: grid;
+      gap: var(--space-4);
+      grid-template-columns: 190px minmax(0, 1fr) 64px;
+      min-height: var(--space-row-compact);
+    }
+
+    .spacing-track {
+      align-items: center;
+      background: var(--color-surface);
+      display: flex;
+      height: var(--space-2);
+    }
+
+    .spacing-bar {
+      background: var(--color-primary);
+      height: 100%;
+      min-width: 1px;
+    }
+
+    .radius-grid,
+    .depth-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .radius-sample,
+    .depth-sample {
+      background: var(--color-surface-raised);
+      min-height: 112px;
+      padding: var(--space-4);
+    }
+
+    .radius-sample {
+      border: 1px solid var(--color-border-strong);
+    }
+
+    .radius-sample .token-name {
+      display: block;
+      margin-bottom: var(--space-1);
+    }
+
+    .depth-border {
+      border: 1px solid var(--color-border);
+    }
+
+    .depth-raised {
+      border: 1px solid var(--color-border-strong);
+    }
+
+    .depth-overlay {
+      border: 1px solid var(--color-border-strong);
+      border-radius: var(--rounded-md);
+      box-shadow: var(--shadow-overlay);
+    }
+
+    .depth-sample p {
+      color: var(--color-on-surface-muted);
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      margin: var(--space-2) 0 0;
+    }
+
+    .component-group {
+      border-top: 1px solid var(--color-border);
+      padding-top: var(--guide-section-gap);
+    }
+
+    .component-group:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .component-row {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-3);
+    }
+
+    .component-label {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      font-feature-settings: var(--type-caption-features);
+      margin: 0 0 var(--space-3);
+    }
+
+    .button-primary,
+    .button-primary-hover,
+    .button-secondary,
+    .button-danger {
+      align-items: center;
+      border: 1px solid transparent;
+      display: inline-flex;
+      justify-content: center;
+      transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+      white-space: nowrap;
+    }
+
+    .button-primary {
+      background: var(--component-button-primary-bg);
+      border-radius: var(--component-button-primary-radius);
+      color: var(--component-button-primary-text);
+      font: var(--component-button-primary-weight) var(--component-button-primary-size)/var(--component-button-primary-line) var(--component-button-primary-family);
+      height: var(--component-button-primary-height);
+      padding: var(--component-button-primary-padding);
+    }
+
+    .button-primary:hover,
+    .button-primary-hover {
+      background: var(--component-button-primary-hover-bg);
+      border-radius: var(--component-button-primary-hover-radius);
+      color: var(--component-button-primary-hover-text);
+      font: var(--component-button-primary-hover-weight) var(--component-button-primary-hover-size)/var(--component-button-primary-hover-line) var(--component-button-primary-hover-family);
+      height: var(--component-button-primary-hover-height);
+      padding: var(--component-button-primary-hover-padding);
+    }
+
+    .button-primary:active,
+    .button-primary-hover:active {
+      background: var(--color-primary);
+      box-shadow: inset 0 0 0 1px var(--color-on-primary);
+    }
+
+    .button-secondary {
+      background: var(--component-button-secondary-bg);
+      border-color: var(--color-border-strong);
+      border-radius: var(--component-button-secondary-radius);
+      color: var(--component-button-secondary-text);
+      font: var(--component-button-secondary-weight) var(--component-button-secondary-size)/var(--component-button-secondary-line) var(--component-button-secondary-family);
+      height: var(--component-button-secondary-height);
+      padding: var(--component-button-secondary-padding);
+    }
+
+    .button-secondary:hover {
+      background: var(--color-surface-hover);
+      border-color: var(--color-primary);
+    }
+
+    .button-primary:disabled,
+    .button-secondary:disabled,
+    .button-danger:disabled {
+      background: var(--color-surface-raised);
+      border-color: var(--color-border);
+      color: var(--color-on-surface-subtle);
+      cursor: not-allowed;
+      opacity: 0.72;
+    }
+
+    .button-danger {
+      background: var(--component-button-danger-bg);
+      border-radius: var(--component-button-danger-radius);
+      color: var(--component-button-danger-text);
+      font: var(--component-button-danger-weight) var(--component-button-danger-size)/var(--component-button-danger-line) var(--component-button-danger-family);
+      height: var(--component-button-danger-height);
+      padding: var(--component-button-danger-padding);
+    }
+
+    .button-danger:hover {
+      filter: brightness(1.08);
+    }
+
+    .field-demo {
+      display: grid;
+      gap: var(--space-2);
+      max-width: 460px;
+    }
+
+    .field-demo label {
+      font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family);
+    }
+
+    .input {
+      background: var(--component-input-bg);
+      border: 1px solid var(--color-border-strong);
+      border-radius: var(--component-input-radius);
+      color: var(--component-input-text);
+      font: var(--component-input-weight) var(--component-input-size)/var(--component-input-line) var(--component-input-family);
+      height: var(--component-input-height);
+      padding: var(--component-input-padding);
+      transition: border-color var(--transition-fast);
+      width: 100%;
+    }
+
+    .input:hover {
+      border-color: var(--color-on-surface-subtle);
+    }
+
+    .input::placeholder,
+    .composer textarea::placeholder {
+      color: var(--color-on-surface-subtle);
+    }
+
+    .composer {
+      background: var(--component-composer-bg);
+      border: 1px solid var(--color-border-strong);
+      border-radius: var(--component-composer-radius);
+      color: var(--component-composer-text);
+      display: grid;
+      font: var(--component-composer-weight) var(--component-composer-size)/var(--component-composer-line) var(--component-composer-family);
+      grid-template-rows: minmax(0, 1fr) auto;
+      height: var(--component-composer-height);
+      padding: var(--component-composer-padding);
+      transition: border-color var(--transition-fast);
+    }
+
+    .composer:focus-within {
+      border-color: var(--color-primary);
+      box-shadow: inset 0 -2px 0 var(--color-primary);
+    }
+
+    .composer textarea {
+      background: transparent;
+      border: 0;
+      color: inherit;
+      min-height: 0;
+      outline: 0;
+      padding: 0;
+      resize: none;
+    }
+
+    .composer-footer {
+      align-items: center;
+      display: flex;
+      gap: var(--space-3);
+      justify-content: space-between;
+    }
+
+    .composer-context {
+      color: var(--color-on-surface-muted);
+      display: flex;
+      flex-wrap: wrap;
+      font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family);
+      gap: var(--space-4);
+    }
+
+    .navigation-demo {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      max-width: 320px;
+      padding: var(--space-2);
+    }
+
+    .navigation-item,
+    .navigation-item-active {
+      align-items: center;
+      display: flex;
+      gap: var(--space-2);
+      position: relative;
+      width: 100%;
+    }
+
+    .navigation-item {
+      background: var(--component-navigation-bg);
+      border-radius: var(--component-navigation-radius);
+      color: var(--component-navigation-text);
+      font: var(--component-navigation-weight) var(--component-navigation-size)/var(--component-navigation-line) var(--component-navigation-family);
+      height: var(--component-navigation-height);
+      padding: var(--component-navigation-padding);
+    }
+
+    .navigation-item:hover {
+      background: var(--color-surface-hover);
+      color: var(--color-on-surface);
+    }
+
+    .navigation-item-active {
+      background: var(--component-navigation-active-bg);
+      border-radius: var(--component-navigation-active-radius);
+      color: var(--component-navigation-active-text);
+      font: var(--component-navigation-active-weight) var(--component-navigation-active-size)/var(--component-navigation-active-line) var(--component-navigation-active-family);
+      height: var(--component-navigation-active-height);
+      padding: var(--component-navigation-active-padding);
+    }
+
+    .navigation-item-active::before {
+      background: var(--color-primary);
+      content: "";
+      height: var(--space-4);
+      left: 0;
+      position: absolute;
+      width: 2px;
+    }
+
+    .navigation-item > span:last-child,
+    .navigation-item-active > span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .nav-key {
+      color: var(--color-on-surface-subtle);
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+      font-feature-settings: var(--type-mono-small-features);
+      text-align: center;
+      width: var(--space-4);
+    }
+
+    .operation-flow {
+      display: grid;
+      gap: 0;
+      padding-left: var(--space-5);
+      position: relative;
+    }
+
+    .operation-flow::before {
+      background: var(--color-border-strong);
+      content: "";
+      height: calc(100% - var(--space-6));
+      left: 5px;
+      position: absolute;
+      top: var(--space-4);
+      width: 2px;
+    }
+
+    .operation-card {
+      background: var(--component-operation-bg);
+      border: 1px solid var(--color-border);
+      border-left: 2px solid var(--color-info);
+      border-radius: var(--component-operation-radius);
+      color: var(--component-operation-text);
+      font: var(--component-operation-weight) var(--component-operation-size)/var(--component-operation-line) var(--component-operation-family);
+      margin-bottom: var(--space-3);
+      padding: var(--component-operation-padding);
+      position: relative;
+    }
+
+    .operation-card::before {
+      background: var(--color-surface);
+      border: 2px solid var(--color-info);
+      content: "";
+      height: var(--space-2);
+      left: -27px;
+      position: absolute;
+      top: var(--space-4);
+      width: var(--space-2);
+    }
+
+    .operation-card.is-warning {
+      border-left-color: var(--color-warning);
+    }
+
+    .operation-card.is-warning::before {
+      border-color: var(--color-warning);
+    }
+
+    .operation-card.is-complete {
+      border-left-color: var(--color-success);
+    }
+
+    .operation-card.is-complete::before {
+      background: var(--color-success);
+      border-color: var(--color-success);
+    }
+
+    .operation-card header {
+      align-items: center;
+      display: flex;
+      gap: var(--space-2);
+      justify-content: space-between;
+    }
+
+    .operation-card h4 {
+      font: var(--type-h3-weight) var(--type-h3-size)/var(--type-h3-line) var(--type-h3-family);
+      margin: 0;
+    }
+
+    .operation-card p {
+      color: var(--color-on-surface-muted);
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      margin: var(--space-2) 0 var(--space-3);
+    }
+
+    .operation-card code {
+      color: var(--color-terminal-text);
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+      font-feature-settings: var(--type-mono-small-features);
+      overflow-wrap: anywhere;
+    }
+
+    .operation-actions {
+      display: flex;
+      gap: var(--space-2);
+      justify-content: flex-end;
+      margin-top: var(--space-3);
+    }
+
+    .workspace-preview {
+      border: 1px solid var(--color-border);
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr) 270px;
+      min-height: 500px;
+      overflow: hidden;
+    }
+
+    .workspace-pane {
+      background: var(--component-workspace-bg);
+      border-radius: var(--component-workspace-radius);
+      color: var(--component-workspace-text);
+      font: var(--component-workspace-weight) var(--component-workspace-size)/var(--component-workspace-line) var(--component-workspace-family);
+      min-width: 0;
+      padding: var(--component-workspace-padding);
+    }
+
+    .workspace-preview > .workspace-pane + .workspace-pane {
+      border-left: 1px solid var(--color-border);
+    }
+
+    .preview-brand,
+    .preview-title {
+      font: var(--type-h3-weight) var(--type-h3-size)/var(--type-h3-line) var(--type-h3-family);
+      margin: 0;
+    }
+
+    .preview-brand {
+      margin-bottom: var(--space-4);
+    }
+
+    .preview-main {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 0;
+    }
+
+    .preview-toolbar {
+      align-items: center;
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      height: var(--space-control-comfortable);
+      justify-content: space-between;
+      padding: 0 var(--space-4);
+    }
+
+    .preview-toolbar-meta {
+      color: var(--color-primary);
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+    }
+
+    .run-stream {
+      display: grid;
+      gap: var(--space-3);
+      margin: auto;
+      max-width: 560px;
+      padding: var(--space-5);
+      width: 100%;
+    }
+
+    .run-message {
+      border-left: 2px solid var(--color-primary);
+      padding: var(--space-2) var(--space-3);
+    }
+
+    .run-message strong {
+      display: block;
+      font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family);
+      margin-bottom: var(--space-1);
+    }
+
+    .run-message p {
+      color: var(--color-on-surface-muted);
+      margin: 0;
+    }
+
+    .mini-operation {
+      background: var(--color-surface-raised);
+      border: 1px solid var(--color-border);
+      border-left: 2px solid var(--color-success);
+      padding: var(--space-3);
+    }
+
+    .mini-operation header {
+      display: flex;
+      gap: var(--space-3);
+      justify-content: space-between;
+    }
+
+    .mini-operation code,
+    .mini-operation span {
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+      font-feature-settings: var(--type-mono-small-features);
+    }
+
+    .mini-operation span {
+      color: var(--color-on-surface-subtle);
+    }
+
+    .preview-composer-wrap {
+      padding: var(--space-4);
+    }
+
+    .preview-side {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      padding: 0;
+    }
+
+    .surface-tabs {
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      gap: var(--space-4);
+      padding: 0 var(--space-4);
+    }
+
+    .surface-tab {
+      background: transparent;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      color: var(--color-on-surface-muted);
+      font: var(--type-label-weight) var(--type-label-size)/var(--type-label-line) var(--type-label-family);
+      height: var(--space-control-comfortable);
+      padding: 0;
+    }
+
+    .surface-tab:hover {
+      color: var(--color-on-surface);
+    }
+
+    .surface-tab.is-active {
+      border-bottom-color: var(--color-primary);
+      color: var(--color-on-surface);
+    }
+
+    .terminal {
+      background: var(--color-terminal);
+      color: var(--color-terminal-text);
+      font: var(--type-mono-small-weight) var(--type-mono-small-size)/var(--type-mono-small-line) var(--type-mono-small-family);
+      font-feature-settings: var(--type-mono-small-features);
+      margin: 0;
+      overflow: auto;
+      padding: var(--space-4);
+      white-space: pre-wrap;
+    }
+
+    .mobile-surface-note {
+      color: var(--color-on-surface-subtle);
+      display: none;
+      font: var(--type-caption-weight) var(--type-caption-size)/var(--type-caption-line) var(--type-caption-family);
+      margin: var(--space-3) 0 0;
+    }
+
+    .principle-grid {
+      display: grid;
+      gap: var(--space-4);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .principle-column {
+      border-top: 2px solid var(--color-success);
+      padding-top: var(--space-4);
+    }
+
+    .principle-column.is-dont {
+      border-top-color: var(--color-error);
+    }
+
+    .principle-column h3 {
+      font: var(--type-h3-weight) var(--type-h3-size)/var(--type-h3-line) var(--type-h3-family);
+      margin: 0 0 var(--space-3);
+    }
+
+    .principle-column ul {
+      display: grid;
+      gap: var(--space-3);
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    .principle-column li {
+      color: var(--color-on-surface-muted);
+      display: grid;
+      gap: var(--space-2);
+      grid-template-columns: 16px minmax(0, 1fr);
+    }
+
+    .do-mark {
+      color: var(--color-success);
+    }
+
+    .dont-mark {
+      color: var(--color-error);
+    }
+
+    @media (max-width: 1040px) {
+      .guide-section {
+        grid-template-columns: 1fr;
+      }
+
+      .section-heading {
+        position: static;
+      }
+
+      .workspace-preview {
+        grid-template-columns: 190px minmax(0, 1fr);
+      }
+
+      .workspace-preview > .preview-side {
+        border-left: 0;
+        border-top: 1px solid var(--color-border);
+        grid-column: 1 / -1;
+        min-height: 240px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .guide-header,
+      .guide-main {
+        padding-left: var(--space-4);
+        padding-right: var(--space-4);
+      }
+
+      .header-row {
+        align-items: start;
+        grid-template-columns: 1fr;
+      }
+
+      .density-control {
+        justify-self: start;
+      }
+
+      .handoff-track {
+        gap: 0;
+        grid-template-columns: 1fr;
+      }
+
+      .handoff-stage {
+        border-left: 2px solid var(--color-border-strong);
+        border-top: 0;
+        padding: var(--space-2) 0 var(--space-3) var(--space-4);
+      }
+
+      .handoff-stage::before {
+        left: -7px;
+        top: var(--space-3);
+      }
+
+      .handoff-stage.is-complete,
+      .handoff-stage.is-current {
+        border-left-color: var(--color-primary);
+      }
+
+      .palette-row {
+        grid-template-columns: minmax(0, 1fr) 82px;
+      }
+
+      .palette-token {
+        grid-column: 1;
+      }
+
+      .palette-value {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      .palette-swatch {
+        grid-column: 1 / -1;
+        min-height: 44px;
+      }
+
+      .type-row,
+      .spacing-row {
+        grid-template-columns: 1fr;
+      }
+
+      .radius-grid,
+      .depth-grid,
+      .principle-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .workspace-preview {
+        display: block;
+        min-height: 0;
+      }
+
+      .workspace-preview > .preview-nav,
+      .workspace-preview > .preview-side {
+        display: none;
+      }
+
+      .preview-main {
+        min-height: 500px;
+      }
+
+      .mobile-surface-note {
+        display: block;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="guide-header">
+    <div class="header-row">
+      <div>
+        <h1 class="guide-title">Relay Workbench Design System</h1>
+        <p class="guide-description">A dark, signal-led workbench for directing local coding agents through explicit, trustworthy handoffs.</p>
+        <p class="mirror-note">Human-readable mirror of docs/design.md · The Markdown file remains the source of truth.</p>
+      </div>
+      <div class="density-control" aria-label="Preview density">
+        <button type="button" data-density-option="compact" aria-pressed="true">Compact</button>
+        <button type="button" data-density-option="comfortable" aria-pressed="false">Comfortable</button>
+      </div>
+    </div>
+
+    <section class="handoff" aria-labelledby="handoff-title">
+      <div class="handoff-head">
+        <h2 id="handoff-title">Handoff trace</h2>
+        <span>thread relay/ui-modernization</span>
+      </div>
+      <div class="handoff-track">
+        <div class="handoff-stage is-complete"><span class="handoff-index">01</span><span class="handoff-name">Request</span><span class="handoff-state">received</span></div>
+        <div class="handoff-stage is-complete"><span class="handoff-index">02</span><span class="handoff-name">Plan</span><span class="handoff-state">approved</span></div>
+        <div class="handoff-stage is-current"><span class="handoff-index">03</span><span class="handoff-name">Tools</span><span class="handoff-state">running</span></div>
+        <div class="handoff-stage"><span class="handoff-index">04</span><span class="handoff-name">Review</span><span class="handoff-state">waiting</span></div>
+        <div class="handoff-stage"><span class="handoff-index">05</span><span class="handoff-name">Deliver</span><span class="handoff-state">queued</span></div>
+      </div>
+    </section>
+  </header>
+
+  <main class="guide-main">
+    <section class="guide-section" id="colors">
+      <div class="section-heading">
+        <h2>Colors</h2>
+        <p>Mineral graphite, bone text, and brass reserved for active handoffs.</p>
+      </div>
+      <div class="section-content">
+        <h3 class="subsection-title">Foundation and content</h3>
+        <div class="palette-ledger">
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.canvas</span></div><div class="palette-swatch" style="background: var(--color-canvas); color: var(--color-on-surface)">Application canvas</div><div class="palette-value"><span class="token-value">#0D100E</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.surface</span></div><div class="palette-swatch" style="background: var(--color-surface); color: var(--color-on-surface)">Persistent workspace pane</div><div class="palette-value"><span class="token-value">#131714</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.surface-raised</span></div><div class="palette-swatch" style="background: var(--color-surface-raised); color: var(--color-on-surface)">Operation and control surface</div><div class="palette-value"><span class="token-value">#1A1F1B</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.surface-hover</span></div><div class="palette-swatch" style="background: var(--color-surface-hover); color: var(--color-on-surface)">Hover and active row</div><div class="palette-value"><span class="token-value">#222820</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.border</span></div><div class="palette-swatch" style="background: var(--color-border); color: var(--color-on-surface)">Structural division</div><div class="palette-value"><span class="token-value">#2C332D</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.border-strong</span></div><div class="palette-swatch" style="background: var(--color-border-strong); color: var(--color-on-surface)">Focused boundary</div><div class="palette-value"><span class="token-value">#424B42</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-surface</span></div><div class="palette-swatch" style="background: var(--color-on-surface); color: var(--color-canvas)">Primary interface text</div><div class="palette-value"><span class="token-value">#F0F0E8</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-surface-muted</span></div><div class="palette-swatch" style="background: var(--color-on-surface-muted); color: var(--color-canvas)">Secondary interface text</div><div class="palette-value"><span class="token-value">#A8AA9F</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-surface-subtle</span></div><div class="palette-swatch" style="background: var(--color-on-surface-subtle); color: var(--color-canvas)">Noncritical metadata</div><div class="palette-value"><span class="token-value">#7D8277</span></div></div>
+        </div>
+
+        <h3 class="subsection-title ledger-heading">Interaction and terminal</h3>
+        <div class="palette-ledger">
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.primary</span></div><div class="palette-swatch" style="background: var(--color-primary); color: var(--color-on-primary)">Current handoff and primary action</div><div class="palette-value"><span class="token-value">#C7A95D</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-primary</span></div><div class="palette-swatch" style="background: var(--color-on-primary); color: var(--color-primary)">Text on primary</div><div class="palette-value"><span class="token-value">#171207</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.accent</span></div><div class="palette-swatch" style="background: var(--color-accent); color: var(--color-on-accent)">Keyboard focus and deliberate hover</div><div class="palette-value"><span class="token-value">#E1C779</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-accent</span></div><div class="palette-swatch" style="background: var(--color-on-accent); color: var(--color-accent)">Text on accent</div><div class="palette-value"><span class="token-value">#171207</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.terminal</span></div><div class="palette-swatch" style="background: var(--color-terminal); color: var(--color-terminal-text)">$ bun run test</div><div class="palette-value"><span class="token-value">#090C0A</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.terminal-text</span></div><div class="palette-swatch" style="background: var(--color-terminal-text); color: var(--color-terminal)">Terminal output</div><div class="palette-value"><span class="token-value">#D7DBD1</span></div></div>
+        </div>
+
+        <h3 class="subsection-title ledger-heading">Semantic states</h3>
+        <div class="palette-ledger">
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.success</span></div><div class="palette-swatch" style="background: var(--color-success); color: var(--color-on-success)">Completed successfully</div><div class="palette-value"><span class="token-value">#77A681</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-success</span></div><div class="palette-swatch" style="background: var(--color-on-success); color: var(--color-success)">Text on success</div><div class="palette-value"><span class="token-value">#07130B</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.warning</span></div><div class="palette-swatch" style="background: var(--color-warning); color: var(--color-on-warning)">Approval or intervention required</div><div class="palette-value"><span class="token-value">#C58D58</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-warning</span></div><div class="palette-swatch" style="background: var(--color-on-warning); color: var(--color-warning)">Text on warning</div><div class="palette-value"><span class="token-value">#180D05</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.error</span></div><div class="palette-swatch" style="background: var(--color-error); color: var(--color-on-error)">Run failed or destructive action</div><div class="palette-value"><span class="token-value">#C8726B</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-error</span></div><div class="palette-swatch" style="background: var(--color-on-error); color: var(--color-error)">Text on error</div><div class="palette-value"><span class="token-value">#190706</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.info</span></div><div class="palette-swatch" style="background: var(--color-info); color: var(--color-on-info)">Tool or system information</div><div class="palette-value"><span class="token-value">#7E9F97</span></div></div>
+          <div class="palette-row"><div class="palette-token"><span class="token-name">colors.on-info</span></div><div class="palette-swatch" style="background: var(--color-on-info); color: var(--color-info)">Text on information</div><div class="palette-value"><span class="token-value">#071310</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="typography">
+      <div class="section-heading">
+        <h2>Typography</h2>
+        <p>Geist speaks for the interface; Geist Mono records the machine layer.</p>
+      </div>
+      <div class="section-content type-list">
+        <div class="type-row"><p class="type-sample type-h1">Active workspace</p><div class="type-meta"><span class="token-name">typography.h1</span><span class="spec">Geist · 22px · 600 · 1.2 · −0.02em</span></div></div>
+        <div class="type-row"><p class="type-sample type-h2">Changes and review</p><div class="type-meta"><span class="token-name">typography.h2</span><span class="spec">Geist · 16px · 600 · 1.35 · −0.015em</span></div></div>
+        <div class="type-row"><p class="type-sample type-h3">Approval required</p><div class="type-meta"><span class="token-name">typography.h3</span><span class="spec">Geist · 13px · 600 · 1.4</span></div></div>
+        <div class="type-row"><p class="type-sample type-body">Relay passed the change to the review stage.</p><div class="type-meta"><span class="token-name">typography.body</span><span class="spec">Geist · 14px · 400 · 1.5</span></div></div>
+        <div class="type-row"><p class="type-sample type-body-strong">The run is waiting for your decision.</p><div class="type-meta"><span class="token-name">typography.body-strong</span><span class="spec">Geist · 14px · 550 · 1.5</span></div></div>
+        <div class="type-row"><p class="type-sample type-label">Approve and continue</p><div class="type-meta"><span class="token-name">typography.label</span><span class="spec">Geist · 12px · 550 · 1.4</span></div></div>
+        <div class="type-row"><p class="type-sample type-caption">Updated 12 seconds ago · 4,812 tokens</p><div class="type-meta"><span class="token-name">typography.caption</span><span class="spec">Geist · 11px · 450 · 1.45 · tabular figures</span></div></div>
+        <div class="type-row"><p class="type-sample type-mono">apps/web/src/thread-view.tsx</p><div class="type-meta"><span class="token-name">typography.mono</span><span class="spec">Geist Mono · 13px · 450 · 1.55 · tabular figures</span></div></div>
+        <div class="type-row"><p class="type-sample type-mono-small">bun test · exit 0 · 2.41s</p><div class="type-meta"><span class="token-name">typography.mono-small</span><span class="spec">Geist Mono · 11px · 450 · 1.5 · tabular figures</span></div></div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="spacing">
+      <div class="section-heading">
+        <h2>Spacing</h2>
+        <p>A 4px working rhythm with stable compact and comfortable density aliases.</p>
+      </div>
+      <div class="section-content spacing-list">
+        <div class="spacing-row"><span class="token-name">spacing.0</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-0)"></span></div><span class="token-value">0px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.1</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-1)"></span></div><span class="token-value">4px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.2</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-2)"></span></div><span class="token-value">8px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.3</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-3)"></span></div><span class="token-value">12px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.4</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-4)"></span></div><span class="token-value">16px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.5</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-5)"></span></div><span class="token-value">24px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.6</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-6)"></span></div><span class="token-value">32px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.control-compact</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-control-compact)"></span></div><span class="token-value">32px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.control-comfortable</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-control-comfortable)"></span></div><span class="token-value">40px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.row-compact</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-row-compact)"></span></div><span class="token-value">28px</span></div>
+        <div class="spacing-row"><span class="token-name">spacing.row-comfortable</span><div class="spacing-track"><span class="spacing-bar" style="width: var(--space-row-comfortable)"></span></div><span class="token-value">36px</span></div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="radius">
+      <div class="section-heading">
+        <h2>Radius</h2>
+        <p>Square assemblies and small, machined control radii.</p>
+      </div>
+      <div class="section-content radius-grid">
+        <div class="radius-sample" style="border-radius: var(--rounded-none)"><span class="token-name">rounded.none</span><span class="token-value">0px · panes and trace rails</span></div>
+        <div class="radius-sample" style="border-radius: var(--rounded-xs)"><span class="token-name">rounded.xs</span><span class="token-value">3px · tightly nested states</span></div>
+        <div class="radius-sample" style="border-radius: var(--rounded-sm)"><span class="token-name">rounded.sm</span><span class="token-value">5px · controls and navigation</span></div>
+        <div class="radius-sample" style="border-radius: var(--rounded-md)"><span class="token-name">rounded.md</span><span class="token-value">7px · operations and menus</span></div>
+        <div class="radius-sample" style="border-radius: var(--rounded-lg)"><span class="token-name">rounded.lg</span><span class="token-value">10px · composer only</span></div>
+        <div class="radius-sample" style="border-radius: var(--rounded-full)"><span class="token-name">rounded.full</span><span class="token-value">999px · switches and presence only</span></div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="depth">
+      <div class="section-heading">
+        <h2>Elevation &amp; Depth</h2>
+        <p>Lines and warm surface shifts define permanent structure.</p>
+      </div>
+      <div class="section-content depth-grid">
+        <div class="depth-sample depth-border"><span class="token-name">Permanent pane</span><p>Standard border. No shadow.</p></div>
+        <div class="depth-sample depth-raised"><span class="token-name">Focused operation</span><p>Raised surface and strong border. No shadow.</p></div>
+        <div class="depth-sample depth-overlay"><span class="token-name">Temporary overlay</span><p>One short neutral shadow for menus and dialogs.</p></div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="components">
+      <div class="section-heading">
+        <h2>Components</h2>
+        <p>One control language across workbench, orchestration, setup, and administration.</p>
+      </div>
+      <div class="section-content component-stack">
+        <div class="component-group">
+          <h3 class="subsection-title">Actions</h3>
+          <p class="component-label">button-primary · button-primary-hover · button-secondary · button-danger</p>
+          <div class="component-row">
+            <button class="button-primary" type="button">Run agent</button>
+            <button class="button-primary-hover" type="button">Primary hover</button>
+            <button class="button-secondary" type="button">Open diff</button>
+            <button class="button-secondary" type="button" disabled>Commit changes</button>
+            <button class="button-danger" type="button">Stop run</button>
+          </div>
+        </div>
+
+        <div class="component-group">
+          <h3 class="subsection-title">Input and composer</h3>
+          <p class="component-label">input · composer</p>
+          <div class="field-demo">
+            <label for="commit-input">Commit message</label>
+            <input class="input" id="commit-input" value="feat(ui): introduce the Relay handoff trace">
+          </div>
+          <div style="height: var(--space-4)"></div>
+          <form class="composer">
+            <textarea aria-label="Message" placeholder="Describe the change Relay should make"></textarea>
+            <div class="composer-footer">
+              <div class="composer-context"><span>GPT-5</span><span>Full access</span><span>relay/switchboard</span></div>
+              <button class="button-primary" type="button">Send request</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="component-group">
+          <h3 class="subsection-title">Navigation</h3>
+          <p class="component-label">navigation-item · navigation-item-active</p>
+          <nav class="navigation-demo" aria-label="Example navigation">
+            <div class="navigation-item"><span class="nav-key">M</span><span>MacBook Pro</span></div>
+            <div class="navigation-item-active"><span class="nav-key">R</span><span>Relay workbench</span></div>
+            <div class="navigation-item"><span class="nav-key">1</span><span>Review checkpoint flow</span></div>
+            <div class="navigation-item"><span class="nav-key">2</span><span>Harden MCP permissions</span></div>
+          </nav>
+        </div>
+
+        <div class="component-group">
+          <h3 class="subsection-title">Structured operations</h3>
+          <p class="component-label">operation-card · join cards to the handoff trace only when sequence matters</p>
+          <div class="operation-flow">
+            <article class="operation-card is-complete">
+              <header><h4>Workspace inspected</h4><span class="token-value">1.8s</span></header>
+              <p>Relay read the current design tokens and component rules.</p>
+              <code>read docs/design.md</code>
+            </article>
+            <article class="operation-card">
+              <header><h4>Verification running</h4><span class="token-value">tool</span></header>
+              <p>The agent is checking token synchronization and contrast.</p>
+              <code>bun run verify:design</code>
+            </article>
+            <article class="operation-card is-warning">
+              <header><h4>Approval required</h4><span class="token-value">critical</span></header>
+              <p>Relay needs permission to publish the verified changes.</p>
+              <code>git push origin relay/switchboard</code>
+              <div class="operation-actions">
+                <button class="button-secondary" type="button">Deny</button>
+                <button class="button-primary" type="button">Allow once</button>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <div class="component-group">
+          <h3 class="subsection-title">Three-surface workbench</h3>
+          <p class="component-label">workspace-pane · T3CODE4 structure with Relay's handoff language</p>
+          <div class="workspace-preview">
+            <aside class="workspace-pane preview-nav">
+              <p class="preview-brand">Relay</p>
+              <div class="navigation-item"><span class="nav-key">⌘</span><span>Search</span></div>
+              <div style="height: var(--space-4)"></div>
+              <div class="navigation-item-active"><span class="nav-key">R</span><span>relay</span></div>
+              <div class="navigation-item"><span class="nav-key">1</span><span>Modernize design system</span></div>
+              <div class="navigation-item"><span class="nav-key">2</span><span>Review deployment plan</span></div>
+            </aside>
+            <section class="workspace-pane preview-main">
+              <header class="preview-toolbar"><span class="preview-title">Modernize design system</span><span class="preview-toolbar-meta">03 · tools</span></header>
+              <div class="run-stream">
+                <div class="run-message"><strong>You</strong><p>Apply the Relay Switchboard direction to the design system.</p></div>
+                <div class="mini-operation"><header><code>apply_patch docs/design.md</code><span>complete</span></header></div>
+                <div class="run-message"><strong>Relay</strong><p>The source tokens are updated. Regenerating the visual guide now.</p></div>
+              </div>
+              <div class="preview-composer-wrap">
+                <div class="composer">
+                  <textarea aria-label="Preview message" placeholder="Add a follow-up request"></textarea>
+                  <div class="composer-footer"><div class="composer-context"><span>GPT-5</span><span>Full access</span></div><button class="button-primary" type="button">Send</button></div>
+                </div>
+              </div>
+            </section>
+            <aside class="workspace-pane preview-side">
+              <div class="surface-tabs"><button class="surface-tab is-active" type="button">Terminal</button><button class="surface-tab" type="button">Diff</button><button class="surface-tab" type="button">Plan</button></div>
+              <pre class="terminal">$ bun run verify:design
+
+tokens synchronized
+contrast pairs passed
+responsive render pending
+
+relay@switchboard</pre>
+            </aside>
+          </div>
+          <p class="mobile-surface-note">At narrow widths the active run remains visible; navigation and utility surfaces move behind explicit controls.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="principles">
+      <div class="section-heading">
+        <h2>Do's and Don'ts</h2>
+        <p>Guardrails that keep the switchboard useful rather than theatrical.</p>
+      </div>
+      <div class="section-content principle-grid">
+        <div class="principle-column">
+          <h3>Do</h3>
+          <ul>
+            <li><span class="do-mark">✓</span><span>Keep the active thread, run stage, model, permissions, branch, and pending approvals visible near the work they affect.</span></li>
+            <li><span class="do-mark">✓</span><span>Use the handoff trace only when order or propagation clarifies the run.</span></li>
+            <li><span class="do-mark">✓</span><span>Make safe defaults, keyboard focus, hover, pressed, disabled, loading, and destructive states unambiguous.</span></li>
+            <li><span class="do-mark">✓</span><span>Reuse the same primitives across workbench, orchestration, setup, and administration.</span></li>
+            <li><span class="do-mark">✓</span><span>Let terminal output, diffs, logs, and agent events use the full available working area.</span></li>
+            <li><span class="do-mark">✓</span><span>Reveal secondary surfaces contextually and preserve the user's density preference.</span></li>
+          </ul>
+        </div>
+        <div class="principle-column is-dont">
+          <h3>Don't</h3>
+          <ul>
+            <li><span class="dont-mark">×</span><span>Add gradients, glows, decorative telemetry, KPI-card grids, or status theatrics.</span></li>
+            <li><span class="dont-mark">×</span><span>Turn the handoff trace into a looping animation, progress decoration, or false precision.</span></li>
+            <li><span class="dont-mark">×</span><span>Use chat bubbles, oversized welcome panels, ornamental copy, or excessive whitespace.</span></li>
+            <li><span class="dont-mark">×</span><span>Crowd the shell with permanent toolbars, unlabeled icons, or every tool at once.</span></li>
+            <li><span class="dont-mark">×</span><span>Use color alone to convey status, permission, or risk.</span></li>
+            <li><span class="dont-mark">×</span><span>Round structural panes, turn routine actions into pills, or hide agent operations behind friendly but vague abstractions.</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const root = document.documentElement;
+    const densityButtons = document.querySelectorAll("[data-density-option]");
+
+    for (const button of densityButtons) {
+      button.addEventListener("click", () => {
+        const density = button.getAttribute("data-density-option");
+        root.setAttribute("data-density", density);
+        for (const candidate of densityButtons) {
+          candidate.setAttribute("aria-pressed", String(candidate === button));
+        }
+      });
+    }
+  </script>
+</body>
+</html>
