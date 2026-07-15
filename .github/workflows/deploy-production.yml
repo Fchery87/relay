@@ -13,7 +13,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bunx convex deploy --cmd-url-env-var-name VITE_CONVEX_URL --cmd "bun run --cwd apps/web build"
-        env: { CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }} }
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
