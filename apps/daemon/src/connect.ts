@@ -1,15 +1,19 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
 
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 
+import { resolveDaemonHome } from "./daemon-home";
 import { saveDeviceCredentials } from "./device-credentials";
 
 const startPairingMutation = makeFunctionReference<"mutation", { code: string; deviceToken: string }, null>("pairing:start");
 const waitForPairingQuery = makeFunctionReference<"query", { code: string }, { status: "waiting" | "claimed" | "expired" }>("pairing:waitForClaim");
 
 type PairingState = { status: "waiting" | "claimed" | "expired" };
+
+export function resolveConnectDaemonHome({ env, homeDirectory, platform }: { env: Readonly<Record<string, string | undefined>>; homeDirectory: string; platform: string }): string {
+  return resolveDaemonHome({ env, homeDirectory, platform });
+}
 
 type PairDeviceInput = {
   daemonHome: string;
@@ -48,7 +52,7 @@ function randomOpaqueValue(length: number): string {
 }
 
 export async function runConnect({
-  daemonHome = Bun.env.RELAY_DAEMON_HOME ?? join(homedir(), ".relay"),
+  daemonHome,
   deploymentUrl = Bun.env.RELAY_CONVEX_URL,
 }: {
   daemonHome?: string;
@@ -60,7 +64,7 @@ export async function runConnect({
 
   const client = new ConvexHttpClient(deploymentUrl);
   await pairDevice({
-    daemonHome,
+    daemonHome: daemonHome ?? resolveConnectDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform }),
     deploymentUrl,
     deviceToken: randomOpaqueValue(48),
     generateCode: () => randomOpaqueValue(10),

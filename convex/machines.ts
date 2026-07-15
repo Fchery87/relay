@@ -24,7 +24,7 @@ export const registerMachine = mutationGeneric({
       .unique();
     if (existing?.revokedAt) throw new Error("Device token has been revoked");
     const pairing = existing ? null : await ctx.db.query("pairings").withIndex("by_device_token_hash", (q) => q.eq("deviceTokenHash", deviceTokenHash)).unique();
-    if (!existing && (!pairing || pairing.status !== "claimed" || !pairing.ownerId || pairing.expiresAt <= now)) throw new Error("Device token has not been paired");
+    if (!existing && (!pairing || pairing.status !== "claimed" || !pairing.ownerId)) throw new Error("Device token has not been paired");
     const machineId = existing
       ? existing._id
       : await ctx.db.insert("machines", {

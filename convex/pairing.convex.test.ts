@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 
 import { api } from "./_generated/api";
+import { digestSecret } from "./auth_helpers";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -50,4 +51,28 @@ test("revocation invalidates a daemon token on its next heartbeat", async () => 
 
   await owner.mutation(api.machines.revoke, { machineId });
   await expect(t.mutation(api.machines.heartbeat, { deviceToken })).rejects.toThrow("revoked");
+});
+
+test("registers a claimed daemon after its pairing code expires", async () => {
+  const t = convexTest(schema, modules);
+  const ownerId = await t.run((ctx) => ctx.db.insert("users", {}));
+  const deviceToken = "c".repeat(32);
+
+  await t.run(async (ctx) => {
+    await ctx.db.insert("pairings", {
+      codeHash: await digestSecret("expired-code"),
+      deviceTokenHash: await digestSecret(deviceToken),
+      expiresAt: Date.now() - 1,
+      ownerId,
+      status: "claimed",
+    });
+  });
+
+  await expect(t.mutation(api.machines.registerMachine, {
+    daemonVersion: "test",
+    deviceToken,
+    name: "delayed-machine",
+    platform: "linux",
+    projects: [],
+  })).resolves.toBeDefined();
 });

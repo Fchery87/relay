@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 
-import { pairDevice } from "./connect";
+import { pairDevice, resolveConnectDaemonHome } from "./connect";
+
+test("uses the platform daemon home for pairing credentials", () => {
+  expect(resolveConnectDaemonHome({ env: {}, homeDirectory: "/Users/alex", platform: "darwin" })).toBe("/Users/alex/Library/Application Support/Relay");
+});
 
 test("stores a device token only after the browser claims its pairing code", async () => {
   const starts: Array<{ code: string; deviceToken: string }> = [];
