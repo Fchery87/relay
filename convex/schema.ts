@@ -199,4 +199,46 @@ export default defineSchema({
     task: v.string(),
     threadId: v.id("threads"),
   }).index("by_status", ["status"]).index("by_thread", ["threadId"]).index("by_parent_run_id", ["parentRunId"]),
+
+  // --- Kernel projection tables (widen-only — additive, no legacy changes) ---
+
+  commandInbox: defineTable({
+    completedAt: v.optional(v.number()),
+    correlationId: v.string(),
+    createdAt: v.number(),
+    kind: v.string(),
+    leaseExpiresAt: v.optional(v.number()),
+    leaseOwner: v.optional(v.string()),
+    machineId: v.optional(v.id("machines")),
+    ownerId: v.optional(v.id("users")),
+    payloadJson: v.string(),
+    runId: v.optional(v.string()),
+    status: v.union(v.literal("pending"), v.literal("claimed"), v.literal("completed"), v.literal("rejected")),
+  }).index("by_status_lease", ["status", "leaseExpiresAt"]).index("by_machine", ["machineId", "status"]).index("by_owner", ["ownerId"]),
+
+  projectionEvents: defineTable({
+    eventId: v.string(),
+    occurredAt: v.number(),
+    ownerId: v.optional(v.id("users")),
+    payloadJson: v.string(),
+    publishedAt: v.number(),
+    runId: v.string(),
+    sequence: v.number(),
+    type: v.string(),
+  }).index("by_run_sequence", ["runId", "sequence"]).index("by_owner", ["ownerId"]),
+
+  projectionSnapshots: defineTable({
+    ownerId: v.optional(v.id("users")),
+    runId: v.string(),
+    sequence: v.number(),
+    snapshotJson: v.string(),
+    updatedAt: v.number(),
+  }).index("by_run", ["runId"]).index("by_owner", ["ownerId"]),
+
+  projectionCursors: defineTable({
+    direction: v.union(v.literal("inbound"), v.literal("outbound")),
+    machineId: v.string(),
+    sequence: v.number(),
+    updatedAt: v.number(),
+  }).index("by_machine_direction", ["machineId", "direction"]),
 });
