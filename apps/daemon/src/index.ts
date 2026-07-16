@@ -6,6 +6,7 @@ import { loadDaemonConfig } from "./config";
 import { resolveDaemonHome } from "./daemon-home";
 import { loadDeviceCredentials } from "./device-credentials";
 import { isDeviceTokenRejected } from "./device-auth";
+import { resolveRuntimeMode, type RuntimeMode } from "./runtime-mode";
 import { runQueuedTurn } from "./agent-loop";
 import { runQueuedCommand } from "./command-worker";
 import { runQueuedGitAction } from "./git-worker";
@@ -20,6 +21,7 @@ import { LocalModelRouter } from "./catalog-provider-router";
 import { McpRegistry } from "./mcp-registry";
 
 export async function runDaemon(): Promise<void> {
+const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
 const daemonHome = resolveDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform });
 const storedCredentials = await loadDeviceCredentials({ daemonHome });
 const config = loadDaemonConfig({ env: Bun.env, hostname, storedDeploymentUrl: storedCredentials?.deploymentUrl, storedDeviceToken: storedCredentials?.deviceToken });

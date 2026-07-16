@@ -98,6 +98,16 @@ Every open decision from the wayfinder map is now resolved; the "unresolved" cav
 - **Role roster** — nine seeded roles (explore, plan, researcher, oracle, reviewer, reviewer-security, evaluator, build, worker); designer deferred, scout and the two focused reviewers merged away.
 - **Review mode** — jury (reviewer + reviewer-security, different models) → P0–P3 inline diff comments → "address findings" feeds the agent.
 
+### Architecture reversal — adapter-first harness kernel (2026-07-15)
+
+The v1 PRD's "Own agent loop" decision is **superseded** by three Architecture Decision Records that reverse the execution architecture:
+
+- [ADR 0001: Adapter-First Local Harness](../../docs/adr/0001-adapter-first-local-harness.md) — the daemon no longer owns a raw agent loop. A deep `HarnessRuntime` interface hides orchestration and provider detail; Codex app-server is the first real adapter; `raw-llm` survives as a temporary migration adapter.
+- [ADR 0002: Local Execution Authority with Convex Projections](../../docs/adr/0002-local-authority-convex-projections.md) — the daemon is the sole execution authority with a durable local SQLite store; Convex becomes the authenticated remote-command ingress and curated, resumable browser projection plane.
+- [ADR 0003: Canonical Command and Event Model](../../docs/adr/0003-canonical-command-event-model.md) — an append-only canonical event log with a pure run-state reducer; the local store owns ordering, idempotency, and replay; provider-native shapes are normalized at the adapter seam.
+
+A `RELAY_RUNTIME_MODE=legacy|shadow|kernel` flag gates the old path behind the new; all v1 Convex tables are widened additively, not dropped. The binding implementation detail lives in `docs/plans/2026-07-15-relay-harness-kernel-production-readiness.md` (50 tasks, 11 phases).
+
 ## Further Notes
 - Layout/UX north star: the Codex Desktop app (projects sidebar → threads, diff review with inline comments, approval flow). The governance/subagent mental model ports from Thanos (`~/.pi`): its glossary, ADRs, and role files are the design reference.
 - Standing quality bar: extremely lightweight, fast, powerful. Every dependency and UI choice should be weighed against bundle size and latency; CodeMirror-over-Monaco is the canonical example of the standard to hold.

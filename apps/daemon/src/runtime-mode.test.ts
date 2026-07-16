@@ -1,0 +1,65 @@
+import { expect, test } from "bun:test";
+
+import { resolveMaxConcurrentRuns, resolveRuntimeMode } from "./runtime-mode";
+
+test("defaults to legacy when RELAY_RUNTIME_MODE is not set", () => {
+  expect(resolveRuntimeMode({})).toBe("legacy");
+});
+
+test("parses legacy", () => {
+  expect(resolveRuntimeMode({ RELAY_RUNTIME_MODE: "legacy" })).toBe("legacy");
+});
+
+test("parses shadow", () => {
+  expect(resolveRuntimeMode({ RELAY_RUNTIME_MODE: "shadow" })).toBe("shadow");
+});
+
+test("parses kernel", () => {
+  expect(resolveRuntimeMode({ RELAY_RUNTIME_MODE: "kernel" })).toBe("kernel");
+});
+
+test("rejects unknown values", () => {
+  expect(() => resolveRuntimeMode({ RELAY_RUNTIME_MODE: "invalid" })).toThrow(
+    /RELAY_RUNTIME_MODE/,
+  );
+});
+
+test("rejects empty string", () => {
+  expect(() => resolveRuntimeMode({ RELAY_RUNTIME_MODE: "" })).toThrow(
+    /RELAY_RUNTIME_MODE/,
+  );
+});
+
+// RELAY_KERNEL_MAX_CONCURRENT_RUNS
+
+test("defaults max concurrent runs when not set", () => {
+  expect(resolveMaxConcurrentRuns({})).toBe(4);
+});
+
+test("parses a positive integer", () => {
+  expect(resolveMaxConcurrentRuns({ RELAY_KERNEL_MAX_CONCURRENT_RUNS: "8" })).toBe(8);
+});
+
+test("rejects zero", () => {
+  expect(() => resolveMaxConcurrentRuns({ RELAY_KERNEL_MAX_CONCURRENT_RUNS: "0" })).toThrow(
+    /RELAY_KERNEL_MAX_CONCURRENT_RUNS/,
+  );
+});
+
+test("rejects negative", () => {
+  expect(() => resolveMaxConcurrentRuns({ RELAY_KERNEL_MAX_CONCURRENT_RUNS: "-1" })).toThrow(
+    /RELAY_KERNEL_MAX_CONCURRENT_RUNS/,
+  );
+});
+
+test("rejects non-numeric", () => {
+  expect(() => resolveMaxConcurrentRuns({ RELAY_KERNEL_MAX_CONCURRENT_RUNS: "abc" })).toThrow(
+    /RELAY_KERNEL_MAX_CONCURRENT_RUNS/,
+  );
+});
+
+test("rejects float", () => {
+  expect(() => resolveMaxConcurrentRuns({ RELAY_KERNEL_MAX_CONCURRENT_RUNS: "2.5" })).toThrow(
+    /RELAY_KERNEL_MAX_CONCURRENT_RUNS/,
+  );
+});
