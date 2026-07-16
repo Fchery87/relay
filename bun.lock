@@ -97,6 +97,9 @@
     "packages/providers/codex-app-server": {
       "name": "@relay/codex-app-server",
       "version": "0.0.0",
+      "dependencies": {
+        "@relay/contracts": "workspace:*",
+      },
     },
     "packages/shared": {
       "name": "@relay/shared",

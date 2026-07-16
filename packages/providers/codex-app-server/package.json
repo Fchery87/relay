@@ -8,6 +8,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "echo ok"
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@relay/contracts": "workspace:*"
   }
 }
