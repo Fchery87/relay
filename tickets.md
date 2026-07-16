@@ -185,3 +185,214 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 - [x] Virtualized message and event lists
 - [x] Bundle budget enforced in CI (no Monaco-class dependencies)
 - [x] Latency tests: prompt-to-first-visible-token and command chunk latency within the ≤ 200 ms flush budget
+
+---
+
+# Tickets: Relay Harness Kernel & Production Readiness
+
+Replace Relay's one-shot, polling-driven agent core with a durable, adapter-first harness kernel, then harden the complete browser → Convex → daemon workflow for production. Source spec: `.scratch/harness-kernel/PRD.md`; binding task-level detail: `docs/plans/2026-07-15-relay-harness-kernel-production-readiness.md`.
+
+Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 are unblocked and independent.
+
+## Freeze legacy behavior and add the runtime-mode switch
+
+**What to build:** Before touching anything, pin today's observable behavior and stand up the migration safety rails. Capture the legacy vertical slice as black-box characterization tests (prompt claiming, first visible text, steering, stop, approval refusal, diff snapshot, checkpoint creation, usage recording, final thread state) — including the stranded-"running" failure when the provider throws after a message claim, recorded as a todo with the intended recoverable result. Record the architecture reversal in ADRs (adapter-first local harness; local authority + Convex projections; canonical command/event model), superseding the old own-loop decision while preserving `raw-llm` as a temporary adapter. Add a single `RELAY_RUNTIME_MODE=legacy|shadow|kernel` value (default `legacy`) plus `RELAY_KERNEL_MAX_CONCURRENT_RUNS`, selected once in the daemon composition root rather than branched throughout the codebase. No user-visible behavior change.
+
+**Blocked by:** None — can start immediately.
+
+- [ ] Characterization tests pin the legacy vertical slice; the stranded-run failure is a recorded todo
+- [ ] The three architecture-reversal ADRs exist and supersede the own-loop decision
+- [ ] `RELAY_RUNTIME_MODE` parses `legacy|shadow|kernel` (default `legacy`), rejects unknown values, and `RELAY_KERNEL_MAX_CONCURRENT_RUNS` validates a positive integer
+- [ ] The runtime mode is selected once in the daemon root; the legacy path is unchanged
+
+## Canonical harness contracts and the HarnessRuntime seam
+
+**What to build:** Establish the contract gate every later ticket validates against, with nothing wired to a real store yet. Define branded identifiers, the canonical event and command envelopes, the run state machine, and a pure `reduceRun(state, event)` reducer that is the only function defining run-status semantics. Define the deep `HarnessRuntime` interface (create / resume / send / steer / interrupt / resolve-approval / stop / snapshot / observe) with workspace, provider, store, and Convex adapters kept out of it. Build the deterministic fake runtime (native-event in → canonical-event out, scriptable, supports controlled blocking and duplicate/failure/approval/restart simulation) and a conformance suite that passes against it.
+
+**Blocked by:** None — can start immediately (independent of the freeze ticket).
+
+- [ ] Branded identifiers and the event/command envelopes are defined with the agreed stable shapes
+- [ ] The run state machine and pure reducer cover every state with exhaustive switch checks
+- [ ] The `HarnessRuntime` interface exposes the full lifecycle plus ordered-event observation
+- [ ] The conformance suite passes against the deterministic fake runtime
+
+## Durable local kernel: store, serialized orchestration, local HarnessRuntime
+
+**What to build:** Make the seam real and durable. A WAL-backed SQLite store owns run events, snapshots, command receipts, and the projection outbox in one transaction, with a transactional migration runner. One serialized orchestration owner — a pure decider returning `{ events, effects }` plus an engine with per-run queues and bounded global concurrency — is the sole changer of run state; reactors perform provider/workspace/projection side effects by submitting internal commands and never patch state directly. Wire the local `HarnessRuntime` over this so a fake-provider turn starts, streams canonical events, and recovers after the runtime is closed and reopened from the same SQLite file — resuming observation from the last sequence and finishing the turn. A provider failure now yields `turn.failed` and a recoverable run (the stranded-run todo goes green in kernel mode). Runs only in `shadow`/`kernel` mode; the legacy path is untouched.
+
+**Blocked by:** Freeze legacy behavior and add the runtime-mode switch; Canonical harness contracts and the HarnessRuntime seam.
+
+- [ ] Accepted command receipt, events, reduced snapshot, and outbox rows commit in one transaction and roll back together on failure
+- [ ] Stale `expectedStreamVersion` is rejected; duplicate `commandId` returns the original receipt without re-running
+- [ ] One run serializes its transitions while multiple runs run under the global concurrency limit, with no timing sleeps in tests
+- [ ] The conformance suite passes against the local implementation using the fake provider
+- [ ] A run observed, then closed and reopened from the same store, resumes from the last sequence and completes; provider failure produces `turn.failed` and a recoverable run
+
+## Codex app-server provider adapter
+
+**What to build:** The first real provider behind the seam. Pin Codex TypeScript/JSON schemas to the exact installed version (reject drift in CI), then build a supervised stdio JSON-RPC transport that keeps secrets off argv, bounds pending requests, and fails in-flight requests with a typed process-loss error on exit. Normalize Codex threads/turns/items/approvals/usage into canonical events (unknown notifications become bounded diagnostics, never crashes), implement the driver and session adapter mapping the lifecycle to `thread/*` and `turn/*` methods (persisting the Codex thread ID before acknowledging session start), and bridge Relay-owned tools and MCP servers through a provider-supported mechanism enforced against the persisted capability ceiling. An opt-in real-Codex e2e smoke (skipped in ordinary CI) proves a turn starts, streams, requests approval, is steered, interrupted, resumed after restart, checkpoints, and completes — asserting canonical events and file effects, never Codex-native shapes.
+
+**Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime.
+
+- [ ] Generated Codex schemas are pinned to a version; drift fails CI
+- [ ] The transport handles correlation, timeouts, abort, malformed input, stderr capture, process exit, and graceful shutdown with secrets off argv
+- [ ] Table-driven normalization maps every covered Codex notification to canonical events; unknown notifications degrade to bounded diagnostics
+- [ ] The provider conformance suite passes against the real Codex adapter (fixture, not OpenAI)
+- [ ] The opt-in real-Codex smoke passes with redacted logs; ordinary CI skips it
+
+## Durable workspaces and per-turn checkpoints
+
+**What to build:** Make workspace identity durable run state instead of an authoritative JSON file, and deepen checkpoint handling. Persist repo path, worktree path, base commit, current checkpoint, permission profile, and owning run; reconcile SQLite records against `git worktree list --porcelain` on startup, repairing safe discrepancies and failing explicitly on unsafe ones (missing/moved worktree, moved repository, stale record, active-run protection). Orchestration-driven checkpoints capture a baseline before each turn and a finalized snapshot after it with idempotent keys, using hidden refs and restore-not-destroy semantics; workers no longer independently claim cloud rows. A crash after ref creation but before local receipt, or after receipt but before projection, still converges without duplicate checkpoints.
+
+**Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime. (Runs in parallel with the Codex adapter, sandbox, and history tickets.)
+
+- [ ] Worktree identity is durable run state; the JSON file is no longer authoritative
+- [ ] Startup reconciliation converges for missing, moved, stale, and active-run cases
+- [ ] Before/after-turn checkpoints are idempotent and use restore-not-destroy revert
+- [ ] Crashes around ref/receipt/projection converge without duplicate checkpoints
+
+## Sandbox enforcement and permission profiles
+
+**What to build:** Technically confine execution and make the blast radius of any turn known. Canonical permission profiles (`read-only`, `workspace-write` default with network denied, `full-access`) are persisted per run, with on-request approval to widen. Linux uses bubblewrap and macOS a Seatbelt profile confining to the worktree plus a per-run temp dir; both fail closed for kernel mode if enforcement can't initialize. Windows is explicit and fail-closed where enforcement is unavailable, surfacing the limitation in the UI and run record. Every non-provider command — one-offs, git actions that run hooks, MCP stdio processes, legacy raw-provider shell calls — routes through one sandbox executor; Codex turns use Codex's own configured sandbox and report the effective profile canonically. Escape attempts (out-of-worktree writes, reads of daemon credentials / `.env` / `/proc/*/environ`, symlink escape, network and private/loopback access) fail *technically*, not merely by policy.
+
+**Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime. (Runs in parallel with the Codex adapter, workspace, and history tickets.)
+
+- [ ] Permission profiles are persisted per run; workspace-write (network denied) is the default
+- [ ] Linux and macOS enforce confinement and fail closed when initialization can't guarantee it
+- [ ] Windows is explicit and fail-closed where enforcement is unavailable, with the limitation surfaced
+- [ ] All non-provider commands route through the sandbox executor; the escape suite fails technically on every attempted vector
+
+## Canonical history and context policy
+
+**What to build:** Give the kernel a provider-independent memory. Define canonical history items (user input, assistant text, activity summaries, approvals, subagent results, checkpoints, compaction artifacts, attachments with provenance) keeping raw provider payloads out, and rebuild an identical history snapshot by replaying the same event stream, resuming after a stored snapshot plus later events. Implement context policy for non-session providers — preserve system/project instructions, the active plan, unresolved review comments, the last ten turns, and compaction provenance; compact at 80% toward 40%; cap tool results and spill oversized content to local artifacts. Treat Codex context as provider-owned but observable: persist the Codex thread ID and Relay canonical history (used for UI, recovery, exports, cross-provider migration) without duplicating Codex's private context construction.
+
+**Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime. (Runs in parallel with the Codex adapter, workspace, and sandbox tickets.)
+
+- [ ] Replaying an event stream yields an identical history snapshot; resume after a stored snapshot plus later events works
+- [ ] Compaction triggers at 80% toward ~40% with pinned invariants, deterministically
+- [ ] Oversized tool results spill to local artifacts with provenance
+- [ ] Codex context stays provider-owned; canonical history drives UI/recovery/exports
+
+## Convex command ingress and projection synchronization (widen)
+
+**What to build:** Turn Convex into the authenticated command ingress and redacted, resumable projection plane — additively, touching nothing legacy. Add `commandInbox`, `projectionEvents`, `projectionSnapshots`, and `projectionCursors` with transactional uniqueness (Convex has no unique indexes). One daemon sync loop claims a bounded batch of commands under a lease, expires and redelivers on restart, parses untrusted payloads against the contracts before local persistence, and rejects duplicates via local receipts. Publish small event batches to Convex, which accepts an event only as the next sequence or an exact duplicate; advance the local outbox cursor only after Convex confirms the durable highest contiguous sequence. Projections carry canonical summaries and bounded deltas only — oversized output, raw provider events, local-only prompts, and artifacts stay local as typed references. Graceful shutdown stops claims, drains to a deadline, releases leases, then closes the connection.
+
+**Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime.
+
+- [ ] New tables are additive; legacy tables and display queries are untouched
+- [ ] Command claiming honors leases, redelivers after restart, and is idempotent via local receipts; invalid payloads are terminally rejected
+- [ ] Ordered projection append accepts only next-sequence-or-duplicate; the outbox cursor advances only after cloud confirmation
+- [ ] Every injected failure (partial batch, lost response, restart, stale snapshot, out-of-order) converges to projection equality
+- [ ] Secrets/oversized content stay local; projections are redacted summaries + bounded deltas
+
+## Harden Convex authorization and bound reads
+
+**What to build:** Fix the ownership and authorization drift before any cutover, and keep growing reads bounded. Reproduce the daemon approval-auth failure and fix it with a device-scoped resolution query (device token + approval ID, verified to belong to a thread on that exact machine) while keeping the browser query owner-scoped. Scope roles per owner/project during widening and backfill them with a bounded migration, dual-reading legacy global roles only until every owner has a scoped copy; prevent one user from reading or updating another's roles. Paginate and bound the reads that grow without limit (conversations, events, approvals, audit log, commands, checkpoints).
+
+**Blocked by:** Convex command ingress and projection synchronization (widen).
+
+- [ ] Device/browser approval round-trip passes; the daemon resolves approvals with device credentials, not user auth
+- [ ] Roles are owner/project-scoped; cross-owner read/update fails closed
+- [ ] The growing reads are paginated/bounded; legacy global roles dual-read only until scoped copies exist
+
+## Backfill existing threads to projections (migrate)
+
+**What to build:** Bring existing Relay threads onto the new projections without downtime and without breaking the legacy display — the migrate step of widen-migrate-narrow. Install `@convex-dev/migrations` for bounded, resumable, cursor-driven backfills (no `.collect()`). Deploy dual-write so new browser actions write the legacy table and the command inbox under the same correlation ID while legacy display queries stay authoritative. Add a dry-run backfill converting existing thread/message/event/approval/checkpoint metadata into initial projection snapshots, marking imported sequences and source document IDs so reruns are idempotent. Roll out as a real production operation (dry-run → run → verify) and record the output as release evidence; do not narrow yet.
+
+**Blocked by:** Convex command ingress and projection synchronization (widen); Harden Convex authorization and bound reads.
+
+- [ ] Dual-write lands both legacy and inbox under one correlation ID; legacy display stays authoritative
+- [ ] The cursor-driven backfill is resumable and idempotent across partial/repeated/mixed old-and-new data
+- [ ] Production dry-run → run → verify leaves zero unmigrated active runs and no sequence gaps; nothing is narrowed
+
+## Client-runtime and browser cutover
+
+**What to build:** Move the browser onto the new projection model. Build a client-runtime that applies a snapshot then ordered events after their sequence, caches at breakpoints, and submits commands — so a reconnect resumes from a durable sequence without missing or duplicating visible activity. Replace whole-message rewrites with ordered deltas, and move thread React orchestration behind the client-runtime so React renders client-runtime state rather than driving Convex directly.
+
+**Blocked by:** Canonical history and context policy; Convex command ingress and projection synchronization (widen).
+
+- [ ] A reconnect applies the snapshot then events in sequence with no gaps or duplicates
+- [ ] Whole-message rewrites are replaced by ordered deltas
+- [ ] Thread React orchestration renders client-runtime state and submits through it
+
+## Shadow-mode parity
+
+**What to build:** Prove the kernel reaches parity with legacy before cutover, as evidence not hope. Run the kernel alongside the legacy path in shadow mode and compare decisions and projections for the same inputs — without ever dual-executing a side effect (no second provider turn, no second workspace mutation). The comparison covers a real Codex turn on a durable workspace under the sandbox. Any divergence blocks cutover.
+
+**Blocked by:** Codex app-server provider adapter; Durable workspaces and per-turn checkpoints; Sandbox enforcement and permission profiles; Client-runtime and browser cutover.
+
+- [ ] Shadow mode runs kernel and legacy on the same inputs and reports decision/projection parity
+- [ ] No side effect is ever dual-executed (no second provider turn or workspace mutation)
+- [ ] Parity holds across a real Codex turn on a durable workspace under the sandbox
+
+## Route every workflow through the engine and the reviewer jury
+
+**What to build:** Make the orchestration engine the single owner of all agent workflows. Move subagents, review, plan, and MCP from ad-hoc daemon workers onto orchestrated workflows driven by commands/events, so the engine — not scattered pollers — owns their state transitions. Implement the reviewer jury (reviewer plus reviewer-security on different models producing P0–P3 inline diff comments, with "address findings" feeding the agent) as an orchestrated workflow rather than bespoke coordination.
+
+**Blocked by:** Canonical history and context policy; Shadow-mode parity.
+
+- [ ] Subagent, review, plan, and MCP workflows are driven by the orchestration engine via commands/events
+- [ ] The reviewer jury runs as an orchestrated workflow producing P0–P3 comments that feed the agent
+- [ ] No workflow state transitions happen outside the engine
+
+## Flip default to kernel and remove hot pollers
+
+**What to build:** Make the kernel the default and retire the polling-driven core. Cut the default runtime to `kernel`, remove the direct 200 ms claim pollers from the kernel path, and keep an emergency legacy activation available for one release window only. Roll out per machine (developer machines → opt-in canary → default kernel).
+
+**Blocked by:** Route every workflow through the engine and the reviewer jury.
+
+- [ ] The default runtime is `kernel`; the 200 ms claim pollers are gone from the kernel path
+- [ ] Rollout is per machine (developer → canary → default) with emergency legacy for one release window
+
+## Operational reliability and observability
+
+**What to build:** Make the daemon operable and provably crash-safe. Add structured local logs and correlation IDs that join browser command → Convex ingress → local command → provider turn → tool activity → checkpoint; add metrics, health, and a diagnostic export. Validate deterministic kill-point recovery at every lifecycle phase (kill tests, network partition, disk pressure, duplicate/reordered transport all converge). Automate retention, compaction, and storage-pressure policy so a long-lived daemon doesn't grow without bound.
+
+**Blocked by:** Route every workflow through the engine and the reviewer jury.
+
+- [ ] Structured traces join the full browser → Convex → daemon → provider → tool → checkpoint path
+- [ ] Metrics, health, and a diagnostic export exist
+- [ ] The kill-point / partition / disk-pressure / duplicate-reorder matrix converges at every phase
+- [ ] Retention, compaction, and storage-pressure policy are automated
+
+## Security closure
+
+**What to build:** Make the trust model explicit and attacked. Write and test a threat model covering the browser/Convex/daemon boundaries. Harden secrets, credentials, and device identity (tokens never on argv, scoped identities, minimal trust root). Complete authorization and audit semantics. Run an adversarial validation gate — authorization matrix, sandbox escape suite, secret scanning, hostile-input corpus — before release.
+
+**Blocked by:** Sandbox enforcement and permission profiles; Harden Convex authorization and bound reads; Route every workflow through the engine and the reviewer jury.
+
+- [ ] A written, tested threat model covers the trust boundaries
+- [ ] Secrets, credentials, and device identity are hardened to a minimal trust root
+- [ ] Authorization and audit semantics are complete
+- [ ] The adversarial gate (authz matrix, escape suite, secret scanning, hostile-input corpus) passes
+
+## Distribution and operations
+
+**What to build:** Make install, upgrade, backup, and recovery operable across the OS matrix. Add a daemon process supervisor contract (restart, graceful shutdown, lease release). Implement version compatibility checks and safe upgrades that understand post-migration schema (binary rollback restores the verified pre-upgrade backup). Add rehearsed backup, restore, and corruption recovery. Produce signed, versioned artifacts with one-command fresh install, upgrade, and uninstall.
+
+**Blocked by:** Flip default to kernel and remove hot pollers.
+
+- [ ] The process supervisor owns restart, graceful shutdown, and lease release
+- [ ] Version compatibility and safe upgrades handle post-migration schema; rollback restores the verified backup
+- [ ] Backup, restore, and corruption recovery are rehearsed
+- [ ] Signed, versioned artifacts ship with one-command install/upgrade/uninstall
+
+## Performance, conformance, and production acceptance
+
+**What to build:** Certify performance, provider conformance, and OS support against measured signals, then pass the full production acceptance scenario. Establish service-level objectives and load profiles, optimize from measured signals (no hot pollers, bounded batches, lean projections), run the supported OS and provider conformance matrix, and execute the end-to-end production acceptance scenario on the supported OS matrix.
+
+**Blocked by:** Operational reliability and observability; Security closure; Distribution and operations.
+
+- [ ] SLOs and load profiles are defined and measured; optimizations follow measured signals
+- [ ] The OS + provider conformance matrix passes
+- [ ] The full production acceptance scenario passes on the supported OS matrix
+
+## Narrow schemas and remove the legacy runtime
+
+**What to build:** The irreversible contract step — narrow the widened schemas and delete the legacy path. Start only after at least one release window on kernel-default, zero legacy activations, and a verified backup/rollback rehearsal. Record the release evidence.
+
+**Blocked by:** Performance, conformance, and production acceptance.
+
+- [ ] At least one release window has run on kernel-default with zero legacy activations
+- [ ] A backup/rollback rehearsal is verified and recorded
+- [ ] Widened schemas are narrowed and the legacy runtime is removed
