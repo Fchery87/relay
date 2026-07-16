@@ -12,7 +12,11 @@ The five canonical triage roles use their default names (`needs-triage`, `needs-
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root (created lazily by `/domain-modeling` when needed). See `docs/agents/domain.md`.
+Single-context: `CONTEXT.md` (domain glossary) and `docs/adr/` (architecture decision records) at the repo root. See `docs/agents/domain.md`.
+
+**Active ADRs:** `0001-adapter-first-local-harness.md`, `0002-local-authority-convex-projections.md`, `0003-canonical-command-event-model.md` — these supersede the v1 "own agent loop" decision.
+
+**Kernel spec:** `.scratch/harness-kernel/PRD.md` — the binding problem/solution framing. Implementation tickets: `tickets.md` (second section).
 
 <!-- convex-ai-start -->
 

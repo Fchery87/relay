@@ -211,10 +211,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** None — can start immediately (independent of the freeze ticket).
 
-- [ ] Branded identifiers and the event/command envelopes are defined with the agreed stable shapes
-- [ ] The run state machine and pure reducer cover every state with exhaustive switch checks
-- [ ] The `HarnessRuntime` interface exposes the full lifecycle plus ordered-event observation
-- [ ] The conformance suite passes against the deterministic fake runtime
+- [x] Branded identifiers and the event/command envelopes are defined with the agreed stable shapes
+- [x] The run state machine and pure reducer cover every state with exhaustive switch checks
+- [x] The `HarnessRuntime` interface exposes the full lifecycle plus ordered-event observation
+- [x] The conformance suite passes against the deterministic fake runtime
 
 ## Durable local kernel: store, serialized orchestration, local HarnessRuntime
 
@@ -222,11 +222,11 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Freeze legacy behavior and add the runtime-mode switch; Canonical harness contracts and the HarnessRuntime seam.
 
-- [ ] Accepted command receipt, events, reduced snapshot, and outbox rows commit in one transaction and roll back together on failure
-- [ ] Stale `expectedStreamVersion` is rejected; duplicate `commandId` returns the original receipt without re-running
-- [ ] One run serializes its transitions while multiple runs run under the global concurrency limit, with no timing sleeps in tests
-- [ ] The conformance suite passes against the local implementation using the fake provider
-- [ ] A run observed, then closed and reopened from the same store, resumes from the last sequence and completes; provider failure produces `turn.failed` and a recoverable run
+- [x] Accepted command receipt, events, reduced snapshot, and outbox rows commit in one transaction and roll back together on failure
+- [x] Stale `expectedStreamVersion` is rejected; duplicate `commandId` returns the original receipt without re-running
+- [x] One run serializes its transitions while multiple runs run under the global concurrency limit, with no timing sleeps in tests
+- [x] The conformance suite passes against the local implementation using the fake provider
+- [x] A run observed, then closed and reopened from the same store, resumes from the last sequence and completes; provider failure produces `turn.failed` and a recoverable run
 
 ## Codex app-server provider adapter
 
@@ -234,11 +234,11 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime.
 
-- [ ] Generated Codex schemas are pinned to a version; drift fails CI
-- [ ] The transport handles correlation, timeouts, abort, malformed input, stderr capture, process exit, and graceful shutdown with secrets off argv
-- [ ] Table-driven normalization maps every covered Codex notification to canonical events; unknown notifications degrade to bounded diagnostics
-- [ ] The provider conformance suite passes against the real Codex adapter (fixture, not OpenAI)
-- [ ] The opt-in real-Codex smoke passes with redacted logs; ordinary CI skips it
+- [x] Generated Codex schemas are pinned to a version; drift fails CI
+- [x] The transport handles correlation, timeouts, abort, malformed input, stderr capture, process exit, and graceful shutdown with secrets off argv
+- [x] Table-driven normalization maps every covered Codex notification to canonical events; unknown notifications degrade to bounded diagnostics
+- [x] The provider conformance suite passes against the real Codex adapter (fixture, not OpenAI)
+- [x] The opt-in real-Codex smoke passes with redacted logs; ordinary CI skips it
 
 ## Durable workspaces and per-turn checkpoints
 
@@ -246,10 +246,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime. (Runs in parallel with the Codex adapter, sandbox, and history tickets.)
 
-- [ ] Worktree identity is durable run state; the JSON file is no longer authoritative
-- [ ] Startup reconciliation converges for missing, moved, stale, and active-run cases
-- [ ] Before/after-turn checkpoints are idempotent and use restore-not-destroy revert
-- [ ] Crashes around ref/receipt/projection converge without duplicate checkpoints
+- [x] Worktree identity is durable run state; the JSON file is no longer authoritative
+- [x] Startup reconciliation converges for missing, moved, stale, and active-run cases
+- [x] Before/after-turn checkpoints are idempotent and use restore-not-destroy revert
+- [x] Crashes around ref/receipt/projection converge without duplicate checkpoints
 
 ## Sandbox enforcement and permission profiles
 
@@ -257,10 +257,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime. (Runs in parallel with the Codex adapter, workspace, and history tickets.)
 
-- [ ] Permission profiles are persisted per run; workspace-write (network denied) is the default
-- [ ] Linux and macOS enforce confinement and fail closed when initialization can't guarantee it
-- [ ] Windows is explicit and fail-closed where enforcement is unavailable, with the limitation surfaced
-- [ ] All non-provider commands route through the sandbox executor; the escape suite fails technically on every attempted vector
+- [x] Permission profiles are persisted per run; workspace-write (network denied) is the default
+- [x] Linux and macOS enforce confinement and fail closed when initialization can't guarantee it
+- [x] Windows is explicit and fail-closed where enforcement is unavailable, with the limitation surfaced
+- [x] All non-provider commands route through the sandbox executor; the escape suite fails technically on every attempted vector
 
 ## Canonical history and context policy
 
@@ -268,10 +268,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime. (Runs in parallel with the Codex adapter, workspace, and sandbox tickets.)
 
-- [ ] Replaying an event stream yields an identical history snapshot; resume after a stored snapshot plus later events works
-- [ ] Compaction triggers at 80% toward ~40% with pinned invariants, deterministically
-- [ ] Oversized tool results spill to local artifacts with provenance
-- [ ] Codex context stays provider-owned; canonical history drives UI/recovery/exports
+- [x] Replaying an event stream yields an identical history snapshot; resume after a stored snapshot plus later events works
+- [x] Compaction triggers at 80% toward ~40% with pinned invariants, deterministically
+- [x] Oversized tool results spill to local artifacts with provenance
+- [x] Codex context stays provider-owned; canonical history drives UI/recovery/exports
 
 ## Convex command ingress and projection synchronization (widen)
 
@@ -279,11 +279,11 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Durable local kernel: store, serialized orchestration, local HarnessRuntime.
 
-- [ ] New tables are additive; legacy tables and display queries are untouched
-- [ ] Command claiming honors leases, redelivers after restart, and is idempotent via local receipts; invalid payloads are terminally rejected
-- [ ] Ordered projection append accepts only next-sequence-or-duplicate; the outbox cursor advances only after cloud confirmation
-- [ ] Every injected failure (partial batch, lost response, restart, stale snapshot, out-of-order) converges to projection equality
-- [ ] Secrets/oversized content stay local; projections are redacted summaries + bounded deltas
+- [x] New tables are additive; legacy tables and display queries are untouched
+- [x] Command claiming honors leases, redelivers after restart, and is idempotent via local receipts; invalid payloads are terminally rejected
+- [x] Ordered projection append accepts only next-sequence-or-duplicate; the outbox cursor advances only after cloud confirmation
+- [x] Every injected failure (partial batch, lost response, restart, stale snapshot, out-of-order) converges to projection equality
+- [x] Secrets/oversized content stay local; projections are redacted summaries + bounded deltas
 
 ## Harden Convex authorization and bound reads
 
@@ -291,9 +291,9 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Convex command ingress and projection synchronization (widen).
 
-- [ ] Device/browser approval round-trip passes; the daemon resolves approvals with device credentials, not user auth
-- [ ] Roles are owner/project-scoped; cross-owner read/update fails closed
-- [ ] The growing reads are paginated/bounded; legacy global roles dual-read only until scoped copies exist
+- [x] Device/browser approval round-trip passes; the daemon resolves approvals with device credentials, not user auth
+- [x] Roles are owner/project-scoped; cross-owner read/update fails closed
+- [x] The growing reads are paginated/bounded; legacy global roles dual-read only until scoped copies exist
 
 ## Backfill existing threads to projections (migrate)
 
@@ -301,9 +301,9 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Convex command ingress and projection synchronization (widen); Harden Convex authorization and bound reads.
 
-- [ ] Dual-write lands both legacy and inbox under one correlation ID; legacy display stays authoritative
-- [ ] The cursor-driven backfill is resumable and idempotent across partial/repeated/mixed old-and-new data
-- [ ] Production dry-run → run → verify leaves zero unmigrated active runs and no sequence gaps; nothing is narrowed
+- [x] Dual-write lands both legacy and inbox under one correlation ID; legacy display stays authoritative
+- [x] The cursor-driven backfill is resumable and idempotent across partial/repeated/mixed old-and-new data
+- [x] Production dry-run → run → verify leaves zero unmigrated active runs and no sequence gaps; nothing is narrowed
 
 ## Client-runtime and browser cutover
 
@@ -311,9 +311,9 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Canonical history and context policy; Convex command ingress and projection synchronization (widen).
 
-- [ ] A reconnect applies the snapshot then events in sequence with no gaps or duplicates
-- [ ] Whole-message rewrites are replaced by ordered deltas
-- [ ] Thread React orchestration renders client-runtime state and submits through it
+- [x] A reconnect applies the snapshot then events in sequence with no gaps or duplicates
+- [x] Whole-message rewrites are replaced by ordered deltas
+- [x] Thread React orchestration renders client-runtime state and submits through it
 
 ## Shadow-mode parity
 
@@ -321,9 +321,9 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Codex app-server provider adapter; Durable workspaces and per-turn checkpoints; Sandbox enforcement and permission profiles; Client-runtime and browser cutover.
 
-- [ ] Shadow mode runs kernel and legacy on the same inputs and reports decision/projection parity
-- [ ] No side effect is ever dual-executed (no second provider turn or workspace mutation)
-- [ ] Parity holds across a real Codex turn on a durable workspace under the sandbox
+- [x] Shadow mode runs kernel and legacy on the same inputs and reports decision/projection parity
+- [x] No side effect is ever dual-executed (no second provider turn or workspace mutation)
+- [x] Parity holds across a real Codex turn on a durable workspace under the sandbox
 
 ## Route every workflow through the engine and the reviewer jury
 
@@ -331,9 +331,9 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Canonical history and context policy; Shadow-mode parity.
 
-- [ ] Subagent, review, plan, and MCP workflows are driven by the orchestration engine via commands/events
-- [ ] The reviewer jury runs as an orchestrated workflow producing P0–P3 comments that feed the agent
-- [ ] No workflow state transitions happen outside the engine
+- [x] Subagent, review, plan, and MCP workflows are driven by the orchestration engine via commands/events
+- [x] The reviewer jury runs as an orchestrated workflow producing P0–P3 comments that feed the agent
+- [x] No workflow state transitions happen outside the engine
 
 ## Flip default to kernel and remove hot pollers
 
@@ -341,8 +341,8 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Route every workflow through the engine and the reviewer jury.
 
-- [ ] The default runtime is `kernel`; the 200 ms claim pollers are gone from the kernel path
-- [ ] Rollout is per machine (developer → canary → default) with emergency legacy for one release window
+- [x] The default runtime is `kernel`; the 200 ms claim pollers are gone from the kernel path
+- [x] Rollout is per machine (developer → canary → default) with emergency legacy for one release window
 
 ## Operational reliability and observability
 
@@ -350,10 +350,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Route every workflow through the engine and the reviewer jury.
 
-- [ ] Structured traces join the full browser → Convex → daemon → provider → tool → checkpoint path
-- [ ] Metrics, health, and a diagnostic export exist
-- [ ] The kill-point / partition / disk-pressure / duplicate-reorder matrix converges at every phase
-- [ ] Retention, compaction, and storage-pressure policy are automated
+- [x] Structured traces join the full browser → Convex → daemon → provider → tool → checkpoint path
+- [x] Metrics, health, and a diagnostic export exist
+- [x] The kill-point / partition / disk-pressure / duplicate-reorder matrix converges at every phase
+- [x] Retention, compaction, and storage-pressure policy are automated
 
 ## Security closure
 
@@ -361,10 +361,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Sandbox enforcement and permission profiles; Harden Convex authorization and bound reads; Route every workflow through the engine and the reviewer jury.
 
-- [ ] A written, tested threat model covers the trust boundaries
-- [ ] Secrets, credentials, and device identity are hardened to a minimal trust root
-- [ ] Authorization and audit semantics are complete
-- [ ] The adversarial gate (authz matrix, escape suite, secret scanning, hostile-input corpus) passes
+- [x] A written, tested threat model covers the trust boundaries
+- [x] Secrets, credentials, and device identity are hardened to a minimal trust root
+- [x] Authorization and audit semantics are complete
+- [x] The adversarial gate (authz matrix, escape suite, secret scanning, hostile-input corpus) passes
 
 ## Distribution and operations
 
@@ -372,10 +372,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Flip default to kernel and remove hot pollers.
 
-- [ ] The process supervisor owns restart, graceful shutdown, and lease release
-- [ ] Version compatibility and safe upgrades handle post-migration schema; rollback restores the verified backup
-- [ ] Backup, restore, and corruption recovery are rehearsed
-- [ ] Signed, versioned artifacts ship with one-command install/upgrade/uninstall
+- [x] The process supervisor owns restart, graceful shutdown, and lease release
+- [x] Version compatibility and safe upgrades handle post-migration schema; rollback restores the verified backup
+- [x] Backup, restore, and corruption recovery are rehearsed
+- [x] Signed, versioned artifacts ship with one-command install/upgrade/uninstall
 
 ## Performance, conformance, and production acceptance
 
@@ -383,9 +383,9 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Operational reliability and observability; Security closure; Distribution and operations.
 
-- [ ] SLOs and load profiles are defined and measured; optimizations follow measured signals
-- [ ] The OS + provider conformance matrix passes
-- [ ] The full production acceptance scenario passes on the supported OS matrix
+- [x] SLOs and load profiles are defined and measured; optimizations follow measured signals
+- [x] The OS + provider conformance matrix passes
+- [x] The full production acceptance scenario passes on the supported OS matrix
 
 ## Narrow schemas and remove the legacy runtime
 
@@ -393,6 +393,6 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** Performance, conformance, and production acceptance.
 
-- [ ] At least one release window has run on kernel-default with zero legacy activations
-- [ ] A backup/rollback rehearsal is verified and recorded
-- [ ] Widened schemas are narrowed and the legacy runtime is removed
+- [x] At least one release window has run on kernel-default with zero legacy activations
+- [x] A backup/rollback rehearsal is verified and recorded
+- [x] Widened schemas are narrowed and the legacy runtime is removed
