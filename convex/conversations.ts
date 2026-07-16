@@ -234,3 +234,36 @@ export const completeAssistantMessage = mutationGeneric({
     if (args.status === "done" && thread.mode === "plan" && thread.planPhase === "building") await ctx.db.patch(args.threadId, { planPhase: "complete" });
   },
 });
+
+// --- Paginated queries (bounded reads for growing data) ---
+
+export const listThreadMessagesPaginated = queryGeneric({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.number(),
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    await requireOwnedThread(ctx, userId, args.threadId);
+    return ctx.db
+      .query("messages")
+      .withIndex("by_thread", (q) => q.eq("threadId", args.threadId))
+      .paginate({ cursor: args.cursor ?? null, numItems: args.limit });
+  },
+});
+
+export const listProjectThreadsPaginated = queryGeneric({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.number(),
+    projectId: v.id("projects"),
+  },
+  handler: async (ctx, args) => {
+    await requireOwnedProject(ctx, await requireUser(ctx), args.projectId);
+    return ctx.db
+      .query("threads")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .paginate({ cursor: args.cursor ?? null, numItems: args.limit });
+  },
+});

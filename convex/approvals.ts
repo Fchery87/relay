@@ -57,3 +57,30 @@ export const resolve = mutationGeneric({
     await ctx.db.patch(approval.threadId, { status: approval.resumeStatus ?? "running" });
   },
 });
+
+// --- Device-scoped queries (fixes daemon approval-auth failure) ---
+
+export const getByDevice = queryGeneric({
+  args: { approvalId: v.id("approvals"), deviceToken: v.string() },
+  handler: async (ctx, args) => {
+    const approval = await ctx.db.get("approvals", args.approvalId);
+    if (!approval) return null;
+    await requireDeviceForThread(ctx, args.deviceToken, approval.threadId);
+    return approval;
+  },
+});
+
+export const listForThreadPaginated = queryGeneric({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.number(),
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
+    return ctx.db
+      .query("approvals")
+      .withIndex("by_thread", (q) => q.eq("threadId", args.threadId))
+      .paginate({ cursor: args.cursor ?? null, numItems: args.limit });
+  },
+});

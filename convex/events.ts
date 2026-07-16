@@ -10,6 +10,21 @@ export const list = queryGeneric({
   },
 });
 
+export const listPaginated = queryGeneric({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.number(),
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
+    return ctx.db
+      .query("events")
+      .withIndex("by_thread", (q) => q.eq("threadId", args.threadId))
+      .paginate({ cursor: args.cursor ?? null, numItems: args.limit });
+  },
+});
+
 export const appendCommandOutput = mutationGeneric({
   args: { deviceToken: v.string(), output: v.string(), threadId: v.id("threads") },
   handler: async (ctx, args) => {
