@@ -1,6 +1,5 @@
 import type { RunId } from "./ids";
-
-export type PermissionProfile = "read-only" | "workspace-write" | "full-access";
+import type { PermissionProfile } from "./permissions";
 
 export type WorkspaceRecord = {
   readonly runId: RunId;
