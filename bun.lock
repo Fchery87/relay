@@ -67,15 +67,24 @@
       "version": "0.0.0",
       "dependencies": {
         "@relay/contracts": "workspace:*",
+        "@relay/local-store": "workspace:*",
+        "@relay/orchestration": "workspace:*",
       },
     },
     "packages/local-store": {
       "name": "@relay/local-store",
       "version": "0.0.0",
+      "dependencies": {
+        "@relay/contracts": "workspace:*",
+      },
     },
     "packages/orchestration": {
       "name": "@relay/orchestration",
       "version": "0.0.0",
+      "dependencies": {
+        "@relay/contracts": "workspace:*",
+        "@relay/local-store": "workspace:*",
+      },
     },
     "packages/provider-runtime": {
       "name": "@relay/provider-runtime",
