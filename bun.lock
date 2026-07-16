@@ -54,12 +54,47 @@
         "convex": "^1.31.0",
       },
     },
+    "packages/client-runtime": {
+      "name": "@relay/client-runtime",
+      "version": "0.0.0",
+    },
+    "packages/contracts": {
+      "name": "@relay/contracts",
+      "version": "0.0.0",
+    },
+    "packages/harness-runtime": {
+      "name": "@relay/harness-runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@relay/contracts": "workspace:*",
+      },
+    },
+    "packages/local-store": {
+      "name": "@relay/local-store",
+      "version": "0.0.0",
+    },
+    "packages/orchestration": {
+      "name": "@relay/orchestration",
+      "version": "0.0.0",
+    },
+    "packages/provider-runtime": {
+      "name": "@relay/provider-runtime",
+      "version": "0.0.0",
+    },
+    "packages/providers/codex-app-server": {
+      "name": "@relay/codex-app-server",
+      "version": "0.0.0",
+    },
     "packages/shared": {
       "name": "@relay/shared",
       "version": "0.0.0",
       "dependencies": {
         "zod": "^4.1.12",
       },
+    },
+    "packages/workspace-runtime": {
+      "name": "@relay/workspace-runtime",
+      "version": "0.0.0",
     },
   },
   "packages": {
@@ -197,13 +232,29 @@
 
     "@panva/hkdf": ["@panva/hkdf@1.2.1", "", {}, "sha512-6oclG6Y3PiDFcoyk8srjLfVKyMfVCKJ27JwNPViuXziFpmdz+MZnZN/aKY0JGXgYuO/VghU0jcOAZgWXZ1Dmrw=="],
 
+    "@relay/client-runtime": ["@relay/client-runtime@workspace:packages/client-runtime"],
+
+    "@relay/codex-app-server": ["@relay/codex-app-server@workspace:packages/providers/codex-app-server"],
+
+    "@relay/contracts": ["@relay/contracts@workspace:packages/contracts"],
+
     "@relay/convex": ["@relay/convex@workspace:convex"],
 
     "@relay/daemon": ["@relay/daemon@workspace:apps/daemon"],
 
+    "@relay/harness-runtime": ["@relay/harness-runtime@workspace:packages/harness-runtime"],
+
+    "@relay/local-store": ["@relay/local-store@workspace:packages/local-store"],
+
+    "@relay/orchestration": ["@relay/orchestration@workspace:packages/orchestration"],
+
+    "@relay/provider-runtime": ["@relay/provider-runtime@workspace:packages/provider-runtime"],
+
     "@relay/shared": ["@relay/shared@workspace:packages/shared"],
 
     "@relay/web": ["@relay/web@workspace:apps/web"],
+
+    "@relay/workspace-runtime": ["@relay/workspace-runtime@workspace:packages/workspace-runtime"],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-rc.3", "", {}, "sha512-eybk3TjzzzV97Dlj5c+XrBFW57eTNhzod66y9HrBlzJ6NsCrWCp/2kaPS3K9wJmurBC0Tdw4yPjXKZqlznim3Q=="],
 

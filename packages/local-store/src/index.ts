@@ -1,0 +1,2 @@
+// @relay/local-store
+export {};

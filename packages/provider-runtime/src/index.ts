@@ -1,0 +1,2 @@
+// @relay/provider-runtime
+export {};

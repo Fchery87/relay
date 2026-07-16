@@ -2,7 +2,7 @@
   "name": "relay",
   "private": true,
   "packageManager": "bun@1.3.14",
-  "workspaces": ["apps/*", "packages/*", "convex"],
+  "workspaces": ["apps/*", "packages/*", "packages/providers/*", "convex"],
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test && bun run --cwd convex test:convex",

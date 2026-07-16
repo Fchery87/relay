@@ -1,0 +1,2 @@
+// @relay/workspace-runtime
+export {};
