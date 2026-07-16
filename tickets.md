@@ -200,10 +200,10 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 
 **Blocked by:** None — can start immediately.
 
-- [ ] Characterization tests pin the legacy vertical slice; the stranded-run failure is a recorded todo
-- [ ] The three architecture-reversal ADRs exist and supersede the own-loop decision
-- [ ] `RELAY_RUNTIME_MODE` parses `legacy|shadow|kernel` (default `legacy`), rejects unknown values, and `RELAY_KERNEL_MAX_CONCURRENT_RUNS` validates a positive integer
-- [ ] The runtime mode is selected once in the daemon root; the legacy path is unchanged
+- [x] Characterization tests pin the legacy vertical slice; the stranded-run failure is a recorded todo
+- [x] The three architecture-reversal ADRs exist and supersede the own-loop decision
+- [x] `RELAY_RUNTIME_MODE` parses `legacy|shadow|kernel` (default `legacy`), rejects unknown values, and `RELAY_KERNEL_MAX_CONCURRENT_RUNS` validates a positive integer
+- [x] The runtime mode is selected once in the daemon root; the legacy path is unchanged
 
 ## Canonical harness contracts and the HarnessRuntime seam
 
