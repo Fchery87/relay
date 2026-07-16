@@ -60,6 +60,17 @@ export type TurnReceipt = {
   readonly commandId: CommandId;
 };
 
+export type AppendEventInput = {
+  readonly eventId: string;
+  readonly type: CanonicalEventType;
+  readonly payload: Record<string, unknown>;
+  readonly correlationId?: string;
+};
+
+export type AppendEventResult =
+  | { ok: true; sequence: number }
+  | { ok: false; reason: string };
+
 // ---------------------------------------------------------------------------
 // The deep HarnessRuntime interface — the single primary seam.
 // Workspace, provider, store, and Convex adapters are deliberately kept out.
@@ -97,4 +108,11 @@ export interface HarnessRuntime {
    *  are yielded. The stream stays open until the run reaches a terminal status
    *  or the consumer breaks the iteration. */
   observe(input: ObserveInput): AsyncIterable<EventEnvelope<CanonicalEventType, unknown>>;
+
+  /** Append raw events for a run (used by provider adapters to stream
+   *  turn deltas, usage records, and completion/failure events). */
+  appendEvent(runId: RunId, input: AppendEventInput): Promise<AppendEventResult>;
+
+  /** List all active run IDs known to the runtime. */
+  listRuns(): ReadonlyArray<{ runId: string; status: string }>;
 }

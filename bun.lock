@@ -16,7 +16,11 @@
     "apps/daemon": {
       "name": "@relay/daemon",
       "version": "0.0.0",
+      "bin": {
+        "relay": "src/cli.ts",
+      },
       "dependencies": {
+        "@relay/harness-runtime": "workspace:*",
         "@relay/shared": "workspace:*",
         "ajv": "^8.17.1",
         "convex": "^1.31.0",

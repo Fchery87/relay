@@ -6,6 +6,7 @@ import { loadDaemonConfig } from "./config";
 import { resolveDaemonHome } from "./daemon-home";
 import { loadDeviceCredentials } from "./device-credentials";
 import { isDeviceTokenRejected } from "./device-auth";
+import { KernelDaemon } from "./kernel-daemon";
 import { resolveRuntimeMode, type RuntimeMode } from "./runtime-mode";
 import { runQueuedTurn } from "./agent-loop";
 import { runQueuedCommand } from "./command-worker";
@@ -31,7 +32,38 @@ const reporter = new MachineReporter({
 });
 
 await reporter.connect();
-console.info(`Relay daemon connected as ${config.registration.name}`);
+console.info(`Relay daemon connected as ${config.registration.name} (mode: ${runtimeMode})`);
+
+// -- Runtime mode branch ----------------------------------------------------
+if (runtimeMode === "kernel") {
+  const kernelDaemon = new KernelDaemon({
+    daemonHome,
+    deploymentUrl: config.deploymentUrl,
+    deviceToken: config.registration.deviceToken,
+    heartbeatIntervalMs: config.heartbeatIntervalMs,
+    machineName: config.registration.name,
+  });
+  await kernelDaemon.start();
+  return; // kernel daemon owns the event loop; never returns until shutdown
+}
+
+if (runtimeMode === "shadow") {
+  console.info("Shadow mode: running legacy + kernel side-by-side");
+  // Start kernel in background (non-blocking — legacy loop runs on main)
+  const kernelDaemon = new KernelDaemon({
+    daemonHome,
+    deploymentUrl: config.deploymentUrl,
+    deviceToken: config.registration.deviceToken,
+    heartbeatIntervalMs: config.heartbeatIntervalMs,
+    machineName: `${config.registration.name}-shadow`,
+  });
+  void kernelDaemon.start().catch((error: unknown) =>
+    console.error("Kernel daemon (shadow) crashed:", error),
+  );
+  // Fall through to legacy loop below
+}
+
+// Legacy path (runtimeMode === "legacy" or "shadow")
 
 setInterval(() => {
   void reporter.heartbeatOnce().catch((error: unknown) => {

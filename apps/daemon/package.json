@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@relay/harness-runtime": "workspace:*",
     "@relay/shared": "workspace:*",
     "ajv": "^8.17.1",
     "convex": "^1.31.0",

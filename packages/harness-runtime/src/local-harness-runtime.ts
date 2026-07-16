@@ -14,6 +14,8 @@ import {
   type SnapshotInput,
   type ObserveInput,
   type TurnReceipt,
+  type AppendEventInput,
+  type AppendEventResult,
 } from "./harness-runtime";
 
 export class LocalHarnessRuntime implements HarnessRuntime {
@@ -184,6 +186,36 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   /** Close the underlying database connection (if file-backed). */
   close(): void {
     this.db.close();
+  }
+
+  // -- Extended methods (not in HarnessRuntime, used by kernel daemon) -----
+
+  async appendEvent(runId: string, input: AppendEventInput): Promise<AppendEventResult> {
+    const result = appendEvents(this.db, {
+      runId,
+      commandId: `cmd-event-${input.eventId}`,
+      events: [
+        {
+          eventId: input.eventId,
+          type: input.type,
+          payload: input.payload,
+          correlationId: input.correlationId ?? `corr-${input.eventId}`,
+        },
+      ],
+    });
+    if (!result.ok) return { ok: false, reason: result.reason };
+    return { ok: true, sequence: result.snapshot.sequence };
+  }
+
+  listRuns(): ReadonlyArray<{ runId: string; status: string }> {
+    const rows = this.db
+      .query("SELECT run_id, status FROM run_snapshots ORDER BY updated_at DESC")
+      .all() as Array<{ run_id: string; status: string }>;
+    return rows.map((r) => ({ runId: r.run_id, status: r.status }));
+  }
+
+  getSnapshotByRunId(runId: string): RunSnapshot | undefined {
+    return getSnapshot(this.db, runId) ?? undefined;
   }
 }
 

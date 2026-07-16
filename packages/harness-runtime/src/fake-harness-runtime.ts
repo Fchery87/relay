@@ -18,6 +18,8 @@ import type {
   SnapshotInput,
   ObserveInput,
   TurnReceipt,
+  AppendEventInput,
+  AppendEventResult,
 } from "./harness-runtime";
 
 // ---------------------------------------------------------------------------
@@ -197,6 +199,24 @@ export class FakeHarnessRuntime implements HarnessRuntime {
   }
 
   // -- control surface for tests ---------------------------------------------
+
+  async appendEvent(
+    runId: string,
+    input: AppendEventInput,
+  ): Promise<AppendEventResult> {
+    const run = this.runs.get(runId);
+    if (!run) return { ok: false, reason: `Run not found: ${runId}` };
+    const ev = this.makeEvent(input.type, run.snapshot, input.payload);
+    this.append(run.snapshot, ev);
+    return { ok: true, sequence: run.snapshot.sequence };
+  }
+
+  listRuns(): ReadonlyArray<{ runId: string; status: string }> {
+    return Array.from(this.runs.entries()).map(([id, r]) => ({
+      runId: id,
+      status: r.snapshot.status,
+    }));
+  }
 
   /** Complete all blocked operations. */
   drain(): void {
