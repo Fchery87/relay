@@ -11,6 +11,7 @@
   "dependencies": {
     "@auth/core": "0.41.1",
     "@convex-dev/auth": "^0.0.94",
+    "@convex-dev/migrations": "^0.3.5",
     "@relay/shared": "workspace:*",
     "convex": "^1.31.0"
   }

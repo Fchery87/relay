@@ -1,2 +1,1 @@
-// @relay/client-runtime
-export {};
+export * from "./client-runtime";
