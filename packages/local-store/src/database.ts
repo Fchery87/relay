@@ -105,6 +105,29 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    up: (db) => {
+      db.run(`
+        CREATE TABLE IF NOT EXISTS checkpoints (
+          checkpoint_id TEXT PRIMARY KEY,
+          run_id        TEXT NOT NULL,
+          turn_id       TEXT NOT NULL,
+          commit_sha    TEXT NOT NULL,
+          ref           TEXT NOT NULL,
+          created_at    INTEGER NOT NULL,
+          gc            INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_checkpoints_run ON checkpoints(run_id, turn_id);`);
+    },
+  },
+  {
+    version: 3,
+    up: (db) => {
+      db.run(`ALTER TABLE workspaces ADD COLUMN cleaned_up INTEGER DEFAULT NULL;`);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

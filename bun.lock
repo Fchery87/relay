@@ -104,6 +104,10 @@
     "packages/workspace-runtime": {
       "name": "@relay/workspace-runtime",
       "version": "0.0.0",
+      "dependencies": {
+        "@relay/contracts": "workspace:*",
+        "@relay/local-store": "workspace:*",
+      },
     },
   },
   "packages": {
