@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import { isDeviceTokenRejected } from "./device-auth";
 import { LocalHarnessRuntime } from "@relay/harness-runtime";
-import { DEFAULT_MODEL_ID } from "@relay/shared";
+import { DEFAULT_MODEL_ID, type Capability } from "@relay/shared";
 import {
   createConvexCommandSource,
 } from "./sync/convex-command-source";
@@ -21,8 +21,23 @@ import {
 } from "./sync/convex-projection-sink";
 import type { ProjectionSink } from "./sync/convex-projection-sink";
 import type { ModelProvider, ModelProviderRouter } from "./model-provider";
+import type { GovernanceGateway } from "./governed-tool-executor";
+import type { Policy } from "./policy";
+import type { MachinePlatform } from "@relay/shared";
 import { ScriptedModelProvider } from "./model-provider";
 import { LocalModelRouter } from "./catalog-provider-router";
+import {
+  executeCheckpointRestore,
+  type CheckpointRestoreAdapterDeps,
+} from "./adapters/checkpoint-restore-adapter";
+import {
+  executeCheckpointComparison,
+  type CheckpointComparisonAdapterDeps,
+} from "./adapters/checkpoint-comparison-adapter";
+import {
+  executeSubagent,
+  type SubagentAdapterDeps,
+} from "./adapters/subagent-adapter";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +50,13 @@ export type KernelDaemonConfig = {
   heartbeatIntervalMs: number;
   machineName: string;
   pollIntervalMs?: number;
+  /** Adapter deps — required for checkpoint and subagent commands. */
+  adapterDeps?: {
+    resolveProjectRoot(input: { repoPath: string; threadId: string }): Promise<string>;
+    governance?: GovernanceGateway;
+    policy?: Policy;
+    platform?: MachinePlatform;
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -278,6 +300,97 @@ export class KernelDaemon {
           });
 
           await complete(succeeded ? "completed" : "rejected");
+          break;
+        }
+        case "checkpoint.restore": {
+          if (!this.config.adapterDeps?.resolveProjectRoot) {
+            throw new Error("checkpoint.restore requires resolveProjectRoot adapter dep");
+          }
+          const ckptEvents = await executeCheckpointRestore(
+            {
+              commit: (payload.commit ?? "HEAD") as string,
+              projectPath: (payload.projectPath ?? ".") as string,
+              threadId: (payload.threadId ?? "") as string,
+            },
+            {
+              resolveProjectRoot: this.config.adapterDeps.resolveProjectRoot,
+            },
+            runId ?? `ckpt-${commandId}`,
+          );
+          for (const ev of ckptEvents) {
+            await this.runtime.appendEvent(runId ?? `ckpt-${commandId}`, {
+              eventId: ev.eventId,
+              type: ev.type as "checkpoint.restored" | "activity.completed",
+              payload: ev.payload,
+            });
+          }
+          await complete("completed");
+          break;
+        }
+        case "checkpoint.compare": {
+          if (!this.config.adapterDeps?.resolveProjectRoot) {
+            throw new Error("checkpoint.compare requires resolveProjectRoot adapter dep");
+          }
+          const cmpEvents = await executeCheckpointComparison(
+            {
+              fromCommit: (payload.fromCommit ?? "HEAD~1") as string,
+              toCommit: (payload.toCommit ?? "HEAD") as string,
+              projectPath: (payload.projectPath ?? ".") as string,
+              threadId: (payload.threadId ?? "") as string,
+            },
+            {
+              resolveProjectRoot: this.config.adapterDeps.resolveProjectRoot,
+            },
+            runId ?? `cmp-${commandId}`,
+          );
+          for (const ev of cmpEvents) {
+            await this.runtime.appendEvent(runId ?? `cmp-${commandId}`, {
+              eventId: ev.eventId,
+              type: "activity.completed" as const,
+              payload: ev.payload,
+            });
+          }
+          await complete("completed");
+          break;
+        }
+        case "subagent.run": {
+          const deps = this.config.adapterDeps;
+          if (!deps?.resolveProjectRoot) {
+            throw new Error(
+              "subagent.run requires resolveProjectRoot adapter dep",
+            );
+          }
+          const subEvents = await executeSubagent(
+            {
+              task: (payload.task ?? "") as string,
+              roleName: (payload.roleName ?? "worker") as string,
+              capabilities: (payload.capabilities ?? []) as Capability[],
+              projectPath: (payload.projectPath ?? ".") as string,
+              threadId: (payload.threadId ?? "") as string,
+              modelId: payload.modelId as string | undefined,
+            },
+            {
+              provider: this.provider,
+              platform: deps.platform ?? "linux",
+              resolveProjectRoot: deps.resolveProjectRoot,
+            },
+            runId ?? `sub-${commandId}`,
+          );
+          for (const ev of subEvents) {
+            const eventType = ev.type as
+              | "activity.started"
+              | "activity.delta"
+              | "activity.completed"
+              | "activity.failed"
+              | "usage.recorded"
+              | "checkpoint.captured";
+            await this.runtime.appendEvent(runId ?? `sub-${commandId}`, {
+              eventId: ev.eventId,
+              type: eventType,
+              payload: ev.payload,
+            });
+          }
+          await complete("completed");
           break;
         }
         default: {

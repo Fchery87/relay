@@ -34,36 +34,10 @@ const reporter = new MachineReporter({
 await reporter.connect();
 console.info(`Relay daemon connected as ${config.registration.name} (mode: ${runtimeMode})`);
 
-// -- Runtime mode branch ----------------------------------------------------
-if (runtimeMode === "kernel") {
-  const kernelDaemon = new KernelDaemon({
-    daemonHome,
-    deploymentUrl: config.deploymentUrl,
-    deviceToken: config.registration.deviceToken,
-    heartbeatIntervalMs: config.heartbeatIntervalMs,
-    machineName: config.registration.name,
-  });
-  await kernelDaemon.start();
-  return; // kernel daemon owns the event loop; never returns until shutdown
-}
-
-if (runtimeMode === "shadow") {
-  console.info("Shadow mode: running legacy + kernel side-by-side");
-  // Start kernel in background (non-blocking — legacy loop runs on main)
-  const kernelDaemon = new KernelDaemon({
-    daemonHome,
-    deploymentUrl: config.deploymentUrl,
-    deviceToken: config.registration.deviceToken,
-    heartbeatIntervalMs: config.heartbeatIntervalMs,
-    machineName: `${config.registration.name}-shadow`,
-  });
-  void kernelDaemon.start().catch((error: unknown) =>
-    console.error("Kernel daemon (shadow) crashed:", error),
-  );
-  // Fall through to legacy loop below
-}
-
-// Legacy path (runtimeMode === "legacy" or "shadow")
+// ---------------------------------------------------------------------------
+// Setup: gateways, governance, policy, worktrees, provider, MCP
+// (shared by legacy and kernel paths)
+// ---------------------------------------------------------------------------
 
 setInterval(() => {
   void reporter.heartbeatOnce().catch((error: unknown) => {
@@ -88,6 +62,47 @@ await collectOrphanedWorktrees();
 setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
 const provider = new LocalModelRouter({ env: Bun.env, fallbackProvider: new ScriptedModelProvider({ chunks: ["Relay received your message."] }) });
 const mcp = new McpRegistry({ env: Bun.env, gateway: createConvexMcpServerGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken }), governance });
+
+// -- Runtime mode branch ----------------------------------------------------
+if (runtimeMode === "kernel") {
+  const kernelDaemon = new KernelDaemon({
+    daemonHome,
+    deploymentUrl: config.deploymentUrl,
+    deviceToken: config.registration.deviceToken,
+    heartbeatIntervalMs: config.heartbeatIntervalMs,
+    machineName: config.registration.name,
+    adapterDeps: {
+      resolveProjectRoot: (input) => worktrees.resolve(input),
+      governance,
+      policy,
+      platform: config.registration.platform,
+    },
+  });
+  await kernelDaemon.start();
+  return; // kernel daemon owns the event loop; never returns until shutdown
+}
+
+if (runtimeMode === "shadow") {
+  console.info("Shadow mode: running legacy + kernel side-by-side");
+  const kernelDaemon = new KernelDaemon({
+    daemonHome,
+    deploymentUrl: config.deploymentUrl,
+    deviceToken: config.registration.deviceToken,
+    heartbeatIntervalMs: config.heartbeatIntervalMs,
+    machineName: `${config.registration.name}-shadow`,
+    adapterDeps: {
+      resolveProjectRoot: (input) => worktrees.resolve(input),
+      governance,
+      policy,
+      platform: config.registration.platform,
+    },
+  });
+  void kernelDaemon.start().catch((error: unknown) =>
+    console.error("Kernel daemon (shadow) crashed:", error),
+  );
+  // Fall through to legacy loop below
+}
+
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
