@@ -62,10 +62,13 @@ export class CatalogModelProvider implements ModelProvider {
         else if (this.#model.apiKind === "openai-responses") {
           const usage = parseResponsesUsage(payload);
           if (usage) yield { kind: "usage", usage };
-        } else if (this.#model.apiKind === "openai-completions" && isChatDelta(payload)) {
-          const text = payload.choices[0]?.delta.content;
-          if (text) yield { kind: "text", text };
         } else if (this.#model.apiKind === "openai-completions") {
+          // DeepSeek attaches `usage` to the same chunk as the final (empty) content delta and
+          // finish_reason, rather than a separate chunk with an empty `choices` array — check both.
+          if (isChatDelta(payload)) {
+            const text = payload.choices[0]?.delta.content;
+            if (text) yield { kind: "text", text };
+          }
           const usage = parseCompletionsUsage(payload);
           if (usage) yield { kind: "usage", usage };
         } else if (this.#model.apiKind === "anthropic-messages" && isAnthropicTextDelta(payload)) {

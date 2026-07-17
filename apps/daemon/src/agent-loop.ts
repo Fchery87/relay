@@ -12,7 +12,7 @@ export interface ConversationGateway {
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
   claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
   claimSteeringMessages(input: { deviceToken: string; threadId: string }): Promise<Array<{ content: string }>>;
-  completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; threadId: string }): Promise<unknown>;
+  completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; status?: "done" | "failed"; threadId: string }): Promise<unknown>;
   completePlanning?(input: { content: string; messageId: string; threadId: string }): Promise<unknown>;
   isStopRequested(input: { deviceToken: string; threadId: string }): Promise<boolean>;
   recordCheckpoint?(input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }): Promise<unknown>;
@@ -74,6 +74,45 @@ export async function runQueuedTurn({
 
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
+  try {
+    return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy, platform, prompt, queued, reviewComments, root, turnProvider });
+  } catch (error) {
+    // Mark the turn failed so claimQueuedMessage stops skipping this thread (it treats "running" as busy).
+    // Without this, an uncaught error here leaves the thread stuck and every later message sits queued forever.
+    await gateway.completeAssistantMessage({ messageId, status: "failed", threadId: queued.threadId }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function runClaimedTurn({
+  deviceToken,
+  gateway,
+  governance,
+  mcp,
+  mcpTools,
+  messageId,
+  policy,
+  platform,
+  prompt,
+  queued,
+  reviewComments,
+  root,
+  turnProvider,
+}: {
+  deviceToken: string;
+  gateway: ConversationGateway;
+  governance: GovernanceGateway;
+  mcp?: McpToolGateway;
+  mcpTools: McpModelTool[];
+  messageId: string;
+  policy: Policy;
+  platform: MachinePlatform;
+  prompt: string;
+  queued: { content: string; modelId?: string; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
+  reviewComments: ReviewComment[];
+  root: string;
+  turnProvider: ModelProvider;
+}): Promise<boolean> {
   const steeringMessages: string[] = [];
   const toolResults: string[] = [];
   let checkpointed = false;

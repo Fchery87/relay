@@ -57,6 +57,22 @@ test("streams OpenAI-compatible completion deltas", async () => {
   });
 });
 
+test("streams OpenAI-compatible usage merged into the final content delta chunk", async () => {
+  // DeepSeek attaches `usage` to the same chunk as the last (empty) content delta and finish_reason,
+  // rather than sending it as a separate chunk with an empty `choices` array.
+  const model = MODEL_CATALOG.models.find((entry) => entry.apiKind === "openai-completions")!;
+  const provider = new CatalogModelProvider({
+    apiKey: "secret",
+    fetcher: async () => new Response('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":1200,"prompt_cache_hit_tokens":300,"completion_tokens":500,"completion_tokens_details":{"reasoning_tokens":200}}}\n\ndata: [DONE]\n\n'),
+    model,
+    thinkingValue: null,
+  });
+  expect(await collect(provider)).toEqual({
+    text: "Hello",
+    usages: [{ cacheReadTokens: 300, cacheWriteTokens: 0, inputTokens: 1_200, outputTokens: 500, thinkingTokens: 200 }],
+  });
+});
+
 test("passes the turn abort signal to the provider request", async () => {
   const model = MODEL_CATALOG.models.find((entry) => entry.apiKind === "openai-responses")!;
   const controller = new AbortController();

@@ -12,7 +12,7 @@ const registerMachineMutation = makeFunctionReference<"mutation", MachineRegistr
 const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("conversations:claimQueuedMessage");
 const beginAssistantMessageMutation = makeFunctionReference<"mutation", { deviceToken: string; threadId: string }, string>("conversations:beginAssistantMessage");
 const appendAssistantTextMutation = makeFunctionReference<"mutation", { content: string; deviceToken: string; messageId: string }>("conversations:appendAssistantText");
-const completeAssistantMessageMutation = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; resolvedCommentIds?: string[]; threadId: string; status: "done" }>("conversations:completeAssistantMessage");
+const completeAssistantMessageMutation = makeFunctionReference<"mutation", { deviceToken: string; messageId: string; resolvedCommentIds?: string[]; threadId: string; status: "done" | "failed" }>("conversations:completeAssistantMessage");
 const completePlanningMutation = makeFunctionReference<"mutation", { content: string; deviceToken: string; messageId: string; threadId: string }, null>("plans:completePlanning");
 const claimCommandMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("commands:claim");
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; deviceToken: string; status: "complete" | "failed" }>("commands:complete");
@@ -87,7 +87,7 @@ export function createConvexConversationGateway({ deploymentUrl, deviceToken }: 
     beginAssistantMessage: ({ threadId }: { threadId: string }) => client.mutation(beginAssistantMessageMutation, { deviceToken, threadId }),
     claimQueuedMessage: async ({ deviceToken }: { deviceToken: string }) => queuedMessageSchema.nullable().parse(await client.mutation(claimQueuedMessageMutation, { deviceToken })),
     claimSteeringMessages: async (input: { deviceToken: string; threadId: string }) => steeringMessagesSchema.parse(await client.mutation(claimSteeringMessagesMutation, input)),
-    completeAssistantMessage: ({ messageId, resolvedCommentIds, threadId }: { messageId: string; resolvedCommentIds?: string[]; threadId: string }) => client.mutation(completeAssistantMessageMutation, { deviceToken, messageId, resolvedCommentIds, status: "done", threadId }),
+    completeAssistantMessage: ({ messageId, resolvedCommentIds, status = "done", threadId }: { messageId: string; resolvedCommentIds?: string[]; status?: "done" | "failed"; threadId: string }) => client.mutation(completeAssistantMessageMutation, { deviceToken, messageId, resolvedCommentIds, status, threadId }),
     completePlanning: (input: { content: string; messageId: string; threadId: string }) => client.mutation(completePlanningMutation, { ...input, deviceToken }),
     enqueueSubagent: (input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }) => client.mutation(enqueueSubagentMutation, input),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }) => client.mutation(appendToolCompletedMutation, { ...input, deviceToken }),

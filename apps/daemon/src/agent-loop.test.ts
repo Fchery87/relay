@@ -257,7 +257,7 @@ test("submits normalized usage once when a scripted turn completes", async () =>
 test("does not complete a turn when the provider omits usage", async () => {
   const root = await mkdtemp(join(tmpdir(), "relay-agent-missing-usage-"));
   await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test && git commit --allow-empty -m base", platform: "linux", root });
-  let completed = false;
+  const completionStatuses: Array<string | undefined> = [];
   let recorded = false;
   const checkpoints: string[] = [];
   await expect(runQueuedTurn({
@@ -268,7 +268,7 @@ test("does not complete a turn when the provider omits usage", async () => {
       beginAssistantMessage: async () => "assistant-message",
       claimQueuedMessage: async () => ({ content: "hello", projectPath: root, threadId: "thread" }),
       claimSteeringMessages: async () => [],
-      completeAssistantMessage: async () => { completed = true; },
+      completeAssistantMessage: async ({ status }) => { completionStatuses.push(status); },
       isStopRequested: async () => false,
       recordCheckpoint: async ({ commit }) => { checkpoints.push(commit); },
       recordUsage: async () => { recorded = true; },
@@ -281,8 +281,33 @@ test("does not complete a turn when the provider omits usage", async () => {
     },
   })).rejects.toThrow("did not report usage");
   expect(recorded).toBe(false);
-  expect(completed).toBe(false);
+  // The turn is reported failed (not silently left "running") so the thread can claim its next queued message.
+  expect(completionStatuses).toEqual(["failed"]);
   expect(checkpoints).toHaveLength(1);
+});
+
+test("marks the turn failed so a later message on the same thread can still be claimed", async () => {
+  const completions: Array<{ messageId: string; status?: string; threadId: string }> = [];
+  await expect(runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "hello", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async (input) => { completions.push(input); },
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    governance,
+    policy,
+    provider: {
+      async *streamReply() { throw new Error("deepseek tool response failed: 401"); },
+    },
+  })).rejects.toThrow("deepseek tool response failed: 401");
+
+  expect(completions).toEqual([{ messageId: "assistant-message", status: "failed", threadId: "thread" }]);
 });
 
 test("injects a queued steer after an in-flight tool call completes", async () => {
