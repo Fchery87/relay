@@ -12,3 +12,6 @@ coverage/
 
 .convex/
 .worktrees/
+
+.harness/
+.pi-subagents/
