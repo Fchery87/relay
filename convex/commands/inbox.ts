@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutationGeneric, queryGeneric } from "convex/server";
-import type { Id } from "./_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import { requireActiveMachine } from "../auth_helpers";
 
 // ---------------------------------------------------------------------------

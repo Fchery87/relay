@@ -23,18 +23,43 @@ Relay v1 uses a raw, daemon-owned agent loop. The **harness kernel** (in progres
 ## Development
 
 1. Install dependencies: `bun install`.
-2. Create or connect a Convex development deployment: `bun run convex:dev`.
-3. In `apps/web/.env.local`, set `VITE_CONVEX_URL` to that deployment's URL and start the SPA: `bun run web:dev`.
-4. In another terminal, run the daemon with a development token and the projects it should register:
+2. Push Convex functions to your deployment. This syncs schema validators and must run **before** the daemon (the daemon calls functions whose schemas may have changed locally):
 
-```bash
-RELAY_CONVEX_URL=https://your-deployment.convex.cloud \
-RELAY_DEVICE_TOKEN=replace-with-a-development-token \
-RELAY_PROJECTS='[{"name":"relay","path":"/absolute/path/to/relay"}]' \
-bun run daemon:dev
-```
+   ```bash
+   bun run convex:dev
+   ```
 
-The sidebar marks a machine offline 30 seconds after its last heartbeat.
+   Keep it running for live reload, or Ctrl+C once `🤖 Convex is ready` appears.
+
+3. Start the web sidebar. If `apps/web/.env.local` does not already exist, create it and set `VITE_CONVEX_URL` to your deployment's URL:
+
+   ```bash
+   bun run web:dev
+   ```
+
+4. First-time pairing: generate a one-time code and enter it in the browser to link your machine:
+
+   ```bash
+   bun run daemon:connect
+   ```
+
+   The browser transitions automatically once the daemon registers (next step).
+
+5. In another terminal, start the daemon. It reads the credentials saved by `connect` and registers your machine with the deployment:
+
+   ```bash
+   bun run daemon:dev
+   ```
+
+The sidebar marks a machine offline 30 seconds after its last heartbeat. Skip step 4 on subsequent runs — only the daemon (`daemon:dev`) and web sidebar (`web:dev`) need to stay running.
+
+### Troubleshooting
+
+**`ArgumentValidationError` or `Could not find public function for …`** — the deployed Convex functions are out of date with local code. Run `bun run convex:dev` to push the latest function schemas, tables, and validators, then retry.
+
+**`bun run` shows a help page instead of executing** — Bun's `--cwd` flag can misparse on some versions. The root `package.json` uses `cd <dir> && bun run <script>` to avoid this; if you encounter it in custom scripts, use the `cd` form instead.
+
+**Browser stays on pairing screen after entering a valid code** — the daemon hasn't registered yet. `connect` only pairs; you must also start `bun run daemon:dev` in a separate terminal. Once the daemon registers, the browser transitions automatically.
 
 ## Production
 

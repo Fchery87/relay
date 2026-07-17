@@ -1,27 +1,18 @@
-import { makeMigration } from "@convex-dev/migrations";
-import { components } from "./_generated/api";
+import { internalMutation } from "./_generated/server";
 
 /**
  * Backfill existing thread/message/event/approval/checkpoint metadata
  * into initial kernel projection snapshots. Idempotent — rerun is safe.
  *
  * Usage:
- *   npx convex run migrations:backfillRunProjection '{ "dryRun": true }'
- *   npx convex run migrations:backfillRunProjection  (live run)
- *   npx convex run migrations:verifyRunProjection     (verify after)
+ *   npx convex run migrations:backfillRunProjection
+ *   npx convex run migrations:verifyRunProjection
  */
 
-export const backfillRunProjection = makeMigration("backfillRunProjection", {
-  fetch: (ctx) =>
-    ctx.db
-      .query("threads")
-      .order("asc")
-      .take(100), // bounded batches
-
-  migrate: async (ctx, threads) => {
+export const backfillRunProjection = internalMutation({
+  handler: async (ctx) => {
+    const threads = await ctx.db.query("threads").order("asc").take(100);
     for (const thread of threads) {
-      // Build an initial projection snapshot from existing v1 metadata.
-      // Each run maps 1:1 to a thread for now.
       const runId = thread._id;
       const messages = await ctx.db
         .query("messages")
@@ -47,7 +38,6 @@ export const backfillRunProjection = makeMigration("backfillRunProjection", {
         .order("asc")
         .take(100);
 
-      // Build snapshot
       const snapshot = {
         threadId: thread._id,
         threadTitle: thread.title,
@@ -59,7 +49,6 @@ export const backfillRunProjection = makeMigration("backfillRunProjection", {
         source: "v1-import",
       };
 
-      // Upsert into projectionSnapshots (idempotent)
       const existing = await ctx.db
         .query("projectionSnapshots")
         .withIndex("by_run", (q) => q.eq("runId", runId))
@@ -83,21 +72,15 @@ export const backfillRunProjection = makeMigration("backfillRunProjection", {
   },
 });
 
-export const verifyRunProjection = makeMigration("verifyRunProjection", {
-  fetch: (ctx) =>
-    ctx.db
-      .query("projectionSnapshots")
-      .order("asc")
-      .take(100),
-
-  migrate: async (ctx, snapshots) => {
-    const results: Array<{ runId: string; ok: boolean }> = [];
+export const verifyRunProjection = internalMutation({
+  handler: async (ctx) => {
+    const snapshots = await ctx.db.query("projectionSnapshots").order("asc").take(100);
     for (const snap of snapshots) {
       const thread = await ctx.db.get(snap.runId as never);
-      results.push({ runId: snap.runId, ok: thread !== null });
+      if (!thread) {
+        console.warn(`Orphaned projection snapshot: ${snap.runId}`);
+      }
     }
-    // Log results — a real implementation would report gaps.
-    console.log(`Verified ${results.length} projection snapshots`);
-    return results;
+    console.log(`Verified ${snapshots.length} projection snapshots`);
   },
 });

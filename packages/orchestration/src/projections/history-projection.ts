@@ -22,7 +22,9 @@ export function buildHistory(
     runId: runId as never,
     items: [],
     throughSequence: 0,
-    createdAt: Date.now(),
+    // Seed with 0 so that applyEvent derives createdAt deterministically from
+    // event.occurredAt (Math.max).  An empty stream stays at 0.
+    createdAt: 0,
   };
 
   for (const ev of events) {
@@ -185,7 +187,8 @@ function applyEvent(
   }
 
   const throughSequence = Math.max(snapshot.throughSequence, event.sequence);
-  return { ...snapshot, items, throughSequence, createdAt: Date.now() };
+  const createdAt = Math.max(snapshot.createdAt, event.occurredAt);
+  return { ...snapshot, items, throughSequence, createdAt };
 }
 
 // ---------------------------------------------------------------------------

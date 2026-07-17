@@ -72,7 +72,8 @@ describe("ClientRuntime", () => {
     }));
     const state = await rt.submit("run-1", "turn.send", { prompt: "hello" });
     expect(submittedKind).toBe("turn.send");
-    expect(state.cursor).toBe(1);
+    // submitCommand returns snap(1), then catchUp applies ev(2) → cursor 2
+    expect(state.cursor).toBe(2);
   });
 
   test("duplicate events are skipped", async () => {

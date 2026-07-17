@@ -1,12 +1,12 @@
 import { v } from "convex/values";
-import { mutationGeneric } from "convex/server";
-import type { Id } from "./_generated/dataModel";
+import { mutation } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
 
 // ---------------------------------------------------------------------------
 // Append projection events — accepts only next-sequence or exact duplicate.
 // ---------------------------------------------------------------------------
 
-export const appendEvents = mutationGeneric({
+export const appendEvents = mutation({
   args: {
     events: v.array(
       v.object({
@@ -77,7 +77,7 @@ export const appendEvents = mutationGeneric({
 // Upsert projection snapshot — advances only when all events through sequence exist.
 // ---------------------------------------------------------------------------
 
-export const upsertSnapshot = mutationGeneric({
+export const upsertSnapshot = mutation({
   args: {
     runId: v.string(),
     sequence: v.number(),
@@ -112,7 +112,7 @@ export const upsertSnapshot = mutationGeneric({
 // Advance projection cursor.
 // ---------------------------------------------------------------------------
 
-export const advanceCursor = mutationGeneric({
+export const advanceCursor = mutation({
   args: {
     direction: v.union(v.literal("inbound"), v.literal("outbound")),
     machineId: v.string(),
