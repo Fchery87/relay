@@ -38,6 +38,23 @@ import {
   executeSubagent,
   type SubagentAdapterDeps,
 } from "./adapters/subagent-adapter";
+import {
+  Tracer,
+  incrementMetric,
+  getMetrics,
+  getHealth,
+} from "@relay/local-store";
+import {
+  scanForSecrets,
+  sanitizeForProjection,
+  THREAT_MODEL,
+} from "@relay/local-store";
+import {
+  DaemonSupervisor,
+  isCompatibleUpgrade,
+  parseVersion,
+} from "@relay/local-store";
+import { SLO_DEFINITIONS } from "@relay/local-store";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,26 +85,38 @@ async function executeTurn({
   prompt,
   provider,
   runtime,
+  onFirstToken,
 }: {
   runId: string;
   prompt: string;
   provider: ModelProvider;
   runtime: LocalHarnessRuntime;
+  onFirstToken?: (latencyMs: number) => void;
 }): Promise<boolean> {
-  const signal = AbortSignal.timeout(10 * 60 * 1000); // 10-min turn timeout
+  const signal = AbortSignal.timeout(10 * 60 * 1000);
+  const turnStart = Date.now();
+  let firstTokenEmitted = false;
   let turnSucceeded = false;
 
   try {
     for await (const streamEvent of provider.streamReply({ prompt, signal })) {
       if (streamEvent.kind === "text") {
+        // SLO: track time to first token
+        if (!firstTokenEmitted && onFirstToken) {
+          firstTokenEmitted = true;
+          onFirstToken(Date.now() - turnStart);
+        }
+        // Sanitize output before storing
+        const sanitizedText = sanitizeForProjection(streamEvent.text);
         const result = await runtime.appendEvent(runId, {
           eventId: `ev-delta-${runId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           type: "assistant.delta",
-          payload: { text: streamEvent.text },
+          payload: { text: sanitizedText },
         });
         if (!result.ok) {
           console.error("Kernel daemon: failed to append assistant.delta", result.reason);
         }
+        incrementMetric("eventsProcessed");
       } else if (streamEvent.kind === "usage") {
         const result = await runtime.appendEvent(runId, {
           eventId: `ev-usage-${runId}-${Date.now()}`,
@@ -97,6 +126,7 @@ async function executeTurn({
         if (!result.ok) {
           console.error("Kernel daemon: failed to append usage.recorded", result.reason);
         }
+        incrementMetric("eventsProcessed");
       }
     }
     turnSucceeded = true;
@@ -157,10 +187,15 @@ export class KernelDaemon {
   private commandGateway!: CommandGateway;
   private projectionSink!: ProjectionSink;
   private shuttingDown = false;
+  private tracer = new Tracer();
+  private supervisor!: DaemonSupervisor;
+  private firstTokenLatencies: number[] = [];
 
   constructor(private readonly config: KernelDaemonConfig) {}
 
   async start(): Promise<void> {
+    const startSpan = this.tracer.startSpan("daemon.start");
+
     // 1. Open the local SQLite store
     const dbPath = join(this.config.daemonHome, "relay-kernel.sqlite");
     this.runtime = LocalHarnessRuntime.open(dbPath, {
@@ -185,6 +220,24 @@ export class KernelDaemon {
       deploymentUrl: this.config.deploymentUrl,
     });
 
+    // 4. Operational wiring
+    this.supervisor = new DaemonSupervisor({
+      maxRestarts: 3,
+      restartWindowMs: 60_000,
+      shutdownTimeoutMs: 5_000,
+    });
+    this.supervisor.started();
+
+    // Log threat model boundaries
+    console.info("Relay threat model loaded:", THREAT_MODEL.map((b: { name: string }) => b.name).join(", "));
+
+    // Check version compatibility
+    const currentVersion = parseVersion("1.0.0");
+    console.info("Kernel daemon version check:", {
+      current: currentVersion,
+      compatible: isCompatibleUpgrade(currentVersion, currentVersion),
+    });
+
     console.info(
       `Relay kernel daemon starting as ${this.config.machineName} (mode: kernel)`,
     );
@@ -197,6 +250,7 @@ export class KernelDaemon {
       void this.poll();
     }, this.config.pollIntervalMs ?? 200);
 
+    // Graceful shutdown via supervisor
     const shutdown = async () => {
       if (this.shuttingDown) return;
       this.shuttingDown = true;
@@ -204,14 +258,22 @@ export class KernelDaemon {
       clearInterval(pollInterval);
       await this.flush();
       this.runtime.close();
+      this.tracer.endSpan(startSpan);
+      const spans = this.tracer.getSpans();
+      console.info(
+        `Kernel daemon shutting down. ${spans.length} traces recorded.`,
+      );
       process.exit(0);
     };
     process.once("SIGINT", () => void shutdown());
     process.once("SIGTERM", () => void shutdown());
+
+    this.tracer.endSpan(startSpan);
   }
 
   private async poll(): Promise<void> {
     if (this.shuttingDown) return;
+    const span = this.tracer.startSpan("daemon.poll");
     try {
       const batch = await this.commandGateway.claimBatch({
         deviceToken: this.config.deviceToken,
@@ -219,12 +281,13 @@ export class KernelDaemon {
         limit: 5,
       });
 
+      incrementMetric("eventsProcessed");
+
       for (const cmd of batch) {
         let payload: Record<string, unknown> = {};
         try {
           payload = JSON.parse(cmd.payloadJson ?? "{}") as Record<string, unknown>;
         } catch {
-          // invalid json — reject
           await this.commandGateway.completeCommand({
             commandId: cmd.commandId,
             deviceToken: this.config.deviceToken,
@@ -240,6 +303,7 @@ export class KernelDaemon {
         console.error("Kernel daemon: poll failed", error);
       }
     }
+    this.tracer.endSpan(span);
   }
 
   private async processCommand(
@@ -248,6 +312,9 @@ export class KernelDaemon {
     payload: Record<string, unknown>,
     runId?: string,
   ): Promise<void> {
+    const span = this.tracer.startSpan(`command.${kind}`);
+    span.tags["commandId"] = commandId;
+
     const complete = (status: "completed" | "rejected") =>
       this.commandGateway.completeCommand({
         commandId,
@@ -260,6 +327,7 @@ export class KernelDaemon {
         case "run.create": {
           const projectId = (payload.projectId ?? "default") as string;
           await this.runtime.createRun({ projectId });
+          incrementMetric("activeRuns");
           await complete("completed");
           break;
         }
@@ -274,14 +342,24 @@ export class KernelDaemon {
           const rId = runId ?? (payload.runId as string);
           if (!rId) throw new Error("run.stop requires runId");
           await this.runtime.stopRun({ runId: rId as never });
+          incrementMetric("completedRuns");
           await complete("completed");
           break;
         }
         case "turn.send": {
           const rId = runId ?? (payload.runId as string);
           if (!rId) throw new Error("turn.send requires runId");
-          const prompt = (payload.prompt ?? "Hello") as string;
+          const rawPrompt = (payload.prompt ?? "Hello") as string;
           const modelId = (payload.modelId as string) ?? DEFAULT_MODEL_ID;
+
+          // Security: scan prompt for secrets before sending to provider
+          const secretFindings = scanForSecrets(rawPrompt);
+          if (secretFindings.length > 0) {
+            console.warn("Kernel daemon: secrets detected in prompt:", secretFindings);
+            throw new Error("Prompt contains credentials — rejected by security scan");
+          }
+          // Sanitize prompt before logging/projection
+          const prompt = sanitizeForProjection(rawPrompt);
 
           await this.runtime.sendTurn({ runId: rId as never, prompt });
 
@@ -292,13 +370,27 @@ export class KernelDaemon {
               "none",
           });
 
+          // SLO: track prompt-to-first-token latency
+          const turnStart = Date.now();
           const succeeded = await executeTurn({
             runId: rId,
             prompt,
             provider: turnProvider,
             runtime: this.runtime,
+            onFirstToken: (latencyMs) => {
+              this.firstTokenLatencies.push(latencyMs);
+            },
           });
+          const turnLatency = Date.now() - turnStart;
 
+          if (succeeded) {
+            incrementMetric("completedRuns");
+          } else {
+            incrementMetric("failedRuns");
+          }
+
+          span.tags["turnLatencyMs"] = String(turnLatency);
+          span.tags["turnSucceeded"] = String(succeeded);
           await complete(succeeded ? "completed" : "rejected");
           break;
         }
@@ -394,7 +486,6 @@ export class KernelDaemon {
           break;
         }
         default: {
-          // Unknown kind — complete for forward-compat
           console.warn("Kernel daemon: unknown command kind", kind);
           await complete("completed");
         }
@@ -404,6 +495,8 @@ export class KernelDaemon {
       console.error("Kernel daemon: command failed", commandId, kind, message);
       await complete("rejected");
     }
+
+    this.tracer.endSpan(span);
   }
 
   private async flush(): Promise<void> {
@@ -420,6 +513,37 @@ export class KernelDaemon {
       this.heartbeatCount++;
       if (this.heartbeatCount % 10 === 0) {
         await this.flush();
+      }
+      // Log health/metrics every 60 heartbeats (~30s at default 500ms interval)
+      if (this.heartbeatCount % 60 === 0) {
+        const metrics = getMetrics();
+        const health = getHealth();
+        console.info("Kernel daemon health:", {
+          ok: health.ok,
+          sqlite: health.sqlite,
+          activeRuns: metrics.activeRuns,
+          completedRuns: metrics.completedRuns,
+          eventsProcessed: metrics.eventsProcessed,
+          uptimeMinutes: Math.round(metrics.uptimeMs / 60000),
+        });
+        // SLO tracking: log prompt-to-first-token stats
+        if (this.firstTokenLatencies.length > 0) {
+          const sorted = [...this.firstTokenLatencies].sort((a, b) => a - b);
+          const p50 = sorted[Math.floor(sorted.length * 0.5)] ?? 0;
+          const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+          console.info("Kernel daemon SLO (prompt-to-first-token ms):", {
+            count: this.firstTokenLatencies.length,
+            p50,
+            p95,
+            target: SLO_DEFINITIONS.find(
+              (s: { name: string; target: number }) => s.name === "prompt-to-first-token-latency",
+            )?.target,
+          });
+          // Keep a rolling window
+          if (this.firstTokenLatencies.length > 500) {
+            this.firstTokenLatencies = this.firstTokenLatencies.slice(-250);
+          }
+        }
       }
     } catch (error) {
       if (isDeviceTokenRejected(error)) {

@@ -46,8 +46,8 @@ export const THREAT_MODEL: ReadonlyArray<ThreatBoundary> = [
 export function scanForSecrets(value: string): string[] {
   const findings: string[] = [];
   const patterns: Array<[RegExp, string]> = [
-    [/sk-[a-zA-Z0-9]{20,}/, "OpenAI API key"],
-    [/sk-ant-[a-zA-Z0-9]{20,}/, "Anthropic API key"],
+    [/sk-[a-zA-Z0-9-]{20,}/, "OpenAI API key"],
+    [/sk-ant-[a-zA-Z0-9-]{20,}/, "Anthropic API key"],
     [/ghp_[a-zA-Z0-9]{36}/, "GitHub personal access token"],
     [/-----BEGIN (RSA |EC )?PRIVATE KEY-----/, "Private key"],
     [/eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/, "JWT token"],
@@ -65,8 +65,8 @@ export function scanForSecrets(value: string): string[] {
 export function sanitizeForProjection(value: string): string {
   // Redact common secret patterns
   return value
-    .replace(/sk-[a-zA-Z0-9]{20,}/g, "[REDACTED:api-key]")
-    .replace(/sk-ant-[a-zA-Z0-9]{20,}/g, "[REDACTED:api-key]")
+    .replace(/sk-[a-zA-Z0-9-]{20,}/g, "[REDACTED:api-key]")
+    .replace(/sk-ant-[a-zA-Z0-9-]{20,}/g, "[REDACTED:api-key]")
     .replace(/ghp_[a-zA-Z0-9]{36}/g, "[REDACTED:github-token]")
     .replace(/-----BEGIN (RSA |EC )?PRIVATE KEY-----[^-]*-----END (RSA |EC )?PRIVATE KEY-----/gs, "[REDACTED:private-key]");
 }
