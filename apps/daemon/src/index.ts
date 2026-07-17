@@ -133,7 +133,10 @@ setInterval(() => {
     .finally(() => { nestedSubagentRunning = false; });
 }, 200);
 
+let turnRunning = false;
 setInterval(() => {
+  if (turnRunning) return;
+  turnRunning = true;
   void runQueuedTurn({
     deviceToken: config.registration.deviceToken,
     gateway: conversationGateway,
@@ -143,7 +146,9 @@ setInterval(() => {
     provider,
     platform: config.registration.platform,
     resolveProjectRoot: (input) => worktrees.resolve(input),
-  }).catch((error: unknown) => console.error("Relay turn failed", error));
+  })
+    .catch((error: unknown) => console.error("Relay turn failed", error))
+    .finally(() => { turnRunning = false; });
 }, 200);
 
 const checkpointComparisonGateway = createConvexCheckpointComparisonGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
