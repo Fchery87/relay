@@ -24,7 +24,7 @@ const snapshotDiffMutation = makeFunctionReference<"mutation", { content: string
 const claimGitActionMutation = makeFunctionReference<"mutation", { deviceToken: string }, { action: "stage" | "commit" | "push"; actionId: string; message?: string; projectPath: string; threadId: string } | null>("git_actions:claim");
 const completeGitActionMutation = makeFunctionReference<"mutation", { actionId: string; deviceToken: string; status: "complete" | "failed" }>("git_actions:complete");
 const createApprovalMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task"; deviceToken: string; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("approvals:create");
-const getApprovalQuery = makeFunctionReference<"query", { approvalId: string }, unknown>("approvals:get");
+const getApprovalQuery = makeFunctionReference<"query", { approvalId: string; deviceToken: string }, unknown>("approvals:getByDevice");
 const recordAuditMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task"; decision: "allow" | "deny" | "ask"; deviceToken: string; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("audit_log:record");
 const recordUsageMutation = makeFunctionReference<"mutation", { callId: string; deviceToken: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }, string>("usage:record");
 const claimSteeringMessagesMutation = makeFunctionReference<"mutation", { deviceToken: string; threadId: string }, unknown>("conversations:claimSteeringMessages");
@@ -180,7 +180,7 @@ export function createConvexGovernanceGateway({ deploymentUrl, deviceToken }: { 
     requestApproval: async (input: { capability: "read" | "edit" | "exec" | "task"; risk: "low" | "high" | "critical"; summary: string; threadId: string }) => {
       const approvalId = await client.mutation(createApprovalMutation, { ...input, deviceToken });
       for (;;) {
-        const approval = approvalResolutionSchema.nullable().parse(await client.query(getApprovalQuery, { approvalId }));
+        const approval = approvalResolutionSchema.nullable().parse(await client.query(getApprovalQuery, { approvalId, deviceToken }));
         if (approval?.decision === "allow" || approval?.decision === "deny") return approval.decision;
         await Bun.sleep(200);
       }
