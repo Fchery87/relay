@@ -7,7 +7,7 @@ export type { PermissionProfile };
 const PROFILES: ReadonlyArray<{ description: string; id: PermissionProfile; label: string; warning?: string }> = [
   { description: "Inspect only — no writes, no commands", id: "read-only", label: "Read-only" },
   { description: "Edit inside the worktree · network denied", id: "workspace-write", label: "Workspace write" },
-  { description: "Unsandboxed", id: "full-access", label: "Full access", warning: "⚠ Network enabled" },
+  { description: "Full access — auto-approves all tools, including critical commands", id: "full-access", label: "Full access", warning: "⚠ Network enabled" },
 ];
 
 export function AccessPicker({

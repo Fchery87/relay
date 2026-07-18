@@ -15,6 +15,7 @@ test("open popover offers all three profiles with the network warning on full ac
   expect(markup).toContain("Workspace write");
   expect(markup).toContain("Full access");
   expect(markup).toContain("Network enabled");
+  expect(markup).toContain("auto-approves all tools");
   expect(markup).toContain('aria-selected="true"');
 });
 
