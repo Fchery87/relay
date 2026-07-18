@@ -1,10 +1,13 @@
 import type { McpModelTool, ModelProvider, ModelProviderRouter } from "./model-provider";
+import { resolveTurnProvider } from "./model-provider";
+import { resolveProviderConfig } from "./model-router";
 import { DEFAULT_MODEL_ID, narrowCapabilities, type Capability, type MachinePlatform, type SubagentResult, type TokenUsage } from "@relay/shared";
 import { executeGovernedToolCall, summarizeToolCall, type GovernanceGateway, type GovernedToolResult } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
 import { createCheckpoint } from "./checkpoints";
 import type { Policy } from "./policy";
 import { classifyToolCall, effectivePolicy } from "./policy";
+import { runAgenticTurn, type ChatMessage, type TurnCallbacks, type TurnModelProvider } from "./turn-loop";
 
 export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
@@ -78,6 +81,10 @@ export async function runQueuedTurn({
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   const turnPolicy = effectivePolicy({ base: policy, profile: queued.permissionProfile ?? "workspace-write", yolo });
   try {
+    // Use agentic loop if the resolved provider supports it
+    if (isTurnModelProvider(turnProvider)) {
+      return await runAgenticClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt, queued, reviewComments, root, turnProvider });
+    }
     return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt, queued, reviewComments, root, turnProvider });
   } catch (error) {
     // Mark the turn failed so claimQueuedMessage stops skipping this thread (it treats "running" as busy).
@@ -269,4 +276,148 @@ async function refusePlanningMutation({ call, governance, threadId }: { call: Pa
   const classification = classifyToolCall(call);
   await governance.recordDecision({ ...classification, decision: "deny", summary: summarizeToolCall(call), threadId });
   return { kind: "refused", output: JSON.stringify({ capability: classification.capability, kind: "tool_refusal", reason: "plan_requires_approval", risk: classification.risk }) };
+}
+
+/** Agentic turn loop — uses the new streaming provider interface. */
+async function runAgenticClaimedTurn({
+  deviceToken,
+  gateway,
+  governance,
+  mcp,
+  mcpTools,
+  messageId,
+  policy,
+  platform,
+  prompt,
+  queued,
+  reviewComments,
+  root,
+  turnProvider,
+}: {
+  deviceToken: string;
+  gateway: ConversationGateway;
+  governance: GovernanceGateway;
+  mcp?: McpToolGateway;
+  mcpTools: McpModelTool[];
+  messageId: string;
+  policy: Policy;
+  platform: MachinePlatform;
+  prompt: string;
+  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
+  reviewComments: ReviewComment[];
+  root: string;
+  turnProvider: TurnModelProvider;
+}): Promise<boolean> {
+  let mutated = false;
+  let checkpointed = false;
+  const checkpointTurn = async () => {
+    if (!mutated || checkpointed || !gateway.recordCheckpoint) return;
+    const checkpoint = await createCheckpoint({ root, threadId: queued.threadId, turnId: messageId });
+    await gateway.recordCheckpoint({ ...checkpoint, deviceToken, messageId, threadId: queued.threadId });
+    checkpointed = true;
+  };
+
+  const abortController = new AbortController();
+  let stopRequested = false;
+  const stopMonitor = (async () => {
+    while (!stopRequested) {
+      if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
+        stopRequested = true;
+        abortController.abort();
+        return;
+      }
+      await Bun.sleep(50);
+    }
+  })();
+
+  const callbacks: TurnCallbacks = {
+    executeToolCall: async (call) => {
+      const toolResult = queued.planPhase === "planning" && call.kind !== "read" && call.kind !== "web_search" && call.kind !== "web_fetch"
+        ? await refusePlanningMutation({ call, governance, threadId: queued.threadId })
+        : await executeGovernedToolCall({
+            call,
+            governance,
+            onTask: gateway.enqueueSubagent ? async (taskCall) => {
+              let capabilities: Capability[];
+              try { capabilities = narrowCapabilities({ child: taskCall.capabilities, depth: 1, parent: policyCapabilities(policy) }); }
+              catch { return JSON.stringify({ capability: "task", kind: "tool_refusal", reason: "capability_escalation", risk: "critical" }); }
+              const runId = await gateway.enqueueSubagent!({ capabilities, depth: 1, deviceToken, roleName: taskCall.role, task: taskCall.task, threadId: queued.threadId });
+              return JSON.stringify(gateway.waitForSubagent ? await gateway.waitForSubagent({ deviceToken, runId, threadId: queued.threadId }) : { kind: "subagent_queued", runId });
+            } : undefined,
+            onCompleted: async (event) => { await gateway.recordToolCompleted?.({ ...event, threadId: queued.threadId }); },
+            onMcp: mcp ? async (mcpCall) => {
+              try { return await mcp.callTool({ arguments: mcpCall.arguments, name: mcpCall.name, onInputRequired: gateway.requestMcpInput ? (input) => gateway.requestMcpInput!({ ...input, serverId: mcpCall.serverId, threadId: queued.threadId, toolName: mcpCall.name }) : undefined, onTaskStatus: async (task) => { await gateway.recordMcpTaskStatus?.({ serverId: mcpCall.serverId, status: task.status, taskId: task.id, threadId: queued.threadId }); }, serverId: mcpCall.serverId }); }
+              catch (error) { if (error instanceof Error && error.message === "MCP elicitation was cancelled") return { kind: "mcp_elicitation_cancelled" }; throw error; }
+            } : undefined,
+            platform,
+            policy,
+            root,
+            threadId: queued.threadId,
+          });
+
+      if (toolResult.kind === "executed" && (call.kind === "edit" || call.kind === "bash")) mutated = true;
+      return { content: toolResult.output, isError: toolResult.kind === "refused", toolUseId: call.kind };
+    },
+    onText: async (text) => {
+      // Forward text deltas to Convex (throttled)
+      await gateway.appendAssistantText({ content: text, messageId });
+    },
+    claimSteering: async () => {
+      const steering = await gateway.claimSteeringMessages({ deviceToken, threadId: queued.threadId });
+      return steering.map((s) => s.content);
+    },
+  };
+
+  try {
+    const system = "You are Relay, an agent running on the user's machine. You have access to tools for reading files, editing files, running commands, searching the web, and delegating tasks to subagents. Always read a file before editing it. Be concise in your final replies.";
+    const messages: ChatMessage[] = [{ content: prompt, role: "user" }];
+
+    const result = await runAgenticTurn({
+      messages,
+      provider: turnProvider,
+      signal: abortController.signal,
+      system,
+      tools: mcpTools,
+      callbacks,
+    });
+
+    // Record usage
+    const modelId = turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID;
+    const role = queued.planPhase === "planning" ? "planner" : queued.planPhase === "building" ? "builder" : "primary";
+    await gateway.recordUsage({ callId: crypto.randomUUID(), messageId, modelId, role, threadId: queued.threadId, usage: result.totalUsage });
+
+    if (mutated) await gateway.snapshotDiff?.({ content: await computeDiff({ root, startCommit: "HEAD" }), threadId: queued.threadId });
+    await checkpointTurn();
+
+    if (stopRequested) {
+      await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
+      return true;
+    }
+
+    if (queued.planPhase === "planning") {
+      if (!gateway.completePlanning) throw new Error("Planning completion is not configured");
+      const content = result.messages.filter((m) => m.role === "assistant").flatMap((m) => m.role === "assistant" ? m.blocks.filter((b) => b.kind === "text").map((b) => b.text) : []).join("\n");
+      await gateway.completePlanning({ content, messageId, threadId: queued.threadId });
+    } else {
+      await gateway.completeAssistantMessage({ messageId, resolvedCommentIds: reviewComments.map((comment) => comment.commentId), threadId: queued.threadId });
+    }
+
+    return true;
+  } catch (error) {
+    if (stopRequested && isAbortError(error)) {
+      await gateway.snapshotDiff?.({ content: await computeDiff({ root, startCommit: "HEAD" }), threadId: queued.threadId }).catch(() => undefined);
+      await checkpointTurn();
+      await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
+      return true;
+    }
+    await gateway.completeAssistantMessage({ messageId, status: "failed", threadId: queued.threadId }).catch(() => undefined);
+    throw error;
+  } finally {
+    stopRequested = true;
+    abortController.abort();
+  }
+}
+
+function isTurnModelProvider(provider: ModelProvider | TurnModelProvider): provider is TurnModelProvider {
+  return "streamTurn" in provider;
 }

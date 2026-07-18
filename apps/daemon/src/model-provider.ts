@@ -1,8 +1,12 @@
 import { tokenUsageSchema, type CatalogModel, type ThinkingLevel, type TokenUsage } from "@relay/shared";
 import { z } from "zod";
 
-import { buildProviderRequest, buildProviderToolRequest, mcpModelName } from "./model-router";
+import { buildProviderRequest, buildProviderToolRequest, mcpModelName, type ProviderConfig } from "./model-router";
 import type { ToolCall } from "./tool-executor";
+import type { TurnModelProvider } from "./turn-loop";
+import { AnthropicTurnProvider } from "./providers/anthropic-turn-provider";
+import { OpenAIResponsesTurnProvider } from "./providers/openai-responses-turn-provider";
+import { OpenAICompletionsTurnProvider } from "./providers/openai-completions-turn-provider";
 
 export interface ModelProvider {
   readonly modelId?: string;
@@ -264,4 +268,28 @@ function parseArguments(value: unknown): Record<string, unknown> {
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Tool arguments must be an object");
   return value as Record<string, unknown>;
+}
+
+export function resolveTurnProvider(config: ProviderConfig): TurnModelProvider {
+  const providerModelId = config.model.id.slice(config.model.provider.length + 1);
+  if (config.model.apiKind === "anthropic-messages") {
+    return new AnthropicTurnProvider({
+      apiKey: config.apiKey,
+      model: providerModelId,
+      thinkingBudget: config.thinkingValue === null ? undefined : Number(config.thinkingValue),
+    });
+  }
+  if (config.model.apiKind === "openai-responses") {
+    return new OpenAIResponsesTurnProvider({
+      apiKey: config.apiKey,
+      model: providerModelId,
+      reasoningEffort: config.thinkingValue ?? undefined,
+    });
+  }
+  return new OpenAICompletionsTurnProvider({
+    apiKey: config.apiKey,
+    model: providerModelId,
+    reasoningEffort: config.thinkingValue ?? undefined,
+    thinkingDisabled: config.thinkingValue === null,
+  });
 }
