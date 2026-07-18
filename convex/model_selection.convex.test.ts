@@ -21,9 +21,14 @@ test("persists a thread model selection and returns it with the claimed turn", a
   });
 });
 
-test("rejects unsupported thinking levels for the selected model", async () => {
+test("accepts low thinking level for v4-flash (now supports all four levels)", async () => {
   const t = convexTest(schema, modules);
-  const { owner, projectId } = await createAuthenticatedProject(t);
+  const { deviceToken, owner, projectId } = await createAuthenticatedProject(t);
   const threadId = await owner.mutation(api.conversations.createThread, { projectId, title: "models" });
-  await expect(owner.mutation(api.conversations.updateModelSelection, { modelId: "deepseek/deepseek-v4-flash", thinkingLevel: "low", threadId })).rejects.toThrow("Thinking level is not supported");
+  await owner.mutation(api.conversations.updateModelSelection, { modelId: "deepseek/deepseek-v4-flash", thinkingLevel: "low", threadId });
+  await owner.mutation(api.conversations.sendUserMessage, { content: "hello", threadId });
+  expect(await t.mutation(api.conversations.claimQueuedMessage, { deviceToken })).toMatchObject({
+    modelId: "deepseek/deepseek-v4-flash",
+    thinkingLevel: "low",
+  });
 });
