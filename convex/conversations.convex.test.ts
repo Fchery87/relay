@@ -56,3 +56,20 @@ test("permission profile is editable while idle and locked mid-turn", async () =
     owner.mutation(api.conversations.updatePermissionProfile, { permissionProfile: "read-only", threadId }),
   ).rejects.toThrow("while a turn is executing");
 });
+
+test("claimQueuedMessage returns the thread permission profile", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, projectId } = await createAuthenticatedProject(t);
+  const threadId = await t.run((ctx) => ctx.db.insert("threads", { permissionProfile: "full-access", projectId, status: "idle", title: "yolo" }));
+  await t.run((ctx) => ctx.db.insert("messages", { content: "go", role: "user", status: "queued", threadId }));
+  const claimed = await t.mutation(api.conversations.claimQueuedMessage, { deviceToken });
+  expect(claimed).toMatchObject({ permissionProfile: "full-access", threadId });
+});
+
+test("claimQueuedMessage defaults permission profile to workspace-write", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, projectId } = await createAuthenticatedProject(t);
+  const threadId = await t.run((ctx) => ctx.db.insert("threads", { projectId, status: "idle", title: "default" }));
+  await t.run((ctx) => ctx.db.insert("messages", { content: "go", role: "user", status: "queued", threadId }));
+  expect(await t.mutation(api.conversations.claimQueuedMessage, { deviceToken })).toMatchObject({ permissionProfile: "workspace-write" });
+});

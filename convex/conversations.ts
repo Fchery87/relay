@@ -189,6 +189,7 @@ export const claimQueuedMessage = mutationGeneric({
       return {
         content: message.content,
         modelId: thread.mode === "plan" ? (thread.planPhase === "planning" ? thread.planModelId : thread.buildModelId) ?? DEFAULT_MODEL_ID : thread.modelId ?? DEFAULT_MODEL_ID,
+        permissionProfile: thread.permissionProfile ?? "workspace-write",
         planPhase: thread.mode === "plan" ? thread.planPhase : undefined,
         projectPath: project.path,
         reviewComments: reviewComments.map((comment) => ({
