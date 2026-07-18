@@ -10,9 +10,9 @@ test("loads daemon registration from environment", () => {
       env: {
         RELAY_CONVEX_URL: "https://relay.convex.cloud",
         RELAY_DEVICE_TOKEN: "development-device-token",
-        RELAY_PROJECTS: '[{"name":"relay","path":"/workspace/relay"}]',
       },
       hostname: () => "dev-machine",
+      projects: [{ name: "relay", path: "/workspace/relay" }],
     }),
   ).toEqual({
     deploymentUrl: "https://relay.convex.cloud",
@@ -32,13 +32,26 @@ test("prefers the paired device token over the development environment fallback"
     env: {
       RELAY_CONVEX_URL: "https://relay.convex.cloud",
       RELAY_DEVICE_TOKEN: "development-device-token",
-      RELAY_PROJECTS: '[{"name":"relay","path":"/workspace/relay"}]',
     },
     hostname: () => "dev-machine",
+    projects: [{ name: "relay", path: "/workspace/relay" }],
     storedDeviceToken: "paired-device-token",
     storedDeploymentUrl: "https://paired.convex.cloud",
   });
 
   expect(config.registration.deviceToken).toBe("paired-device-token");
   expect(config.deploymentUrl).toBe("https://paired.convex.cloud");
+});
+
+test("accepts zero projects", () => {
+  const config = loadDaemonConfig({
+    env: {
+      RELAY_CONVEX_URL: "https://relay.convex.cloud",
+      RELAY_DEVICE_TOKEN: "development-device-token",
+    },
+    hostname: () => "dev-machine",
+    projects: [],
+  });
+
+  expect(config.registration.projects).toEqual([]);
 });

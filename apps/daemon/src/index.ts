@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { loadDaemonConfig } from "./config";
 import { resolveDaemonHome } from "./daemon-home";
 import { loadDeviceCredentials } from "./device-credentials";
+import { listProjects } from "./project-store";
 import { isDeviceTokenRejected } from "./device-auth";
 import { KernelDaemon } from "./kernel-daemon";
 import { resolveRuntimeMode, type RuntimeMode } from "./runtime-mode";
@@ -25,7 +26,8 @@ export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Prom
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
 const daemonHome = resolveDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform });
 const storedCredentials = await loadDeviceCredentials({ daemonHome });
-const config = loadDaemonConfig({ env: Bun.env, hostname, storedDeploymentUrl: storedCredentials?.deploymentUrl, storedDeviceToken: storedCredentials?.deviceToken });
+const projects = await listProjects({ daemonHome, env: Bun.env });
+const config = loadDaemonConfig({ env: Bun.env, hostname, projects, storedDeploymentUrl: storedCredentials?.deploymentUrl, storedDeviceToken: storedCredentials?.deviceToken });
 const reporter = new MachineReporter({
   gateway: createConvexMachineGateway({ deploymentUrl: config.deploymentUrl }),
   registration: config.registration,

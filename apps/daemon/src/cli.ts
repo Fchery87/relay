@@ -1,16 +1,25 @@
 import { runConnect } from "./connect";
 import { runDaemon } from "./index";
+import { addProject, listProjects, removeProject } from "./project-store";
+import { tmpdir, homedir } from "node:os";
+import { resolveDaemonHome } from "./daemon-home";
+import { basename, resolve } from "node:path";
+import { stat } from "node:fs/promises";
 
 export type RelayCommand =
   | { command: "connect"; deploymentUrl?: string }
   | { command: "start"; yolo: boolean }
+  | { command: "project"; subcommand: "add" | "remove" | "list"; path?: string; name?: string }
   | { command: "help" };
 
 const usage = `Relay daemon
 
 Usage:
   relay connect --url <convex-url>
-  relay start [--yolo | --dangerously-skip-permissions]`;
+  relay start [--yolo | --dangerously-skip-permissions]
+  relay project add [path] [--name <name>]
+  relay project remove <path>
+  relay project list`;
 
 export function parseCli(args: readonly string[]): RelayCommand {
   if (args.length === 0 || args[0] === "start") {
@@ -23,6 +32,29 @@ export function parseCli(args: readonly string[]): RelayCommand {
     return { command: "start", yolo };
   }
   if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") return { command: "help" };
+  if (args[0] === "project") {
+    const subcommand = args[1];
+    if (subcommand === "add") {
+      let name: string | undefined;
+      let path: string | undefined;
+      const remaining = args.slice(2);
+      for (let i = 0; i < remaining.length; i++) {
+        if (remaining[i] === "--name" && i + 1 < remaining.length) {
+          name = remaining[i + 1]!;
+          i++;
+        } else if (!path) {
+          path = remaining[i];
+        }
+      }
+      return { command: "project", subcommand: "add", path, name };
+    }
+    if (subcommand === "remove") {
+      if (args.length < 3) throw new Error("relay project remove requires a path");
+      return { command: "project", subcommand: "remove", path: args[2] };
+    }
+    if (subcommand === "list") return { command: "project", subcommand: "list" };
+    throw new Error(`Unknown project subcommand: ${subcommand}`);
+  }
   if (args[0] !== "connect") throw new Error(`Unknown command: ${args[0]}`);
   if (args.length === 1) return { command: "connect" };
   if (args.length === 3 && args[1] === "--url") {
@@ -42,6 +74,28 @@ export async function runCli(args: readonly string[], dependencies: { runConnect
   if (command.command === "connect") {
     await (dependencies.runConnect ?? runConnect)({ deploymentUrl: command.deploymentUrl });
     return;
+  }
+  if (command.command === "project") {
+    const daemonHome = resolveDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform });
+    if (command.subcommand === "list") {
+      const projects = await listProjects({ daemonHome, env: Bun.env });
+      for (const project of projects) console.info(`${project.name}\t${project.path}`);
+      return;
+    }
+    if (command.subcommand === "add") {
+      const resolvedPath = resolve(command.path ?? process.cwd());
+      const name = command.name ?? basename(resolvedPath);
+      const dirStat = await stat(resolvedPath);
+      if (!dirStat.isDirectory()) throw new Error(`${resolvedPath} is not a directory`);
+      await addProject({ daemonHome, env: Bun.env, name, path: resolvedPath });
+      console.info(`Added project: ${name} (${resolvedPath})`);
+      return;
+    }
+    if (command.subcommand === "remove") {
+      await removeProject({ daemonHome, env: Bun.env, path: command.path! });
+      console.info(`Removed project: ${command.path}`);
+      return;
+    }
   }
   await (dependencies.runDaemon ?? runDaemon)({ yolo: command.yolo });
 }
