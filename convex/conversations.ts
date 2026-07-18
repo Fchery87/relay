@@ -8,11 +8,17 @@ const removeUsageForThread = makeFunctionReference<"mutation", { threadId: strin
 const MAX_PLAN_SECTION_BYTES = 400_000;
 
 export const createThread = mutationGeneric({
-  args: { mode: v.optional(v.union(v.literal("chat"), v.literal("plan"))), projectId: v.id("projects"), title: v.string() },
+  args: {
+    mode: v.optional(v.union(v.literal("chat"), v.literal("plan"))),
+    permissionProfile: v.optional(v.union(v.literal("read-only"), v.literal("workspace-write"), v.literal("full-access"))),
+    projectId: v.id("projects"),
+    title: v.string(),
+  },
   handler: async (ctx, args) => {
     await requireOwnedProject(ctx, await requireUser(ctx), args.projectId);
     return ctx.db.insert("threads", {
     ...args,
+    permissionProfile: args.permissionProfile ?? "workspace-write",
     buildModelId: args.mode === "plan" ? DEFAULT_MODEL_ID : undefined,
     modelId: DEFAULT_MODEL_ID,
     planModelId: args.mode === "plan" ? DEFAULT_MODEL_ID : undefined,
@@ -33,6 +39,20 @@ export const updateModelSelection = mutationGeneric({
     if (!model) throw new Error("Model is not in the catalog");
     if (!listThinkingLevels(model).includes(args.thinkingLevel)) throw new Error("Thinking level is not supported by this model");
     await ctx.db.patch(args.threadId, { modelId: args.modelId, thinkingLevel: args.thinkingLevel });
+  },
+});
+
+export const updatePermissionProfile = mutationGeneric({
+  args: {
+    permissionProfile: v.union(v.literal("read-only"), v.literal("workspace-write"), v.literal("full-access")),
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    const thread = await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
+    if (thread.status === "running" || thread.status === "awaiting-approval" || thread.status === "restoring") {
+      throw new Error("The permission profile cannot change while a turn is executing");
+    }
+    await ctx.db.patch(args.threadId, { permissionProfile: args.permissionProfile });
   },
 });
 

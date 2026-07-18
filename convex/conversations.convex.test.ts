@@ -27,3 +27,32 @@ test("a queued user message becomes persisted assistant history", async () => {
     { content: "hello from scripted provider", role: "assistant", status: "complete" },
   ]);
 });
+
+test("creates threads with a permission profile, defaulting to workspace-write", async () => {
+  const t = convexTest(schema, modules);
+  const { owner, projectId } = await createAuthenticatedProject(t);
+
+  const defaultedId = await owner.mutation(api.conversations.createThread, { projectId, title: "defaulted" });
+  const explicitId = await owner.mutation(api.conversations.createThread, { permissionProfile: "read-only", projectId, title: "explicit" });
+
+  const threads = await owner.query(api.conversations.listProjectThreads, { projectId });
+  expect(threads.find((thread) => thread._id === defaultedId)?.permissionProfile).toBe("workspace-write");
+  expect(threads.find((thread) => thread._id === explicitId)?.permissionProfile).toBe("read-only");
+});
+
+test("permission profile is editable while idle and locked mid-turn", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, owner, projectId } = await createAuthenticatedProject(t);
+
+  const threadId = await owner.mutation(api.conversations.createThread, { projectId, title: "profile" });
+  await owner.mutation(api.conversations.updatePermissionProfile, { permissionProfile: "full-access", threadId });
+  let threads = await owner.query(api.conversations.listProjectThreads, { projectId });
+  expect(threads.find((thread) => thread._id === threadId)?.permissionProfile).toBe("full-access");
+
+  await owner.mutation(api.conversations.sendUserMessage, { content: "go", threadId });
+  await t.mutation(api.conversations.claimQueuedMessage, { deviceToken });
+  await t.mutation(api.conversations.beginAssistantMessage, { deviceToken, threadId });
+  await expect(
+    owner.mutation(api.conversations.updatePermissionProfile, { permissionProfile: "read-only", threadId }),
+  ).rejects.toThrow("while a turn is executing");
+});

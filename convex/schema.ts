@@ -55,6 +55,7 @@ export default defineSchema({
     budgetUsd: v.optional(v.number()),
     modelId: v.optional(v.string()),
     mode: v.optional(v.union(v.literal("chat"), v.literal("plan"))),
+    permissionProfile: v.optional(v.union(v.literal("read-only"), v.literal("workspace-write"), v.literal("full-access"))),
     planModelId: v.optional(v.string()),
     buildModelId: v.optional(v.string()),
     planPhase: v.optional(v.union(v.literal("planning"), v.literal("review"), v.literal("building"), v.literal("complete"))),

@@ -9,6 +9,7 @@
  */
 
 import type * as approvals from "../approvals.js";
+import type * as attention from "../attention.js";
 import type * as audit_log from "../audit_log.js";
 import type * as auth from "../auth.js";
 import type * as auth_helpers from "../auth_helpers.js";
@@ -33,6 +34,7 @@ import type * as projections_publish from "../projections/publish.js";
 import type * as subagents from "../subagents.js";
 import type * as test_helpers from "../test_helpers.js";
 import type * as usage from "../usage.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -42,6 +44,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   approvals: typeof approvals;
+  attention: typeof attention;
   audit_log: typeof audit_log;
   auth: typeof auth;
   auth_helpers: typeof auth_helpers;
@@ -66,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   subagents: typeof subagents;
   test_helpers: typeof test_helpers;
   usage: typeof usage;
+  users: typeof users;
 }>;
 
 /**
