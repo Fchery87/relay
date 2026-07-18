@@ -9,7 +9,7 @@ export interface PromptBuiltinCommand {
 
 /** A built-in command handled by the daemon/web without a normal model turn. */
 export interface ActionBuiltinCommand {
-  action: "compact" | "context" | "rewind" | "plan" | "help";
+  action: "compact" | "context" | "rewind" | "plan" | "help" | "skills";
   argumentHint?: string;
   description: string;
   kind: "action";
@@ -122,6 +122,12 @@ $ARGUMENTS`,
     description: "List all available commands with descriptions",
     kind: "action",
     name: "help",
+  },
+  {
+    action: "skills",
+    description: "List available skills and their descriptions",
+    kind: "action",
+    name: "skills",
   },
 ];
 

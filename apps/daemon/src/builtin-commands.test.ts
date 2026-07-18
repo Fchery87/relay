@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { BUILTIN_COMMANDS, getBuiltinCommand } from "./builtin-commands";
 
 describe("BUILTIN_COMMANDS", () => {
-  test("contains exactly ten built-in commands", () => {
-    expect(BUILTIN_COMMANDS).toHaveLength(10);
+  test("contains exactly eleven built-in commands", () => {
+    expect(BUILTIN_COMMANDS).toHaveLength(11);
   });
 
   test("every prompt built-in has non-empty template and description", () => {

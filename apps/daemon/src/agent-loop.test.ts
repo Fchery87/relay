@@ -172,6 +172,103 @@ test("loaded skills are advertised in the system prompt and their body is resolv
   expect(prompts[1]).toContain("1. Run tests\n2. Tag release");
 });
 
+test("/skills lists installed skills without running a model turn", async () => {
+  const replies: string[] = [];
+  let completed = false;
+  const handled = await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    policy,
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async ({ content }) => { replies.push(content); },
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "/skills", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => { completed = true; },
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    provider: new ScriptedModelProvider({ chunks: ["should not run"] }),
+    resolveSkills: async () => [{ body: "1. Run tests\n2. Tag release", description: "Steps to deploy Relay", directory: "/skills/deploy-checklist", name: "deploy-checklist", scope: "user" }],
+  });
+
+  expect(handled).toBe(true);
+  expect(completed).toBe(true);
+  expect(replies).toEqual(["Available skills:\n\n- deploy-checklist (user): Steps to deploy Relay"]);
+});
+
+test("/skills reports when no skills are installed", async () => {
+  const replies: string[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    policy,
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async ({ content }) => { replies.push(content); },
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "/skills", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    provider: new ScriptedModelProvider({ chunks: [] }),
+    resolveSkills: async () => [],
+  });
+
+  expect(replies).toEqual(["Available skills:\n\nNo skills are installed. Add a SKILL.md under .relay/skills/<name>/ (project) or the Relay skills directory (user) to define one."]);
+});
+
+test("/help includes a skills section when skills are installed", async () => {
+  const replies: string[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    policy,
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async ({ content }) => { replies.push(content); },
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "/help", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    provider: new ScriptedModelProvider({ chunks: [] }),
+    resolveSkills: async () => [{ body: "body", description: "Steps to deploy Relay", directory: "/skills/deploy-checklist", name: "deploy-checklist", scope: "user" }],
+  });
+
+  expect(replies[0]).toContain("Available commands:");
+  expect(replies[0]).toContain("Skills:");
+  expect(replies[0]).toContain("- deploy-checklist (user): Steps to deploy Relay");
+});
+
+test("/help omits the skills section when no skills are installed", async () => {
+  const replies: string[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    policy,
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async ({ content }) => { replies.push(content); },
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "/help", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    provider: new ScriptedModelProvider({ chunks: [] }),
+    resolveSkills: async () => [],
+  });
+
+  expect(replies[0]).not.toContain("Skills:");
+});
+
 test("records MCP task progress as thread events", async () => {
   const statuses: string[] = [];
   await runQueuedTurn({ deviceToken: "device", governance, policy: { rules: [{ capability: "exec", decision: "allow", risk: "high" }] }, gateway: {

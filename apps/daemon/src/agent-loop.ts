@@ -55,16 +55,28 @@ function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-async function dispatchBuiltinAction({ action, args, gateway, messageId, queued }: {
-  action: "compact" | "context" | "rewind" | "plan" | "help";
+function formatSkillsList(skills: Skill[]): string {
+  if (skills.length === 0) return "No skills are installed. Add a SKILL.md under .relay/skills/<name>/ (project) or the Relay skills directory (user) to define one.";
+  return skills.map((s) => `- ${s.name} (${s.scope}): ${s.description}`).join("\n");
+}
+
+async function dispatchBuiltinAction({ action, args, gateway, messageId, queued, skills }: {
+  action: "compact" | "context" | "rewind" | "plan" | "help" | "skills";
   args: string;
   gateway: ConversationGateway;
   messageId: string;
   queued: { threadId: string };
+  skills: Skill[];
 }): Promise<void> {
   if (action === "help") {
     const catalog = BUILTIN_COMMANDS.map((c) => `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""} — ${c.description}`).join("\n");
-    await gateway.appendAssistantText({ content: `Available commands:\n\n${catalog}`, messageId });
+    const skillsSection = skills.length === 0 ? "" : `\n\nSkills:\n\n${formatSkillsList(skills)}`;
+    await gateway.appendAssistantText({ content: `Available commands:\n\n${catalog}${skillsSection}`, messageId });
+    await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
+    return;
+  }
+  if (action === "skills") {
+    await gateway.appendAssistantText({ content: `Available skills:\n\n${formatSkillsList(skills)}`, messageId });
     await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
     return;
   }
@@ -148,6 +160,7 @@ export async function runQueuedTurn({
 
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   const turnPolicy = effectivePolicy({ base: policy, profile: queued.permissionProfile ?? "workspace-write", yolo });
+  const loadedSkills = resolveSkills ? await resolveSkills({ projectPath: queued.projectPath }) : [];
 
   // Slash command expansion and action dispatch
   let expandedPrompt = prompt;
@@ -156,7 +169,7 @@ export async function runQueuedTurn({
     const builtin = getBuiltinCommand(slashInvocation.name);
     if (builtin) {
       if (builtin.kind === "action") {
-        await dispatchBuiltinAction({ action: builtin.action, args: slashInvocation.args, gateway, messageId, queued });
+        await dispatchBuiltinAction({ action: builtin.action, args: slashInvocation.args, gateway, messageId, queued, skills: loadedSkills });
         return true;
       }
       // Prompt built-in: expand the template
@@ -168,7 +181,6 @@ export async function runQueuedTurn({
     }
   }
 
-  const loadedSkills = resolveSkills ? await resolveSkills({ projectPath: queued.projectPath }) : [];
   const systemPrompt = await buildSystemPrompt({ platform, root, skills: loadedSkills });
   const skills = new Map(loadedSkills.map((skill) => [skill.name, { body: skill.body, directory: skill.directory }]));
 
