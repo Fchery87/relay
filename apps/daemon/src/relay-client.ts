@@ -42,6 +42,8 @@ const completeSubagentMutation = makeFunctionReference<"mutation", { claimToken:
 const renewSubagentLeaseMutation = makeFunctionReference<"mutation", { claimToken: string; deviceToken: string; runId: string }, null>("subagents:renewLease");
 const getSubagentResultQuery = makeFunctionReference<"query", { deviceToken: string; runId: string }, { result?: SubagentResult; status: "queued" | "running" | "complete" | "failed"; threadId: string }>("subagents:getResult");
 const setCapabilityCeilingMutation = makeFunctionReference<"mutation", { capabilities: Capability[]; deviceToken: string }, null>("machines:setCapabilityCeiling");
+const listPendingProjectsQuery = makeFunctionReference<"query", { deviceToken: string }, Array<{ id: string; name: string; path: string }>>("projects:listPending");
+const resolvePendingProjectMutation = makeFunctionReference<"mutation", { deviceToken: string; projectId: string; ok: boolean; error?: string }, null>("projects:resolvePending");
 const listMcpServersQuery = makeFunctionReference<"query", { deviceToken: string }, unknown[]>("mcp_servers:listForDaemon");
 const reportMcpStatusMutation = makeFunctionReference<"mutation", { authorizationUrl?: string; deviceToken: string; error?: string; serverId: string; status: "connecting" | "authorizing" | "connected" | "error"; toolCount: number }, null>("mcp_servers:reportStatus");
 const createMcpElicitationMutation = makeFunctionReference<"mutation", { deviceToken: string; promptsJson: string; serverId: string; threadId: string; toolName: string }, string>("mcp_elicitations:create");
@@ -203,5 +205,13 @@ export function createConvexCommandGateway({ deploymentUrl, deviceToken }: { dep
     appendOutput: (input: { output: string; threadId: string }) => client.mutation(appendCommandOutputMutation, { ...input, deviceToken }),
     claim: async () => queuedCommandSchema.nullable().parse(await client.mutation(claimCommandMutation, { deviceToken })),
     complete: (input: { commandId: string; status: "complete" | "failed" }) => client.mutation(completeCommandMutation, { ...input, deviceToken }),
+  };
+}
+
+export function createConvexProjectRequestGateway({ deploymentUrl, deviceToken }: { deploymentUrl: string; deviceToken: string }) {
+  const client = new ConvexHttpClient(deploymentUrl);
+  return {
+    listPending: () => client.query(listPendingProjectsQuery, { deviceToken }),
+    resolvePending: (input: { projectId: string; ok: boolean; error?: string }) => client.mutation(resolvePendingProjectMutation, { ...input, deviceToken }),
   };
 }

@@ -15,12 +15,13 @@ import { runQueuedGitAction } from "./git-worker";
 import { runQueuedCheckpointRestore } from "./checkpoint-worker";
 import { runQueuedCheckpointComparison } from "./checkpoint-comparison-worker";
 import { ScriptedModelProvider } from "./model-provider";
-import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, createConvexMcpServerGateway, createConvexSubagentGateway, MachineReporter } from "./relay-client";
+import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, createConvexMcpServerGateway, createConvexProjectRequestGateway, createConvexSubagentGateway, MachineReporter } from "./relay-client";
 import { createNestedSubagentWorktree, integrateNestedSubagentWorktree, resolveSubagentParentRoot, ThreadWorktrees } from "./worktrees";
 import { runQueuedSubagent } from "./subagent-worker";
 import { ALLOW_ALL_POLICY, loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
 import { McpRegistry } from "./mcp-registry";
+import { runQueuedProjectRequest } from "./project-request-worker";
 
 export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
@@ -199,6 +200,16 @@ setInterval(() => {
     .catch((error: unknown) => console.error("Relay command failed", error))
     .finally(() => { commandRunning = false; });
 }, 200);
+
+const projectRequestGateway = createConvexProjectRequestGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
+let projectRequestRunning = false;
+setInterval(() => {
+  if (projectRequestRunning) return;
+  projectRequestRunning = true;
+  void runQueuedProjectRequest({ daemonHome, env: Bun.env, gateway: projectRequestGateway })
+    .catch((error: unknown) => console.error("Relay project request worker failed", error))
+    .finally(() => { projectRequestRunning = false; });
+}, 5_000);
 }
 
 if (import.meta.main) {
