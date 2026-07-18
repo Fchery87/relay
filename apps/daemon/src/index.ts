@@ -53,6 +53,9 @@ setInterval(() => {
     }
     console.error("Relay heartbeat failed", error);
   });
+  void listProjects({ daemonHome, env: Bun.env }).then((current) => {
+    void reporter.syncProjects(current).catch((error: unknown) => console.error("Relay project sync failed", error));
+  });
 }, config.heartbeatIntervalMs);
 
 const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });

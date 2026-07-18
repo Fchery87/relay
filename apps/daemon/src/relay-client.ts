@@ -55,6 +55,7 @@ export interface MachineGateway {
 export class MachineReporter {
   readonly #gateway: MachineGateway;
   readonly #registration: MachineRegistration;
+  #lastSyncedProjects: string | null = null;
 
   constructor({ gateway, registration }: { gateway: MachineGateway; registration: MachineRegistration }) {
     this.#gateway = gateway;
@@ -67,6 +68,14 @@ export class MachineReporter {
 
   heartbeatOnce(): Promise<unknown> {
     return this.#gateway.heartbeat({ deviceToken: this.#registration.deviceToken });
+  }
+
+  async syncProjects(projects: import("@relay/shared").ProjectRegistration[]): Promise<void> {
+    const serialized = JSON.stringify(projects);
+    if (serialized === this.#lastSyncedProjects) return;
+    const registration = { ...this.#registration, projects };
+    await this.#gateway.registerMachine(registration);
+    this.#lastSyncedProjects = serialized;
   }
 }
 

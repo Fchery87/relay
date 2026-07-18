@@ -23,6 +23,7 @@ export default defineSchema({
     status: v.union(v.literal("waiting"), v.literal("claimed")),
   }).index("by_code_hash", ["codeHash"]).index("by_device_token_hash", ["deviceTokenHash"]),
   projects: defineTable({
+    archivedAt: v.optional(v.number()),
     machineId: v.id("machines"),
     name: v.string(),
     path: v.string(),

@@ -96,8 +96,9 @@ export async function runCli(args: readonly string[], dependencies: { runConnect
       console.info(`Removed project: ${command.path}`);
       return;
     }
+    throw new Error(`Unknown project subcommand: ${(command as { subcommand: string }).subcommand}`);
   }
-  await (dependencies.runDaemon ?? runDaemon)({ yolo: command.yolo });
+  await (dependencies.runDaemon ?? runDaemon)({ yolo: (command as { yolo: boolean }).yolo });
 }
 
 if (import.meta.main) {
