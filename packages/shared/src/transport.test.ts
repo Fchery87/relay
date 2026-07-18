@@ -35,5 +35,5 @@ test("validates queued checkpoint comparisons", () => {
 });
 
 test("validates queued subagent runs", () => {
-  expect(queuedSubagentSchema.parse({ capabilities: ["read"], claimToken: "lease", contextMode: "fresh", depth: 1, maxTurns: 20, modelId: "deepseek/deepseek-chat", projectPath: "/repo", prompt: "Explore", roleName: "explore", runId: "run", task: "Map", thinkingLevel: "high", threadId: "thread", writer: false })).toMatchObject({ capabilities: ["read"], roleName: "explore" });
+  expect(queuedSubagentSchema.parse({ capabilities: ["read"], claimToken: "lease", contextMode: "fresh", depth: 1, maxTurns: 20, modelId: "deepseek/deepseek-v4-flash", projectPath: "/repo", prompt: "Explore", roleName: "explore", runId: "run", task: "Map", thinkingLevel: "high", threadId: "thread", writer: false })).toMatchObject({ capabilities: ["read"], roleName: "explore" });
 });

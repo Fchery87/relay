@@ -12,7 +12,7 @@ test("routes to the first fallback with a locally configured secret", () => {
     modelId: "anthropic/claude-sonnet-4-5",
     thinkingLevel: "high",
   });
-  expect(config.model.id).toBe("deepseek/deepseek-chat");
+  expect(config.model.id).toBe("deepseek/deepseek-v4-flash");
   expect(config.apiKey).toBe("local-deepseek-key");
 });
 
@@ -33,7 +33,7 @@ test("builds OpenAI Responses and compatible Completions requests", () => {
   const completionsModel = MODEL_CATALOG.models.find((entry) => entry.apiKind === "openai-completions")!;
   const completions = buildProviderRequest({ apiKey: "secret", model: completionsModel, prompt: "hello", thinkingValue: null });
   expect(completions.url).toBe("https://api.deepseek.com/chat/completions");
-  expect(completions.body).toMatchObject({ model: "deepseek-chat" });
+  expect(completions.body).toMatchObject({ model: "deepseek-v4-flash" });
   expect(JSON.stringify(completions.body)).not.toContain("secret");
 });
 
@@ -41,6 +41,20 @@ test("uses the scripted development provider when no local key is configured", (
   const fallback = new ScriptedModelProvider({ chunks: ["offline"] });
   const router = new LocalModelRouter({ env: {}, fallbackProvider: fallback });
   expect(router.resolve({ modelId: MODEL_CATALOG.defaultModelId, thinkingLevel: "none" })).toBe(fallback);
+});
+
+test("sends DeepSeek thinking disabled toggle when thinking is off", () => {
+  const completionsModel = MODEL_CATALOG.models.find((entry) => entry.provider === "deepseek")!;
+  const completions = buildProviderRequest({ apiKey: "secret", model: completionsModel, prompt: "hello", thinkingValue: null });
+  expect(completions.body).toMatchObject({ thinking: { type: "disabled" } });
+  expect(JSON.stringify(completions.body)).not.toContain("reasoning_effort");
+});
+
+test("sends DeepSeek reasoning_effort when thinking is on", () => {
+  const completionsModel = MODEL_CATALOG.models.find((entry) => entry.provider === "deepseek")!;
+  const completions = buildProviderRequest({ apiKey: "secret", model: completionsModel, prompt: "hello", thinkingValue: "high" });
+  expect(completions.body).toMatchObject({ reasoning_effort: "high" });
+  expect(JSON.stringify(completions.body)).not.toContain('"thinking"');
 });
 
 test("adds uniquely-addressed MCP schemas to provider tool definitions", () => {

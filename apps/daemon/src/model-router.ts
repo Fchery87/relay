@@ -62,7 +62,15 @@ export function buildProviderRequest({ apiKey, model, prompt, thinkingValue }: {
     };
   }
   return {
-    body: { messages: [{ content: prompt, role: "user" }], model: providerModelId, stream: true, stream_options: { include_usage: true }, ...(thinkingValue === null ? {} : { reasoning_effort: thinkingValue }) },
+    body: {
+      messages: [{ content: prompt, role: "user" }],
+      model: providerModelId,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...(model.provider === "deepseek"
+        ? (thinkingValue === null ? { thinking: { type: "disabled" } } : { reasoning_effort: thinkingValue })
+        : (thinkingValue === null ? {} : { reasoning_effort: thinkingValue })),
+    },
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     url: model.provider === "deepseek" ? "https://api.deepseek.com/chat/completions" : "https://api.openai.com/v1/chat/completions",
   };

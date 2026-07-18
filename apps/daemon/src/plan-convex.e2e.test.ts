@@ -37,7 +37,7 @@ test("approved planner output is consumed by a different build model in the same
     return ctx.db.insert("projects", { machineId, name: "relay", path: "/repo" });
   });
   const threadId = await owner.mutation(createThread, { mode: "plan", projectId, title: "Plan" });
-  await owner.mutation(updatePair, { buildModelId: "openai/gpt-5-mini", planModelId: "deepseek/deepseek-chat", threadId });
+  await owner.mutation(updatePair, { buildModelId: "openai/gpt-5-mini", planModelId: "deepseek/deepseek-v4-flash", threadId });
   await owner.mutation(sendMessage, { content: "Plan the change", threadId });
   const gateway: ConversationGateway = {
     acknowledgeStop: async () => undefined,
@@ -58,7 +58,7 @@ test("approved planner output is consumed by a different build model in the same
   await owner.mutation(approve, { content: "1. Approved edited plan", expectedRevision: 1, threadId });
   await runQueuedTurn(common);
 
-  expect(selections).toEqual(["deepseek/deepseek-chat", "openai/gpt-5-mini"]);
+  expect(selections).toEqual(["deepseek/deepseek-v4-flash", "openai/gpt-5-mini"]);
   expect(await owner.query(getPlan, { threadId })).toMatchObject({ content: "1. Approved edited plan", status: "approved" });
 });
 

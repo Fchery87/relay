@@ -12,11 +12,11 @@ test("plan mode pauses for editable approval then queues the approved plan for t
   const t = convexTest(schema, modules);
   const { deviceToken, owner, projectId } = await createAuthenticatedProject(t);
   const threadId = await owner.mutation(api.conversations.createThread, { mode: "plan", projectId, title: "Plan feature" });
-  await owner.mutation(api.plans.updateModelPair, { buildModelId: "openai/gpt-5-mini", planModelId: "deepseek/deepseek-chat", threadId });
+  await owner.mutation(api.plans.updateModelPair, { buildModelId: "openai/gpt-5-mini", planModelId: "deepseek/deepseek-v4-flash", threadId });
   await owner.mutation(api.conversations.sendUserMessage, { content: "Plan authentication", threadId });
   for (let index = 1; index < 100; index += 1) await owner.mutation(api.conversations.sendUserMessage, { content: `Offline follow-up ${index}`, threadId });
   await expect(owner.mutation(api.conversations.sendUserMessage, { content: "Offline overflow", threadId })).rejects.toThrow("queue is full");
-  expect(await t.mutation(api.conversations.claimQueuedMessage, { deviceToken })).toMatchObject({ modelId: "deepseek/deepseek-chat", planPhase: "planning" });
+  expect(await t.mutation(api.conversations.claimQueuedMessage, { deviceToken })).toMatchObject({ modelId: "deepseek/deepseek-v4-flash", planPhase: "planning" });
   const messageId = await t.mutation(api.conversations.beginAssistantMessage, { deviceToken, threadId });
   await owner.mutation(api.conversations.sendUserMessage, { content: "Also cover tests", threadId });
   await expect(owner.mutation(api.conversations.sendUserMessage, { content: "Overflow", threadId })).rejects.toThrow("queue is full");

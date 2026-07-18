@@ -64,16 +64,16 @@ test("attachments render with remove affordances and errors surface", () => {
   expect(markup).toContain("too big");
 });
 
-test("reasoning variant picker appears for multi-level models and hides for single-level", () => {
-  const multiLevelModel = MODEL_CATALOG.models.find((entry) => listThinkingLevels(entry).length > 1);
-  if (!multiLevelModel) throw new Error("Catalog needs at least one multi-thinking-level model");
+test("reasoning variant picker appears for multi-level models and all current models have at least two levels", () => {
+  const multiLevelModel = MODEL_CATALOG.models.find((entry) => entry.id === "openai/gpt-5-mini");
+  if (!multiLevelModel) throw new Error("Catalog needs gpt-5-mini");
   const multiMarkup = render({ modelId: multiLevelModel.id, thinkingLevel: "medium" });
   expect(multiMarkup).toContain('aria-label="Reasoning variant"');
   expect(multiMarkup).toContain("Medium");
 
-  // Default model (deepseek-chat) only has 'none' — picker should be absent
+  // Default model (deepseek-v4-flash) has 'none' + 'high' — picker should appear
   const singleMarkup = render();
-  expect(singleMarkup).not.toContain('aria-label="Reasoning variant"');
+  expect(singleMarkup).toContain('aria-label="Reasoning variant"');
 });
 
 test("running turns lock the model and reasoning variant pickers", () => {

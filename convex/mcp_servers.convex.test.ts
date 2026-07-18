@@ -49,7 +49,7 @@ test("keeps MCP config across model changes and removes it with its approval thr
   const t = convexTest(schema, modules);
   const { owner, projectId, threadId } = await seed(t);
   await owner.mutation(api.mcp_servers.create, { name: "docs", projectId, threadId, transport: { kind: "http", url: "https://mcp.example.test" } });
-  await owner.mutation(api.conversations.updateModelSelection, { modelId: "deepseek/deepseek-chat", thinkingLevel: "none", threadId });
+  await owner.mutation(api.conversations.updateModelSelection, { modelId: "deepseek/deepseek-v4-flash", thinkingLevel: "none", threadId });
   expect(await owner.query(api.mcp_servers.listForProject, { projectId })).toHaveLength(1);
   await owner.mutation(api.conversations.removeThread, { threadId });
   expect(await owner.query(api.mcp_servers.listForProject, { projectId })).toEqual([]);

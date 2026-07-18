@@ -206,7 +206,7 @@ test("a planning turn persists an editable plan instead of completing a chat tur
     deviceToken: "device",
     gateway: {
       acknowledgeStop: async () => undefined, appendAssistantText: async () => undefined, beginAssistantMessage: async () => "plan-message",
-      claimQueuedMessage: async () => ({ content: "Plan it", modelId: "deepseek/deepseek-chat", planPhase: "planning", projectPath: "/tmp", threadId: "thread" }),
+      claimQueuedMessage: async () => ({ content: "Plan it", modelId: "deepseek/deepseek-v4-flash", planPhase: "planning", projectPath: "/tmp", threadId: "thread" }),
       claimSteeringMessages: async () => [], completeAssistantMessage: async () => { completed = true; }, completePlanning: async (input) => { plans.push(input); },
       isStopRequested: async () => false, recordUsage: async ({ role }) => { usageRoles.push(role); },
     },
@@ -231,7 +231,7 @@ test("submits normalized usage once when a scripted turn completes", async () =>
       acknowledgeStop: async () => undefined,
       appendAssistantText: async () => undefined,
       beginAssistantMessage: async () => "assistant-message",
-      claimQueuedMessage: async () => ({ content: "hello", modelId: "deepseek/deepseek-chat", projectPath: "/tmp", threadId: "thread" }),
+      claimQueuedMessage: async () => ({ content: "hello", modelId: "deepseek/deepseek-v4-flash", projectPath: "/tmp", threadId: "thread" }),
       claimSteeringMessages: async () => [],
       completeAssistantMessage: async () => undefined,
       isStopRequested: async () => false,
@@ -248,7 +248,7 @@ test("submits normalized usage once when a scripted turn completes", async () =>
   expect(recorded).toHaveLength(1);
   expect(recorded[0]).toMatchObject({
     messageId: "assistant-message",
-    modelId: "deepseek/deepseek-chat",
+    modelId: "deepseek/deepseek-v4-flash",
     role: "primary",
     threadId: "thread",
   });

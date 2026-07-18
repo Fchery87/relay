@@ -1,22 +1,22 @@
 {
-  "defaultModelId": "deepseek/deepseek-chat",
+  "defaultModelId": "deepseek/deepseek-v4-flash",
   "models": [
     {
-      "id": "deepseek/deepseek-chat",
-      "name": "DeepSeek Chat",
+      "id": "deepseek/deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
       "provider": "deepseek",
       "apiKind": "openai-completions",
-      "thinking": { "none": null },
+      "thinking": { "none": null, "high": "high" },
       "cost": { "input": 0.14, "output": 0.28, "cacheRead": 0.0028 },
       "fallbacks": ["openai/gpt-5-mini", "anthropic/claude-sonnet-4-5"]
     },
     {
-      "id": "deepseek/deepseek-reasoner",
-      "name": "DeepSeek Reasoner",
+      "id": "deepseek/deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
       "provider": "deepseek",
       "apiKind": "openai-completions",
-      "thinking": { "high": null },
-      "cost": { "input": 0.14, "output": 0.28, "cacheRead": 0.0028 },
+      "thinking": { "none": null, "high": "high" },
+      "cost": { "input": 0.435, "output": 0.87, "cacheRead": 0.003625 },
       "fallbacks": ["openai/gpt-5-mini", "anthropic/claude-sonnet-4-5"]
     },
     {
@@ -26,7 +26,7 @@
       "apiKind": "openai-responses",
       "thinking": { "none": null, "low": "low", "medium": "medium", "high": "high" },
       "cost": { "input": 0.25, "output": 2, "cacheRead": 0.025 },
-      "fallbacks": ["deepseek/deepseek-chat", "anthropic/claude-sonnet-4-5"]
+      "fallbacks": ["deepseek/deepseek-v4-flash", "anthropic/claude-sonnet-4-5"]
     },
     {
       "id": "anthropic/claude-sonnet-4-5",
@@ -35,7 +35,7 @@
       "apiKind": "anthropic-messages",
       "thinking": { "none": null, "low": "1024", "medium": "4096", "high": "16384" },
       "cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
-      "fallbacks": ["openai/gpt-5-mini", "deepseek/deepseek-chat"]
+      "fallbacks": ["openai/gpt-5-mini", "deepseek/deepseek-v4-flash"]
     }
   ]
 }

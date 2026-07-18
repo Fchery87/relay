@@ -31,7 +31,7 @@ test("records each model call once and atomically rolls usage into its thread", 
     totals: { cacheReadTokens: 2_000, cacheWriteTokens: 1_000, costUsd: 0.08535, inputTokens: 10_000, outputTokens: 4_000, thinkingTokens: 1_000, thinkingTokensUnavailableCalls: 0 },
   });
 
-  await expect(t.mutation(api.usage.record, { ...input, deviceToken, modelId: "deepseek/deepseek-chat" })).rejects.toThrow("Conflicting usage payload");
+  await expect(t.mutation(api.usage.record, { ...input, deviceToken, modelId: "deepseek/deepseek-v4-flash" })).rejects.toThrow("Conflicting usage payload");
   await owner.mutation(api.usage.setBudget, { budgetUsd: null, threadId });
   expect(await owner.query(api.usage.forThread, { threadId })).toMatchObject({ budgetUsd: null });
 });

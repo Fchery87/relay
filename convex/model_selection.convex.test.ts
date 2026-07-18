@@ -25,5 +25,5 @@ test("rejects unsupported thinking levels for the selected model", async () => {
   const t = convexTest(schema, modules);
   const { owner, projectId } = await createAuthenticatedProject(t);
   const threadId = await owner.mutation(api.conversations.createThread, { projectId, title: "models" });
-  await expect(owner.mutation(api.conversations.updateModelSelection, { modelId: "deepseek/deepseek-chat", thinkingLevel: "high", threadId })).rejects.toThrow("Thinking level is not supported");
+  await expect(owner.mutation(api.conversations.updateModelSelection, { modelId: "deepseek/deepseek-v4-flash", thinkingLevel: "low", threadId })).rejects.toThrow("Thinking level is not supported");
 });
