@@ -16,6 +16,7 @@ export {
   type MessageStatus,
 } from "./conversations";
 export { toolEventSchema, type ToolEvent } from "./tools";
+export { parseFrontmatter, type FrontmatterDocument } from "./frontmatter";
 export {
   mcpRiskSchema,
   mcpServerConfigSchema,
