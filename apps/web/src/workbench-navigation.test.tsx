@@ -13,10 +13,10 @@ test("renders an ordered handoff trace with one current stage", () => {
   const markup = renderToStaticMarkup(<HandoffTrace currentStage={currentStage} />);
 
   expect(currentStage).toBe("review");
-  expect(markup).toContain('aria-label="Run handoff"');
+  expect(markup).toContain('aria-label="Run workflow"');
   expect(markup).toContain("Request");
   expect(markup).toContain("Plan");
-  expect(markup).toContain("Tools");
+  expect(markup).toContain("Execute");
   expect(markup).toContain("Review");
   expect(markup).toContain("Deliver");
   expect(markup).toContain('aria-current="step"');
@@ -28,11 +28,13 @@ test("renders one selected contextual workbench surface", () => {
   );
 
   expect(markup).toContain('role="tablist"');
-  expect(markup).toContain("Terminal");
+  expect(markup).toContain('aria-label="Task canvas views"');
+  expect(markup).toContain("Session");
   expect(markup).toContain("Changes");
   expect(markup).toContain("Plan");
-  expect(markup).toContain("Agents");
-  expect(markup).toContain("Connections");
+  expect(markup).not.toContain("Terminal");
+  expect(markup).not.toContain("Agents");
+  expect(markup).not.toContain("Connections");
   expect(markup).toContain('aria-selected="true"');
   expect(markup).toContain('aria-controls="workbench-panel"');
   expect(markup).toContain('tabindex="0"');

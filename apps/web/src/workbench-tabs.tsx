@@ -1,13 +1,13 @@
 import type { KeyboardEvent } from "react";
 
-export type WorkbenchTab = "terminal" | "changes" | "plan" | "agents" | "connections";
+import type { WorkbenchView } from "./router";
+
+export type WorkbenchTab = WorkbenchView;
 
 const WORKBENCH_TABS: ReadonlyArray<{ id: WorkbenchTab; label: string }> = [
-  { id: "terminal", label: "Terminal" },
-  { id: "changes", label: "Changes" },
+  { id: "session", label: "Session" },
   { id: "plan", label: "Plan" },
-  { id: "agents", label: "Agents" },
-  { id: "connections", label: "Connections" },
+  { id: "changes", label: "Changes" },
 ];
 
 export function WorkbenchTabs({
@@ -37,7 +37,7 @@ export function WorkbenchTabs({
   }
 
   return (
-    <div aria-label="Workbench tools" className="workbench-tabs" role="tablist">
+    <div aria-label="Task canvas views" className="workbench-tabs" role="tablist">
       {visibleTabs.map((tab, index) => (
         <button
           aria-controls="workbench-panel"
