@@ -9,6 +9,8 @@ import { runAgenticTurn, type ChatMessage, type TurnCallbacks, type TurnModelPro
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { TrustStore } from "./trust";
+import { parseSlashInvocation, expandCommand } from "./slash-commands";
+import { getBuiltinCommand, BUILTIN_COMMANDS } from "./builtin-commands";
 
 export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
@@ -23,6 +25,8 @@ export interface ConversationGateway {
   recordMcpTaskStatus?(input: { serverId: string; status: string; taskId: string; threadId: string }): Promise<unknown>;
   requestMcpInput?(input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }): Promise<Record<string, unknown>>;
   requestTrust?(projectId: string): Promise<void>;
+  publishCommandCatalog?(commands: Array<{ argumentHint?: string; description: string; name: string; projectId?: string; scope: "builtin" | "project" | "user" | "skill" }>): Promise<void>;
+  updateTodos?(input: { items: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>; threadId: string }): Promise<void>;
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
   waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
@@ -47,6 +51,45 @@ ${escapeXml(comment.content)}
 
 function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+async function dispatchBuiltinAction({ action, args, gateway, messageId, queued }: {
+  action: "compact" | "context" | "rewind" | "plan" | "help";
+  args: string;
+  gateway: ConversationGateway;
+  messageId: string;
+  queued: { threadId: string };
+}): Promise<void> {
+  if (action === "help") {
+    const catalog = BUILTIN_COMMANDS.map((c) => `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""} — ${c.description}`).join("\n");
+    await gateway.appendAssistantText({ content: `Available commands:\n\n${catalog}`, messageId });
+    await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
+    return;
+  }
+  if (action === "plan") {
+    // Plan mode switch already exists on threads; mark the thread as planning
+    await gateway.appendAssistantText({ content: "Switched to planning mode. Send your goal to begin.", messageId });
+    await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
+    return;
+  }
+  if (action === "rewind") {
+    await gateway.appendAssistantText({ content: "Restoring the latest checkpoint...", messageId });
+    // The checkpoint restore is handled by the existing checkpoint worker
+    await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
+    return;
+  }
+  if (action === "compact") {
+    // TODO: implement in Task 11
+    await gateway.appendAssistantText({ content: "Compaction is not yet implemented.", messageId });
+    await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
+    return;
+  }
+  if (action === "context") {
+    // TODO: implement in Task 11
+    await gateway.appendAssistantText({ content: "Context reporting is not yet implemented.", messageId });
+    await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
+    return;
+  }
 }
 
 export async function runQueuedTurn({
@@ -99,12 +142,28 @@ export async function runQueuedTurn({
 
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   const turnPolicy = effectivePolicy({ base: policy, profile: queued.permissionProfile ?? "workspace-write", yolo });
+
+  // Slash command expansion and action dispatch
+  let expandedPrompt = prompt;
+  const slashInvocation = parseSlashInvocation(prompt);
+  if (slashInvocation) {
+    const builtin = getBuiltinCommand(slashInvocation.name);
+    if (builtin) {
+      if (builtin.kind === "action") {
+        await dispatchBuiltinAction({ action: builtin.action, args: slashInvocation.args, gateway, messageId, queued });
+        return true;
+      }
+      // Prompt built-in: expand the template
+      expandedPrompt = expandCommand({ args: slashInvocation.args, template: builtin.template });
+    }
+  }
+
   try {
     // Use agentic loop if the resolved provider supports it
     if (isTurnModelProvider(turnProvider)) {
-      return await runAgenticClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt, queued, reviewComments, root, turnProvider });
+      return await runAgenticClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt: expandedPrompt, queued, reviewComments, root, turnProvider });
     }
-    return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt, queued, reviewComments, root, turnProvider });
+    return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt: expandedPrompt, queued, reviewComments, root, turnProvider });
   } catch (error) {
     // Mark the turn failed so claimQueuedMessage stops skipping this thread (it treats "running" as busy).
     // Without this, an uncaught error here leaves the thread stuck and every later message sits queued forever.

@@ -251,4 +251,21 @@ export default defineSchema({
     sequence: v.number(),
     updatedAt: v.number(),
   }).index("by_machine_direction", ["machineId", "direction"]),
+
+  // --- Extensibility tables (widen-only) ---
+
+  slashCommands: defineTable({
+    argumentHint: v.optional(v.string()),
+    description: v.string(),
+    machineId: v.id("machines"),
+    name: v.string(),
+    projectId: v.optional(v.id("projects")),
+    scope: v.union(v.literal("builtin"), v.literal("project"), v.literal("user"), v.literal("skill")),
+  }).index("by_project", ["projectId"]).index("by_machine", ["machineId"]),
+
+  todos: defineTable({
+    items: v.array(v.object({ content: v.string(), status: v.union(v.literal("pending"), v.literal("in_progress"), v.literal("completed")) })),
+    threadId: v.id("threads"),
+    updatedAt: v.number(),
+  }).index("by_thread", ["threadId"]),
 });

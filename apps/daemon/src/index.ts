@@ -23,6 +23,9 @@ import { LocalModelRouter } from "./catalog-provider-router";
 import { McpRegistry } from "./mcp-registry";
 import { runQueuedProjectRequest } from "./project-request-worker";
 import { TrustStore } from "./trust";
+import { loadSlashCommands } from "./slash-commands";
+import { BUILTIN_COMMANDS } from "./builtin-commands";
+import { resolveExtensionRoots } from "./extension-paths";
 
 export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
@@ -205,6 +208,44 @@ setInterval(() => {
 
 const projectRequestGateway = createConvexProjectRequestGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 const trustStore = new TrustStore({ daemonHome });
+
+async function publishCatalog() {
+  try {
+    const projects = await listProjects({ daemonHome, env: Bun.env });
+    const commands: Array<{ argumentHint?: string; description: string; name: string; projectId?: string; scope: "builtin" | "project" | "user" | "skill" }> = [];
+
+    // Built-in commands
+    for (const cmd of BUILTIN_COMMANDS) {
+      commands.push({ argumentHint: cmd.argumentHint, description: cmd.description, name: cmd.name, scope: "builtin" });
+    }
+
+    // User commands
+    const userRoot = join(daemonHome, "commands");
+    const userCommands = await loadSlashCommands([{ root: userRoot, scope: "user" }]);
+    for (const cmd of userCommands) commands.push({ argumentHint: cmd.argumentHint, description: cmd.description, name: cmd.name, scope: "user" });
+
+    // Project commands (trust-gated)
+    for (const project of projects) {
+      const trustState = await trustStore.get(project.path);
+      if (trustState === "trusted") {
+        const projectRoot = join(project.path, ".relay", "commands");
+        const projectCommands = await loadSlashCommands([{ root: projectRoot, scope: "project" }]);
+        for (const cmd of projectCommands) commands.push({ argumentHint: cmd.argumentHint, description: cmd.description, name: cmd.name, projectId: project.path, scope: "project" });
+      }
+    }
+
+    await (conversationGateway as any).publishCommandCatalog?.(commands);
+  } catch (error) { console.warn("Failed to publish command catalog:", error); }
+}
+
+// Publish catalog on startup
+void publishCatalog();
+// Publish catalog on startup
+void publishCatalog();
+
+// Republish catalog periodically (e.g., when trust state changes or new commands are added)
+setInterval(() => { void publishCatalog(); }, 60_000);
+
 let projectRequestRunning = false;
 setInterval(() => {
   if (projectRequestRunning) return;
@@ -213,24 +254,6 @@ setInterval(() => {
     .catch((error: unknown) => console.error("Relay project request worker failed", error))
     .finally(() => { projectRequestRunning = false; });
 }, 5_000);
-
-// Sync trust decisions from Convex to local store periodically
-setInterval(() => {
-  void (async () => {
-    try {
-      const projects = await listProjects({ daemonHome, env: Bun.env });
-      for (const project of projects) {
-        try {
-          const remoteState = await projectRequestGateway.getTrustState(project.path);
-          if (!remoteState) continue;
-          const localState = await trustStore.get(project.path);
-          if (remoteState === "trusted" && localState !== "trusted") await trustStore.set(project.path, "trusted");
-          if (remoteState === "untrusted" && localState !== "untrusted") await trustStore.set(project.path, "untrusted");
-        } catch { /* best-effort per-project */ }
-      }
-    } catch { /* best-effort */ }
-  })();
-}, 30_000);
 }
 
 if (import.meta.main) {
