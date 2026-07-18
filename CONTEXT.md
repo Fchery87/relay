@@ -74,6 +74,17 @@ Terms used throughout the codebase. When naming a concept in an issue title, ref
 - **widen-migrate-narrow** — the Convex schema discipline: additive changes first (widen), dual-write/backfill second (migrate), verified removal third (narrow). Narrow is irreversible.
 - **shadow mode** — `RELAY_RUNTIME_MODE=shadow` runs the kernel alongside legacy and compares decisions/projections without dual-executing side effects.
 
+## Attention
+
+- **needs-you item** — any state where a run is blocked waiting on the operator: a pending approval, a plan awaiting review, an unanswered MCP elicitation, or a failed run. Always signaled in brass.
+- **attention inbox** — the cross-project list of needs-you items. Empty means every run is healthy or working.
+
+## Design language
+
+- **patina** — the verdigris (blue-green oxidized-metal) accent. Means *interactive*: focus, links, selection, send. Never used for agent state.
+- **brass** — the polished-metal signal color. Means *the agent needs you*: pending approvals, handoff trace, checkpoint markers. Never used for ordinary interactive chrome.
+- The two are one story: brass is the metal polished, patina is the metal aged. No other semantic colors may borrow either meaning.
+
 ## Naming conventions
 
 - Identifiers are branded strings (`RunId`, `TurnId`, `CommandId`, `EventId`, etc.) — phantom brands prevent accidental interchange.
