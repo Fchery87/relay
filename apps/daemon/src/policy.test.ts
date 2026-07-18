@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { join } from "node:path";
-import { classifyToolCall, evaluatePolicy, loadPolicy, type Policy } from "./policy";
+import { ALLOW_ALL_POLICY, classifyToolCall, effectivePolicy, evaluatePolicy, loadPolicy, type Policy } from "./policy";
 
 const policy: Policy = {
   rules: [
@@ -41,4 +41,29 @@ test("loads and validates the daemon policy file", async () => {
   const loaded = await loadPolicy({ path: join(import.meta.dir, "..", "policy.json") });
   expect(evaluatePolicy({ capability: "exec", policy: loaded, risk: "high" })).toBe("ask");
   expect(evaluatePolicy({ capability: "exec", policy: loaded, risk: "critical" })).toBe("deny");
+});
+
+test("full-access profile and yolo mode allow every capability at every risk", () => {
+  for (const derived of [
+    effectivePolicy({ base: policy, profile: "full-access", yolo: false }),
+    effectivePolicy({ base: policy, profile: "workspace-write", yolo: true }),
+    effectivePolicy({ base: policy, profile: "read-only", yolo: true }),
+  ]) {
+    expect(evaluatePolicy({ capability: "exec", policy: derived, risk: "critical" })).toBe("allow");
+    expect(evaluatePolicy({ capability: "edit", policy: derived, risk: "low" })).toBe("allow");
+    expect(evaluatePolicy({ capability: "task", policy: derived, risk: "high" })).toBe("allow");
+  }
+});
+
+test("read-only profile denies mutation but keeps reads and search", () => {
+  const derived = effectivePolicy({ base: policy, profile: "read-only", yolo: false });
+  expect(evaluatePolicy({ capability: "read", policy: derived, risk: "low" })).toBe("allow");
+  expect(evaluatePolicy({ capability: "search", policy: derived, risk: "low" })).toBe("allow");
+  expect(evaluatePolicy({ capability: "read", policy: derived, risk: "critical" })).toBe("ask");
+  expect(evaluatePolicy({ capability: "edit", policy: derived, risk: "low" })).toBe("deny");
+  expect(evaluatePolicy({ capability: "exec", policy: derived, risk: "low" })).toBe("deny");
+});
+
+test("workspace-write profile without yolo returns the base policy unchanged", () => {
+  expect(effectivePolicy({ base: policy, profile: "workspace-write", yolo: false })).toBe(policy);
 });

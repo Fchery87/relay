@@ -19,6 +19,31 @@ export function evaluatePolicy({ capability, policy, risk }: { capability: Capab
   return policy.rules.find((rule) => rule.capability === capability && rule.risk === risk)?.decision ?? "deny";
 }
 
+export const permissionProfileSchema = z.enum(["read-only", "workspace-write", "full-access"]);
+export type PermissionProfile = z.infer<typeof permissionProfileSchema>;
+
+const ALL_CAPABILITIES = capabilitySchema.options;
+const ALL_RISKS = riskSchema.options;
+
+export const ALLOW_ALL_POLICY: Policy = {
+  rules: ALL_CAPABILITIES.flatMap((capability) => ALL_RISKS.map((risk) => ({ capability, decision: "allow" as const, risk }))),
+};
+
+const READ_ONLY_POLICY: Policy = {
+  rules: [
+    { capability: "read", decision: "allow", risk: "low" },
+    { capability: "read", decision: "allow", risk: "high" },
+    { capability: "read", decision: "ask", risk: "critical" },
+    ...ALL_RISKS.map((risk) => ({ capability: "search" as const, decision: "allow" as const, risk })),
+  ],
+};
+
+export function effectivePolicy({ base, profile, yolo }: { base: Policy; profile: PermissionProfile; yolo: boolean }): Policy {
+  if (yolo || profile === "full-access") return ALLOW_ALL_POLICY;
+  if (profile === "read-only") return READ_ONLY_POLICY;
+  return base;
+}
+
 export function classifyToolCall(call: ToolCall): { capability: Capability; risk: RiskTier } {
   if (call.kind === "mcp") return { capability: "exec", risk: call.risk ?? "high" };
   if (call.kind === "task") return { capability: "task", risk: "low" };
