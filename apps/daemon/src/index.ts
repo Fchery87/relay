@@ -160,6 +160,13 @@ setInterval(() => {
     provider,
     platform: config.registration.platform,
     resolveProjectRoot: (input) => worktrees.resolve(input),
+    resolveSlashCommands: async ({ projectPath }) => {
+      const userCommands = await loadSlashCommands([{ root: join(daemonHome, "commands"), scope: "user" }]);
+      const trustState = await trustStore.get(projectPath);
+      if (trustState !== "trusted") return userCommands;
+      const projectCommands = await loadSlashCommands([{ root: join(projectPath, ".relay", "commands"), scope: "project" }]);
+      return [...projectCommands, ...userCommands];
+    },
     trustStore,
     yolo: yoloMode,
   })
@@ -212,7 +219,7 @@ const trustStore = new TrustStore({ daemonHome });
 async function publishCatalog() {
   try {
     const projects = await listProjects({ daemonHome, env: Bun.env });
-    const commands: Array<{ argumentHint?: string; description: string; name: string; projectId?: string; scope: "builtin" | "project" | "user" | "skill" }> = [];
+    const commands: Array<{ argumentHint?: string; description: string; name: string; projectPath?: string; scope: "builtin" | "project" | "user" | "skill" }> = [];
 
     // Built-in commands
     for (const cmd of BUILTIN_COMMANDS) {
@@ -230,7 +237,7 @@ async function publishCatalog() {
       if (trustState === "trusted") {
         const projectRoot = join(project.path, ".relay", "commands");
         const projectCommands = await loadSlashCommands([{ root: projectRoot, scope: "project" }]);
-        for (const cmd of projectCommands) commands.push({ argumentHint: cmd.argumentHint, description: cmd.description, name: cmd.name, projectId: project.path, scope: "project" });
+        for (const cmd of projectCommands) commands.push({ argumentHint: cmd.argumentHint, description: cmd.description, name: cmd.name, projectPath: project.path, scope: "project" });
       }
     }
 
@@ -238,8 +245,6 @@ async function publishCatalog() {
   } catch (error) { console.warn("Failed to publish command catalog:", error); }
 }
 
-// Publish catalog on startup
-void publishCatalog();
 // Publish catalog on startup
 void publishCatalog();
 

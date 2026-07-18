@@ -2,7 +2,13 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DEFAULT_MODEL_ID, listThinkingLevels, MODEL_CATALOG } from "@relay/shared";
 
-import { Composer } from "./composer";
+import { Composer, type SlashCommandEntry } from "./composer";
+
+const SAMPLE_COMMANDS: SlashCommandEntry[] = [
+  { description: "List available commands", name: "help", scope: "builtin" },
+  { argumentHint: "[instructions]", description: "Review the current diff", name: "review", scope: "builtin" },
+  { description: "Restore the latest checkpoint", name: "rewind", scope: "builtin" },
+];
 
 const noop = async () => {};
 
@@ -74,6 +80,52 @@ test("reasoning variant picker appears for multi-level models and all current mo
   // Default model (deepseek-v4-flash) has 'none' + 'high' — picker should appear
   const singleMarkup = render();
   expect(singleMarkup).toContain('aria-label="Reasoning variant"');
+});
+
+test("typing a bare slash opens the command dropdown listing all commands", () => {
+  const markup = render({ commands: SAMPLE_COMMANDS, content: "/" });
+  expect(markup).toContain('role="listbox"');
+  expect(markup).toContain("/help");
+  expect(markup).toContain("/review");
+  expect(markup).toContain("/rewind");
+  expect(markup).toContain("[instructions]");
+  expect(markup).toContain("List available commands");
+});
+
+test("the dropdown filters by prefix as the user types", () => {
+  const markup = render({ commands: SAMPLE_COMMANDS, content: "/re" });
+  expect(markup).toContain("/review");
+  expect(markup).toContain("/rewind");
+  expect(markup).not.toContain("/help");
+});
+
+test("the first match is highlighted by default, using the patina-styled option class", () => {
+  const markup = render({ commands: SAMPLE_COMMANDS, content: "/re" });
+  const highlighted = markup.match(/<button aria-selected="true"[^]*?<\/button>/)?.[0];
+  expect(highlighted).toBeDefined();
+  expect(highlighted).toContain("/review");
+  expect(highlighted).not.toContain("/rewind");
+  expect(highlighted).toContain("composer-command-option");
+});
+
+test("no dropdown once the command name is complete and args follow", () => {
+  const markup = render({ commands: SAMPLE_COMMANDS, content: "/review fix the auth bug" });
+  expect(markup).not.toContain('role="listbox"');
+});
+
+test("no dropdown when content doesn't start with a slash", () => {
+  const markup = render({ commands: SAMPLE_COMMANDS, content: "help me review this" });
+  expect(markup).not.toContain('role="listbox"');
+});
+
+test("no dropdown when no commands match the typed prefix", () => {
+  const markup = render({ commands: SAMPLE_COMMANDS, content: "/zzz" });
+  expect(markup).not.toContain('role="listbox"');
+});
+
+test("empty commands list never opens the dropdown", () => {
+  const markup = render({ content: "/" });
+  expect(markup).not.toContain('role="listbox"');
 });
 
 test("running turns lock the model and reasoning variant pickers", () => {

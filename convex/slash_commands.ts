@@ -9,7 +9,7 @@ export const publishCatalog = mutationGeneric({
       argumentHint: v.optional(v.string()),
       description: v.string(),
       name: v.string(),
-      projectId: v.optional(v.id("projects")),
+      projectPath: v.optional(v.string()),
       scope: v.union(v.literal("builtin"), v.literal("project"), v.literal("user"), v.literal("skill")),
     })),
     deviceToken: v.string(),
@@ -19,9 +19,12 @@ export const publishCatalog = mutationGeneric({
     // Delete all existing commands for this machine
     const existing = await ctx.db.query("slashCommands").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).collect();
     for (const cmd of existing) await ctx.db.delete(cmd._id);
-    // Insert new catalog
-    for (const cmd of args.commands) {
-      await ctx.db.insert("slashCommands", { ...cmd, machineId: machine._id });
+    // Insert new catalog, resolving project-scoped commands' path to the actual project doc
+    for (const { projectPath, ...cmd } of args.commands) {
+      const project = projectPath
+        ? await ctx.db.query("projects").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).filter((q) => q.eq(q.field("path"), projectPath)).unique()
+        : null;
+      await ctx.db.insert("slashCommands", { ...cmd, machineId: machine._id, projectId: project?._id });
     }
   },
 });

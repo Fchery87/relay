@@ -25,7 +25,7 @@ export interface ConversationGateway {
   recordMcpTaskStatus?(input: { serverId: string; status: string; taskId: string; threadId: string }): Promise<unknown>;
   requestMcpInput?(input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }): Promise<Record<string, unknown>>;
   requestTrust?(projectId: string): Promise<void>;
-  publishCommandCatalog?(commands: Array<{ argumentHint?: string; description: string; name: string; projectId?: string; scope: "builtin" | "project" | "user" | "skill" }>): Promise<void>;
+  publishCommandCatalog?(commands: Array<{ argumentHint?: string; description: string; name: string; projectPath?: string; scope: "builtin" | "project" | "user" | "skill" }>): Promise<void>;
   updateTodos?(input: { items: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>; threadId: string }): Promise<void>;
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
   waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
@@ -101,6 +101,7 @@ export async function runQueuedTurn({
   provider,
   platform = "linux",
   resolveProjectRoot,
+  resolveSlashCommands,
   trustStore,
   yolo = false,
 }: {
@@ -112,6 +113,7 @@ export async function runQueuedTurn({
   provider: ModelProvider | ModelProviderRouter;
   platform?: MachinePlatform;
   resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
+  resolveSlashCommands?: (input: { projectPath: string }) => Promise<Array<{ model?: string; name: string; template: string }>>;
   trustStore?: TrustStore;
   yolo?: boolean;
 }): Promise<boolean> {
@@ -155,6 +157,10 @@ export async function runQueuedTurn({
       }
       // Prompt built-in: expand the template
       expandedPrompt = expandCommand({ args: slashInvocation.args, template: builtin.template });
+    } else if (resolveSlashCommands) {
+      const loaded = await resolveSlashCommands({ projectPath: queued.projectPath });
+      const custom = loaded.find((command) => command.name === slashInvocation.name);
+      if (custom) expandedPrompt = expandCommand({ args: slashInvocation.args, template: custom.template });
     }
   }
 

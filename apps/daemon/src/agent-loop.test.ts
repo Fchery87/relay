@@ -40,6 +40,60 @@ test("flushes the first token then coalesces rapid scripted chunks", async () =>
   expect(updates).toEqual(["Hello", "Hello world"]);
 });
 
+test("a loaded (non-builtin) slash command expands its template but stores the raw invocation in history", async () => {
+  const prompts: string[] = [];
+  const provider: ModelProvider = {
+    async *streamReply({ prompt }) { prompts.push(prompt); yield { kind: "text", text: "ok" }; yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } }; },
+  };
+  const resolved: string[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "/fix-issue 123", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    provider,
+    policy,
+    resolveSlashCommands: async ({ projectPath }) => { resolved.push(projectPath); return [{ name: "fix-issue", template: "Fix issue #$1 following repo conventions." }]; },
+  });
+
+  expect(resolved).toEqual(["/tmp"]);
+  expect(prompts[0]).toContain("Fix issue #123 following repo conventions.");
+});
+
+test("an unknown slash command falls through as literal text", async () => {
+  const prompts: string[] = [];
+  const provider: ModelProvider = {
+    async *streamReply({ prompt }) { prompts.push(prompt); yield { kind: "text", text: "ok" }; yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } }; },
+  };
+  await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "/nope some args", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    provider,
+    policy,
+    resolveSlashCommands: async () => [],
+  });
+
+  expect(prompts[0]).toContain("/nope some args");
+});
+
 test("a governed task call queues a narrowed subagent run", async () => {
   const queued: unknown[] = [];
   let waited = false;

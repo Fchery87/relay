@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -15,7 +15,7 @@ import { PlanPanel, type PlanArtifact, type PlanPhase } from "./plan-panel";
 import { McpElicitationCards, type McpElicitation } from "./mcp-elicitation-card";
 import { type ThreadEvent } from "./thread-activity";
 import { resolveHandoffStage } from "./handoff-trace-utils";
-import { Composer } from "./composer";
+import { Composer, type SlashCommandEntry } from "./composer";
 import { InspectorPanel } from "./inspector";
 import { TerminalDrawer } from "./terminal-drawer";
 import { createThreadRef, legacyRunData, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile } from "./run-data";
@@ -52,6 +52,7 @@ const updatePlanModels = makeFunctionReference<"mutation", { buildModelId: strin
 const updatePlanDraft = makeFunctionReference<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:updateDraft");
 const approvePlan = makeFunctionReference<"mutation", { content: string; expectedRevision: number; threadId: string }, null>("plans:approve");
 const listMcpElicitations = makeFunctionReference<"query", { threadId: string }, McpElicitation[]>("mcp_elicitations:listForThread");
+const listSlashCommands = makeFunctionReference<"query", { threadId: string }, SlashCommandEntry[]>("slash_commands:listForThread");
 const submitMcpElicitation = makeFunctionReference<"mutation", { elicitationId: string; responseJson: string }, null>("mcp_elicitations:submit");
 const cancelMcpElicitation = makeFunctionReference<"mutation", { elicitationId: string }, null>("mcp_elicitations:cancel");
 
@@ -137,6 +138,8 @@ export function ThreadView({
   const subagentRuns = useQuery(listSubagentTree, activeThreadId ? { threadId: activeThreadId } : "skip");
   const plan = useQuery(getPlan, isPlanRun && activeThreadId ? { threadId: activeThreadId } : "skip");
   const mcpElicitations = useQuery(listMcpElicitations, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const slashCommands = useQuery(listSlashCommands, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const scrollBottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setShowComparison(false);
     setShowMobileTools(false);
@@ -144,6 +147,14 @@ export function ThreadView({
     if (requestedView) setToolSurfaceState(requestedView);
     else if (isPlanRun) setToolSurfaceState("plan");
   }, [activeThreadId, isPlanRun, requestedView]);
+  useEffect(() => {
+    // Deferred a frame so this runs after the browser has settled layout for the
+    // just-rendered messages — scrolling immediately can measure stale height.
+    const frame = requestAnimationFrame(() => {
+      scrollBottomRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeThreadId, messages]);
 
   function setToolSurface(view: WorkbenchTab) {
     setToolSurfaceState(view);
@@ -259,6 +270,7 @@ export function ThreadView({
               <McpElicitationCards items={mcpElicitations ?? []} onCancel={(elicitationId) => cancelElicitation({ elicitationId })} onSubmit={(input) => submitElicitation(input)} />
               <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
               <ThreadMessages checkpoints={checkpoints ?? []} messages={messages ?? []} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
+              <div aria-hidden="true" ref={scrollBottomRef} />
             </> : null}
             {activeToolSurface === "changes" ? <section className="diff-panel"><header className="panel-heading"><div><span>Review workspace</span><h2>Changes</h2></div>{diffComments?.some((comment) => !comment.resolved) ? <strong>{diffComments.filter((comment) => !comment.resolved).length} unresolved</strong> : null}</header><CheckpointComparison checkpoints={checkpoints ?? []} onCompare={async (input) => { const comparisonId = await compareCheckpoints({ ...input, threadId: activeThreadId }); setRequestedComparisonId(comparisonId); setShowComparison(true); }} />{showComparison ? <button className="current-diff" onClick={() => setShowComparison(false)} type="button">Current changes</button> : null}<p aria-live="polite" className="comparison-status">{showComparison ? `Comparison: ${activeComparison?.status ?? "queued"}` : ""}</p><DiffView comments={showComparison ? [] : diffComments ?? []} content={showComparison && activeComparison?.status === "complete" ? activeComparison.content ?? "No differences." : diff?.content ?? "No changes."} onCreateComment={showComparison ? undefined : (input) => createComment({ ...input, threadId: activeThreadId })} />
               {!showComparison && diffComments?.some((comment) => !comment.resolved) ? <button className="address-comments" onClick={() => void send({ content: "Address the unresolved review comments.", threadId: activeThreadId })} type="button">Address comments</button> : null}
@@ -272,6 +284,7 @@ export function ThreadView({
             <Composer
               attachmentError={attachmentError}
               attachments={attachments}
+              commands={slashCommands ?? []}
               content={content}
               isPlanRun={isPlanRun}
               isSubmitting={isSubmittingDirective}

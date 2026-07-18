@@ -46,7 +46,7 @@ const listPendingProjectsQuery = makeFunctionReference<"query", { deviceToken: s
 const resolvePendingProjectMutation = makeFunctionReference<"mutation", { deviceToken: string; projectId: string; ok: boolean; error?: string }, null>("projects:resolvePending");
 const requestTrustMutation = makeFunctionReference<"mutation", { deviceToken: string; projectId: string }, null>("projects:requestTrust");
 const getProjectQuery = makeFunctionReference<"query", { deviceToken: string; projectId: string }, { trustState?: "requested" | "trusted" | "untrusted" } | null>("projects:get");
-const publishCommandCatalogMutation = makeFunctionReference<"mutation", { commands: Array<{ argumentHint?: string; description: string; name: string; projectId?: string; scope: "builtin" | "project" | "user" | "skill" }>; deviceToken: string }, null>("slash_commands:publishCatalog");
+const publishCommandCatalogMutation = makeFunctionReference<"mutation", { commands: Array<{ argumentHint?: string; description: string; name: string; projectPath?: string; scope: "builtin" | "project" | "user" | "skill" }>; deviceToken: string }, null>("slash_commands:publishCatalog");
 const updateTodosMutation = makeFunctionReference<"mutation", { deviceToken: string; items: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>; threadId: string }, null>("todos:update");
 const listMcpServersQuery = makeFunctionReference<"query", { deviceToken: string }, unknown[]>("mcp_servers:listForDaemon");
 const reportMcpStatusMutation = makeFunctionReference<"mutation", { authorizationUrl?: string; deviceToken: string; error?: string; serverId: string; status: "connecting" | "authorizing" | "connected" | "error"; toolCount: number }, null>("mcp_servers:reportStatus");
@@ -124,7 +124,7 @@ export function createConvexConversationGateway({ deploymentUrl, deviceToken }: 
       }
     },
     requestTrust: (projectId: string) => client.mutation(requestTrustMutation, { deviceToken, projectId }).then(() => undefined),
-    publishCommandCatalog: (commands: Array<{ argumentHint?: string; description: string; name: string; projectId?: string; scope: "builtin" | "project" | "user" | "skill" }>) => client.mutation(publishCommandCatalogMutation, { commands, deviceToken }).then(() => undefined),
+    publishCommandCatalog: (commands: Array<{ argumentHint?: string; description: string; name: string; projectPath?: string; scope: "builtin" | "project" | "user" | "skill" }>) => client.mutation(publishCommandCatalogMutation, { commands, deviceToken }).then(() => undefined),
     updateTodos: (input: { items: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>; threadId: string }) => client.mutation(updateTodosMutation, { ...input, deviceToken }).then(() => undefined),
     recordUsage: (input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }) => client.mutation(recordUsageMutation, { ...input, deviceToken }),
     snapshotDiff: (input: { content: string; threadId: string }) => client.mutation(snapshotDiffMutation, { ...input, deviceToken }),
