@@ -6,12 +6,15 @@ import { createCheckpoint } from "./checkpoints";
 import type { Policy } from "./policy";
 import { classifyToolCall, effectivePolicy } from "./policy";
 import { runAgenticTurn, type ChatMessage, type TurnCallbacks, type TurnModelProvider } from "./turn-loop";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+import type { TrustStore } from "./trust";
 
 export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
-  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; history?: Array<{ content: string; role: string }>; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
+  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; history?: Array<{ content: string; role: string }>; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
   claimSteeringMessages(input: { deviceToken: string; threadId: string }): Promise<Array<{ content: string }>>;
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; status?: "done" | "failed"; threadId: string }): Promise<unknown>;
   completePlanning?(input: { content: string; messageId: string; threadId: string }): Promise<unknown>;
@@ -19,6 +22,7 @@ export interface ConversationGateway {
   recordCheckpoint?(input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }): Promise<unknown>;
   recordMcpTaskStatus?(input: { serverId: string; status: string; taskId: string; threadId: string }): Promise<unknown>;
   requestMcpInput?(input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }): Promise<Record<string, unknown>>;
+  requestTrust?(projectId: string): Promise<void>;
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
   waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
@@ -54,6 +58,7 @@ export async function runQueuedTurn({
   provider,
   platform = "linux",
   resolveProjectRoot,
+  trustStore,
   yolo = false,
 }: {
   deviceToken: string;
@@ -64,6 +69,7 @@ export async function runQueuedTurn({
   provider: ModelProvider | ModelProviderRouter;
   platform?: MachinePlatform;
   resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
+  trustStore?: TrustStore;
   yolo?: boolean;
 }): Promise<boolean> {
   const queued = await gateway.claimQueuedMessage({ deviceToken });
@@ -76,6 +82,21 @@ export async function runQueuedTurn({
   const mcpTools = mcp ? await mcp.listTools().catch(() => []) : [];
 
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
+
+  // Project trust gate: if .relay/ exists and trust is unknown, request it and sync remote decisions
+  if (trustStore) {
+    const dotRelay = join(queued.projectPath, ".relay");
+    let dotRelayExists = false;
+    try { dotRelayExists = (await stat(dotRelay)).isDirectory(); } catch { /* .relay doesn't exist */ }
+    if (dotRelayExists) {
+      const localTrust = await trustStore.get(queued.projectPath);
+      if (localTrust === "unknown") {
+        // Request trust via the gateway (idempotent — Convex ignores already-decided projects)
+        try { await gateway.requestTrust?.(queued.projectId!); } catch { /* best-effort */ }
+      }
+    }
+  }
+
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
   const turnPolicy = effectivePolicy({ base: policy, profile: queued.permissionProfile ?? "workspace-write", yolo });
   try {
@@ -116,7 +137,7 @@ async function runClaimedTurn({
   policy: Policy;
   platform: MachinePlatform;
   prompt: string;
-  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
+  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
   reviewComments: ReviewComment[];
   root: string;
   turnProvider: ModelProvider;
@@ -301,7 +322,7 @@ async function runAgenticClaimedTurn({
   policy: Policy;
   platform: MachinePlatform;
   prompt: string;
-  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
+  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
   reviewComments: ReviewComment[];
   root: string;
   turnProvider: TurnModelProvider;

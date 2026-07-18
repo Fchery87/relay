@@ -82,3 +82,16 @@ export const resolveTrust = mutationGeneric({
     await ctx.db.patch(args.projectId, { trustRequestedAt: undefined, trustState: args.trustState });
   },
 });
+
+export const get = queryGeneric({
+  args: {
+    deviceToken: v.string(),
+    projectId: v.id("projects"),
+  },
+  handler: async (ctx, args) => {
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
+    const project = await ctx.db.get(args.projectId);
+    if (!project || project.machineId !== machine._id) return null;
+    return { trustState: project.trustState };
+  },
+});

@@ -18,6 +18,7 @@ export const queuedMessageSchema = z.object({
   modelId: z.string().min(1).max(256),
   permissionProfile: z.enum(["read-only", "workspace-write", "full-access"]).optional(),
   planPhase: z.enum(["planning", "building", "complete"]).optional(),
+  projectId: id.optional(),
   projectPath,
   reviewComments: z.array(reviewCommentTransportSchema).max(1_000),
   threadId: id,

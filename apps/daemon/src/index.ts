@@ -22,6 +22,7 @@ import { ALLOW_ALL_POLICY, loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
 import { McpRegistry } from "./mcp-registry";
 import { runQueuedProjectRequest } from "./project-request-worker";
+import { TrustStore } from "./trust";
 
 export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
@@ -156,6 +157,7 @@ setInterval(() => {
     provider,
     platform: config.registration.platform,
     resolveProjectRoot: (input) => worktrees.resolve(input),
+    trustStore,
     yolo: yoloMode,
   })
     .catch((error: unknown) => console.error("Relay turn failed", error))
@@ -202,6 +204,7 @@ setInterval(() => {
 }, 200);
 
 const projectRequestGateway = createConvexProjectRequestGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
+const trustStore = new TrustStore({ daemonHome });
 let projectRequestRunning = false;
 setInterval(() => {
   if (projectRequestRunning) return;
@@ -210,6 +213,24 @@ setInterval(() => {
     .catch((error: unknown) => console.error("Relay project request worker failed", error))
     .finally(() => { projectRequestRunning = false; });
 }, 5_000);
+
+// Sync trust decisions from Convex to local store periodically
+setInterval(() => {
+  void (async () => {
+    try {
+      const projects = await listProjects({ daemonHome, env: Bun.env });
+      for (const project of projects) {
+        try {
+          const remoteState = await projectRequestGateway.getTrustState(project.path);
+          if (!remoteState) continue;
+          const localState = await trustStore.get(project.path);
+          if (remoteState === "trusted" && localState !== "trusted") await trustStore.set(project.path, "trusted");
+          if (remoteState === "untrusted" && localState !== "untrusted") await trustStore.set(project.path, "untrusted");
+        } catch { /* best-effort per-project */ }
+      }
+    } catch { /* best-effort */ }
+  })();
+}, 30_000);
 }
 
 if (import.meta.main) {
