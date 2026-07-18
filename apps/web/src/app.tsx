@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Authenticated, AuthLoading, Unauthenticated, useMutation, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -14,7 +14,7 @@ import { resolveSettingsSection, SettingsView, type SettingsSection } from "./se
 import { shortcutForEvent, useShellState } from "./shell-state";
 import { SubagentPanel, type RoleRecord } from "./subagent-panel";
 import { ThreadView } from "./thread-view";
-import { createThreadRef, legacyRunData, listNeedsYou, type LegacyRunSummary, type MachineSummary } from "./run-data";
+import { createThreadRef, legacyRunData, listNeedsYou, removeThreadRef, type LegacyRunSummary, type MachineSummary } from "./run-data";
 import { WorkspaceSidebar, type SidebarProject } from "./workspace-sidebar";
 import type { ThinkingLevel } from "@relay/shared";
 
@@ -71,19 +71,65 @@ export function UnconfiguredWorkspace() {
 
 function SidebarRuns({ activeThreadId, onSelectRun, projectId }: { activeThreadId?: string; onSelectRun: (projectId: string, threadId: string) => void; projectId: string }) {
   const runs = useQuery(legacyRunData.listRuns, { projectId }) as LegacyRunSummary[] | undefined;
+  const removeThread = useMutation(removeThreadRef);
+  const navigate = useNavigate();
+  const [pendingDelete, setPendingDelete] = useState<{ threadId: string; title: string } | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (pendingDelete && !dialog.open) dialog.showModal();
+    if (!pendingDelete && dialog.open) dialog.close();
+  }, [pendingDelete]);
+
   if (runs === undefined) return <p className="sidebar-empty">Loading runs…</p>;
   if (runs.length === 0) return <p className="sidebar-empty">No runs yet</p>;
   return (
-    <ul className="run-list">
-      {runs.map((run) => (
-        <li key={run._id}>
-          <button aria-current={run._id === activeThreadId ? "page" : undefined} className="run-link" onClick={() => onSelectRun(projectId, run._id)} type="button">
-            <span aria-hidden="true" className="run-status-dot" data-thread-status={run.status} />
-            <span className="run-title">{run.title}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="run-list">
+        {runs.map((run) => (
+          <li key={run._id}>
+            <button aria-current={run._id === activeThreadId ? "page" : undefined} className="run-link" onClick={() => onSelectRun(projectId, run._id)} type="button">
+              <span aria-hidden="true" className="run-status-dot" data-thread-status={run.status} />
+              <span className="run-title">{run.title}</span>
+              <button
+                aria-label="Delete task"
+                className="run-delete"
+                onClick={(e) => { e.stopPropagation(); setPendingDelete({ threadId: run._id, title: run.title }); }}
+                type="button"
+              >
+                ✕
+              </button>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <dialog
+        className="run-delete-confirm-dialog"
+        onCancel={(e) => { e.preventDefault(); setPendingDelete(null); }}
+        ref={dialogRef}
+      >
+        <form
+          method="dialog"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!pendingDelete) return;
+            await removeThread({ threadId: pendingDelete.threadId });
+            if (activeThreadId === pendingDelete.threadId) navigate({ to: `/projects/${projectId}` });
+            setPendingDelete(null);
+          }}
+        >
+          <span className="dialog-kicker">Destructive action</span>
+          <h2>Delete task</h2>
+          <p>This will permanently remove all messages, plans, and activity for <strong>{pendingDelete?.title ?? "this thread"}</strong>.</p>
+          <footer>
+            <button onClick={() => setPendingDelete(null)} type="button">Cancel</button>
+            <button className="button-primary button-destructive" type="submit">Delete</button>
+          </footer>
+        </form>
+      </dialog>
+    </>
   );
 }
 

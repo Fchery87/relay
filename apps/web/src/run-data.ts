@@ -50,6 +50,12 @@ export const updatePermissionProfileRef = makeFunctionReference<
   null
 >("conversations:updatePermissionProfile");
 
+export const removeThreadRef = makeFunctionReference<
+  "mutation",
+  { threadId: string },
+  null
+>("conversations:removeThread");
+
 export type ProjectionRunSummary = {
   runId: string;
   sequence: number;
