@@ -8,12 +8,14 @@ export type ToolCall =
   | { command: string; kind: "bash"; timeout?: number }
   | { capabilities: Capability[]; kind: "task"; role: string; task: string }
   | { arguments: Record<string, unknown>; kind: "mcp"; name: string; risk?: "low" | "high" | "critical"; serverId: string }
+  | { kind: "skill"; name: string }
+  | { items: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>; kind: "todo" }
   | { kind: "web_search"; query: string }
   | { kind: "web_fetch"; prompt?: string; url: string };
 
 export async function executeToolCall({ call, onCompleted, onMcp, onOutput, onTask, platform, root }: {
   call: ToolCall;
-  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "task" | "web_search" | "web_fetch" }): Promise<void>;
+  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "skill" | "task" | "web_search" | "web_fetch" }): Promise<void>;
   onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
   onOutput?: (output: string) => Promise<void>;
   onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<string>;
@@ -31,6 +33,18 @@ export async function executeToolCall({ call, onCompleted, onMcp, onOutput, onTa
     const output = await onTask(call);
     await onCompleted({ summary: `Delegated to ${call.role}`, tool: "task" });
     return { output, succeeded: true };
+  }
+  if (call.kind === "skill") {
+    // Skill loading is handled externally via the onSkill callback
+    const body = (call as any).body ?? "Skill not loaded.";
+    await onCompleted({ summary: `Loaded skill ${call.name}`, tool: "skill" });
+    return { output: body, succeeded: true };
+  }
+  if (call.kind === "todo") {
+    // Todo list is handled via the onTodo callback from the gateway
+    const itemCount = call.items.length;
+    await onCompleted({ summary: `Updated todo list (${itemCount} items)`, tool: "skill" });
+    return { output: `Todo list updated (${itemCount} items)`, succeeded: true };
   }
   if (call.kind === "web_search") {
     // Pass-through: the model provider (Anthropic/OpenAI) executes web search

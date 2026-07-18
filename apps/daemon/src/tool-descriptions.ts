@@ -64,6 +64,17 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     "Use the optional prompt parameter to focus extraction on specific information.",
     "Use for: reading documentation pages, API references, or any web content needed for the task.",
   ].join("\n"),
+  skill: [
+    "Load a skill's full instructions. Invoke when the current task matches a skill's description.",
+    "Provide the skill name as listed in AVAILABLE SKILLS.",
+    "The skill body is returned, which may contain file references relative to the skill's directory.",
+  ].join("\n"),
+  todo: [
+    "Maintain the turn's task list. Rewrite the whole list each call.",
+    "Exactly one item in_progress at a time. Use for tasks with 3+ steps.",
+    "Items have status: pending, in_progress, or completed.",
+    "The todo list is shown in the UI and helps track progress through complex tasks.",
+  ].join("\n"),
 };
 
 export function getToolDescription(name: string): string {

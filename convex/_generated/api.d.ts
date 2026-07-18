@@ -33,8 +33,10 @@ import type * as plans from "../plans.js";
 import type * as projections_publish from "../projections/publish.js";
 import type * as projects from "../projects.js";
 import type * as schema_narrow from "../schema_narrow.js";
+import type * as slash_commands from "../slash_commands.js";
 import type * as subagents from "../subagents.js";
 import type * as test_helpers from "../test_helpers.js";
+import type * as todos from "../todos.js";
 import type * as usage from "../usage.js";
 import type * as users from "../users.js";
 
@@ -70,8 +72,10 @@ declare const fullApi: ApiFromModules<{
   "projections/publish": typeof projections_publish;
   projects: typeof projects;
   schema_narrow: typeof schema_narrow;
+  slash_commands: typeof slash_commands;
   subagents: typeof subagents;
   test_helpers: typeof test_helpers;
+  todos: typeof todos;
   usage: typeof usage;
   users: typeof users;
 }>;

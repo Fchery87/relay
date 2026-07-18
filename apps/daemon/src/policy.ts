@@ -47,6 +47,8 @@ export function effectivePolicy({ base, profile, yolo }: { base: Policy; profile
 export function classifyToolCall(call: ToolCall): { capability: Capability; risk: RiskTier } {
   if (call.kind === "mcp") return { capability: "exec", risk: call.risk ?? "high" };
   if (call.kind === "task") return { capability: "task", risk: "low" };
+  if (call.kind === "skill") return { capability: "read", risk: "low" };
+  if (call.kind === "todo") return { capability: "read", risk: "low" };
   if (call.kind === "read") return { capability: "read", risk: isSensitivePath(call.path) ? "critical" : "low" };
   if (call.kind === "edit") return { capability: "edit", risk: isSensitivePath(call.path) ? "critical" : "low" };
   if (call.kind === "web_search") return { capability: "search", risk: "low" };

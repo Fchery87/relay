@@ -30,7 +30,7 @@ export interface ConversationGateway {
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
   waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
-  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" | "web_search" | "web_fetch" }): Promise<unknown>;
+  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "skill" | "task" | "web_search" | "web_fetch" }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
 }
 
