@@ -13,7 +13,7 @@ export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
-  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
+  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; history?: Array<{ content: string; role: string }>; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
   claimSteeringMessages(input: { deviceToken: string; threadId: string }): Promise<Array<{ content: string }>>;
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; status?: "done" | "failed"; threadId: string }): Promise<unknown>;
   completePlanning?(input: { content: string; messageId: string; threadId: string }): Promise<unknown>;

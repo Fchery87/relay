@@ -187,8 +187,21 @@ export const claimQueuedMessage = mutationGeneric({
         .collect();
       await ctx.db.patch(message._id, { queuedThreadId: undefined, status: "complete" });
       await ctx.db.patch(thread._id, { status: "running" });
+
+      // Build history: last 40 non-queued messages
+      const historyMessages = await ctx.db.query("messages")
+        .withIndex("by_thread", (q) => q.eq("threadId", thread._id))
+        .filter((q) => q.neq(q.field("status"), "queued"))
+        .order("desc")
+        .take(40);
+      const history = historyMessages.reverse().map((m) => ({
+        content: m.content.length > 4000 ? m.content.slice(0, 4000) : m.content,
+        role: m.role,
+      }));
+
       return {
         content: message.content,
+        history,
         modelId: thread.mode === "plan" ? (thread.planPhase === "planning" ? thread.planModelId : thread.buildModelId) ?? DEFAULT_MODEL_ID : thread.modelId ?? DEFAULT_MODEL_ID,
         permissionProfile: thread.permissionProfile ?? "workspace-write",
         planPhase: thread.mode === "plan" ? thread.planPhase : undefined,
