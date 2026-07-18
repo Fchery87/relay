@@ -4,13 +4,13 @@ import { executeGovernedToolCall, summarizeToolCall, type GovernanceGateway, typ
 import { computeDiff } from "./git-review";
 import { createCheckpoint } from "./checkpoints";
 import type { Policy } from "./policy";
-import { classifyToolCall } from "./policy";
+import { classifyToolCall, effectivePolicy } from "./policy";
 
 export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
   appendAssistantText(input: { content: string; messageId: string }): Promise<unknown>;
   beginAssistantMessage(input: { threadId: string }): Promise<string>;
-  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
+  claimQueuedMessage(input: { deviceToken: string }): Promise<{ content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string } | null>;
   claimSteeringMessages(input: { deviceToken: string; threadId: string }): Promise<Array<{ content: string }>>;
   completeAssistantMessage(input: { messageId: string; resolvedCommentIds?: string[]; status?: "done" | "failed"; threadId: string }): Promise<unknown>;
   completePlanning?(input: { content: string; messageId: string; threadId: string }): Promise<unknown>;
@@ -53,6 +53,7 @@ export async function runQueuedTurn({
   provider,
   platform = "linux",
   resolveProjectRoot,
+  yolo = false,
 }: {
   deviceToken: string;
   gateway: ConversationGateway;
@@ -62,6 +63,7 @@ export async function runQueuedTurn({
   provider: ModelProvider | ModelProviderRouter;
   platform?: MachinePlatform;
   resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
+  yolo?: boolean;
 }): Promise<boolean> {
   const queued = await gateway.claimQueuedMessage({ deviceToken });
   if (!queued) return false;
@@ -74,8 +76,9 @@ export async function runQueuedTurn({
 
   const root = resolveProjectRoot ? await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId }) : queued.projectPath;
   const messageId = await gateway.beginAssistantMessage({ threadId: queued.threadId });
+  const turnPolicy = effectivePolicy({ base: policy, profile: queued.permissionProfile ?? "workspace-write", yolo });
   try {
-    return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy, platform, prompt, queued, reviewComments, root, turnProvider });
+    return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt, queued, reviewComments, root, turnProvider });
   } catch (error) {
     // Mark the turn failed so claimQueuedMessage stops skipping this thread (it treats "running" as busy).
     // Without this, an uncaught error here leaves the thread stuck and every later message sits queued forever.
@@ -108,7 +111,7 @@ async function runClaimedTurn({
   policy: Policy;
   platform: MachinePlatform;
   prompt: string;
-  queued: { content: string; modelId?: string; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
+  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
   reviewComments: ReviewComment[];
   root: string;
   turnProvider: ModelProvider;

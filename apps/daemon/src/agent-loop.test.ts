@@ -501,3 +501,82 @@ test("Stop during streaming checkpoints mutations before ending the turn", async
   expect(checkpoints).toHaveLength(1);
   expect((await runCommand({ command: `git show ${checkpoints[0]}:result.txt`, platform: "linux", root })).stdout).toBe("changed");
 });
+
+test("full-access profile auto-approves high-risk commands that base policy would ask", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-agent-full-access-"));
+  await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test && git commit --allow-empty -m base", platform: "linux", root });
+  let approvalRequests = 0;
+  let decisions: string[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "clean up", permissionProfile: "full-access", projectPath: root, threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    governance: {
+      recordDecision: async ({ decision }) => { decisions.push(decision); },
+      requestApproval: async () => { approvalRequests += 1; return "allow"; },
+    },
+    policy: { rules: [{ capability: "exec", decision: "ask", risk: "high" }] },
+    provider: new ScriptedModelProvider({ chunks: ["done"], toolCalls: [{ command: "rm -rf build", kind: "bash" }] }),
+  });
+  expect(approvalRequests).toBe(0);
+  expect(decisions).toEqual(["allow"]);
+});
+
+test("read-only profile denies edit tool calls", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-agent-readonly-"));
+  const prompts: string[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "edit this", permissionProfile: "read-only", projectPath: root, threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    governance,
+    policy,
+    provider: new ScriptedModelProvider({ chunks: ["denied"], toolCalls: [{ content: "new content", kind: "edit", path: "test.txt" }] }),
+  });
+  expect(access(join(root, "test.txt"))).rejects.toThrow();
+});
+
+test("yolo mode bypasses all permission checks even with workspace-write profile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-agent-yolo-"));
+  await runCommand({ command: "git init && git config user.email test@example.com && git config user.name Test && git commit --allow-empty -m base", platform: "linux", root });
+  let approvalRequests = 0;
+  let decisions: string[] = [];
+  await runQueuedTurn({
+    deviceToken: "device",
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "go", permissionProfile: "workspace-write", projectPath: root, threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    governance: {
+      recordDecision: async ({ decision }) => { decisions.push(decision); },
+      requestApproval: async () => { approvalRequests += 1; return "allow"; },
+    },
+    policy: { rules: [{ capability: "exec", decision: "deny", risk: "critical" }] },
+    provider: new ScriptedModelProvider({ chunks: ["executed"], toolCalls: [{ command: "whoami", kind: "bash" }] }),
+    yolo: true,
+  });
+  expect(approvalRequests).toBe(0);
+  expect(decisions).toEqual(["allow"]);
+});
