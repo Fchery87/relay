@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { ToolCall } from "./tool-executor";
 
-export const capabilitySchema = z.enum(["read", "edit", "exec", "task"]);
+export const capabilitySchema = z.enum(["read", "edit", "exec", "task", "search"]);
 export const riskSchema = z.enum(["low", "high", "critical"]);
 export const policyDecisionSchema = z.enum(["allow", "deny", "ask"]);
 export const policySchema = z.object({
@@ -24,6 +24,8 @@ export function classifyToolCall(call: ToolCall): { capability: Capability; risk
   if (call.kind === "task") return { capability: "task", risk: "low" };
   if (call.kind === "read") return { capability: "read", risk: isSensitivePath(call.path) ? "critical" : "low" };
   if (call.kind === "edit") return { capability: "edit", risk: isSensitivePath(call.path) ? "critical" : "low" };
+  if (call.kind === "web_search") return { capability: "search", risk: "low" };
+  if (call.kind === "web_fetch") return { capability: "search", risk: "low" };
   const normalized = call.command.toLowerCase().replaceAll(/\s+/g, " ").trim();
   if (/\bsudo\b|\brm\s+-[^\n]*r[^\n]*f[^\n]*\s+\/(?:\s|$)|\b(?:curl|wget)\b[^\n|]*\|\s*(?:ba)?sh\b|(?:^|\s)(?:env|printenv)(?:\s|$)|\.env(?:\.[\w-]+)?|\.ssh(?:\/|\s)|\.relay(?:\/|\s)|process\.env|bun\.env|\/proc\/[^\s]+\/environ/.test(normalized)) {
     return { capability: "exec", risk: "critical" };

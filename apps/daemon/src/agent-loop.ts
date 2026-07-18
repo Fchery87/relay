@@ -21,7 +21,7 @@ export interface ConversationGateway {
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
   waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
-  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }): Promise<unknown>;
+  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" | "web_search" | "web_fetch" }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
 }
 
@@ -129,7 +129,7 @@ async function runClaimedTurn({
         await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
         return true;
       }
-      const toolResult = queued.planPhase === "planning" && call.kind !== "read" ? await refusePlanningMutation({ call, governance, threadId: queued.threadId }) : await executeGovernedToolCall({
+      const toolResult = queued.planPhase === "planning" && call.kind !== "read" && call.kind !== "web_search" && call.kind !== "web_fetch" ? await refusePlanningMutation({ call, governance, threadId: queued.threadId }) : await executeGovernedToolCall({
         call,
         governance,
         onTask: gateway.enqueueSubagent ? async (taskCall) => {
@@ -256,7 +256,10 @@ function isModelProviderRouter(provider: ModelProvider | ModelProviderRouter): p
 }
 
 function policyCapabilities(policy: Policy): Capability[] {
-  return [...new Set(policy.rules.filter((rule) => rule.decision !== "deny").map((rule) => rule.capability))];
+  // Only return capabilities that can be delegated to subagents.
+  // "search" is excluded because web search is executed by the model
+  // provider natively, not by subagents.
+  return [...new Set(policy.rules.filter((rule) => rule.decision !== "deny" && rule.capability !== "search").map((rule) => rule.capability as Capability))];
 }
 
 async function refusePlanningMutation({ call, governance, threadId }: { call: Parameters<typeof classifyToolCall>[0]; governance: GovernanceGateway; threadId: string }): Promise<GovernedToolResult> {

@@ -220,6 +220,8 @@ const toolCallSchema = z.discriminatedUnion("kind", [
   z.object({ content: z.string(), kind: z.literal("edit"), path: z.string() }),
   z.object({ command: z.string(), kind: z.literal("bash") }),
   z.object({ capabilities: z.array(z.enum(["read", "edit", "exec", "task"])), kind: z.literal("task"), role: z.string(), task: z.string() }),
+  z.object({ kind: z.literal("web_search"), query: z.string() }),
+  z.object({ kind: z.literal("web_fetch"), prompt: z.string().optional(), url: z.string() }),
 ]);
 
 function parseProviderToolCalls(payload: unknown, apiKind: CatalogModel["apiKind"], mcpTools: McpModelTool[] = []): ToolCall[] {
@@ -239,7 +241,17 @@ function parseProviderToolCalls(payload: unknown, apiKind: CatalogModel["apiKind
     const modelName = typeof name === "string" ? name : "";
     const mcpTool = mcpTools.find((tool, index) => mcpModelName(tool, index) === modelName);
     if (mcpTool) return { arguments: parseArguments(args), kind: "mcp", name: mcpTool.name, risk: mcpTool.risk, serverId: mcpTool.serverId };
-    return toolCallSchema.parse({ ...parseArguments(args), kind: name });
+    const parsedArgs = parseArguments(args);
+    // Map native tool names to Relay tool kinds. Anthropic uses "WebSearch"
+    // (via Claude Code) or "web_search"; OpenAI may use different naming.
+    const normalizedKind = modelName.toLowerCase();
+    if (normalizedKind === "web_search" || normalizedKind === "websearch") {
+      return toolCallSchema.parse({ kind: "web_search", query: typeof parsedArgs.query === "string" ? parsedArgs.query : (typeof parsedArgs.search_term === "string" ? parsedArgs.search_term : JSON.stringify(parsedArgs)) });
+    }
+    if (normalizedKind === "web_fetch" || normalizedKind === "webfetch") {
+      return toolCallSchema.parse({ kind: "web_fetch", url: typeof parsedArgs.url === "string" ? parsedArgs.url : "", prompt: typeof parsedArgs.prompt === "string" ? parsedArgs.prompt : undefined });
+    }
+    return toolCallSchema.parse({ ...parsedArgs, kind: name });
   });
 }
 

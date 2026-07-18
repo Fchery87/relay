@@ -15,7 +15,7 @@ export type GovernedToolResult =
 export async function executeGovernedToolCall({ call, governance, onCompleted, onMcp, onOutput, onTask, platform, policy, root, threadId }: {
   call: ToolCall;
   governance: GovernanceGateway;
-  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }): Promise<void>;
+  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "task" | "web_search" | "web_fetch" }): Promise<void>;
   onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
   onOutput?: (output: string) => Promise<void>;
   onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<string>;
@@ -48,6 +48,8 @@ export function summarizeToolCall(call: ToolCall): string {
   if (call.kind === "mcp") return `mcp ${call.serverId}/${call.name}`;
   if (call.kind === "task") return `task ${call.role}`;
   if (call.kind === "bash") return redactCredentials(call.command);
+  if (call.kind === "web_search") return `web search: ${call.query}`;
+  if (call.kind === "web_fetch") return `web fetch: ${call.url}`;
   return `${call.kind} ${call.path}`;
 }
 

@@ -43,7 +43,9 @@ export async function runQueuedSubagent({ artifactRoot, createWriterRoot, gatewa
     if (selected.toolCalls) for await (const call of selected.toolCalls({ prompt })) {
       if (++turns > run.maxTurns) throw new Error(`Subagent exceeded maxTurns (${run.maxTurns})`);
       const required = classifyToolCall(call).capability;
-      if (!run.capabilities.includes(required)) throw new Error(`Subagent capability ${required} is denied`);
+      // Subagents cannot delegate web search — skip with a refusal.
+      if (required === "search") throw new Error(`Subagent capability ${required} is not delegatable`);
+      if (!run.capabilities.includes(required as Capability)) throw new Error(`Subagent capability ${required} is denied`);
       const executed = await executeGovernedToolCall({
         call, governance, onCompleted: async () => undefined,
         onTask: gateway.enqueue ? async (taskCall) => {
