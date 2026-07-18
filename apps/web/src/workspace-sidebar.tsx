@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from "react";
 
 import { RelayBrand } from "./relay-brand";
 
-export type NeedsYouKind = "approval" | "plan-review" | "elicitation" | "failed";
+export type NeedsYouKind = "approval" | "plan-review" | "elicitation" | "failed" | "trust";
 
 export type NeedsYouItem = {
   kind: NeedsYouKind;
@@ -30,6 +30,7 @@ const KIND_LABELS: Readonly<Record<NeedsYouKind, string>> = {
   elicitation: "question",
   failed: "failed",
   "plan-review": "plan review",
+  trust: "trust",
 };
 
 type MachineGroup = {

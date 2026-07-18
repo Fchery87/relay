@@ -5,7 +5,7 @@ import { requireUser } from "./auth_helpers";
 const MAX_THREADS_PER_PROJECT = 50;
 const MAX_ITEMS = 100;
 
-type NeedsYouKind = "approval" | "plan-review" | "elicitation" | "failed";
+type NeedsYouKind = "approval" | "plan-review" | "elicitation" | "failed" | "trust";
 
 /**
  * The attention inbox: every run across the user's projects that is blocked
@@ -21,6 +21,10 @@ export const listNeedsYou = queryGeneric({
     for (const machine of machines) {
       const projects = await ctx.db.query("projects").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).collect();
       for (const project of projects) {
+        if (items.length >= MAX_ITEMS) return items;
+        if (project.trustState === "requested") {
+          items.push({ kind: "trust", projectId: project._id, projectName: project.name, threadId: "" as any, title: `Trust ${project.name}` });
+        }
         const threads = await ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", project._id)).take(MAX_THREADS_PER_PROJECT);
         for (const thread of threads) {
           if (items.length >= MAX_ITEMS) return items;
