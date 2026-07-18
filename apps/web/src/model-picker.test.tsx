@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { listThinkingLevels, MODEL_CATALOG } from "@relay/shared";
+import { MODEL_CATALOG } from "@relay/shared";
 
 import { groupModelsByProvider, ModelPicker } from "./model-picker";
 
@@ -15,7 +15,7 @@ test("groups catalog models by provider preserving catalog order", () => {
   }
 });
 
-test("trigger shows the active model and thinking level", () => {
+test("trigger shows the active model name", () => {
   const model = MODEL_CATALOG.models[0]!;
   const markup = renderToStaticMarkup(
     <ModelPicker modelId={model.id} onChange={async () => {}} thinkingLevel="none" />,
@@ -25,13 +25,13 @@ test("trigger shows the active model and thinking level", () => {
   expect(markup).not.toContain('role="listbox"');
 });
 
-test("open popover lists provider groups and thinking levels", () => {
-  const model = MODEL_CATALOG.models.find((entry) => listThinkingLevels(entry).length > 1);
-  if (!model) throw new Error("Catalog has no thinking-capable model to test with");
+test("open popover lists provider groups without a thinking section", () => {
+  const model = MODEL_CATALOG.models.find((entry) => entry.id === MODEL_CATALOG.defaultModelId)!;
   const markup = renderToStaticMarkup(
     <ModelPicker defaultOpen modelId={model.id} onChange={async () => {}} thinkingLevel="none" />,
   );
   expect(markup).toContain('role="listbox"');
   expect(markup).toContain(model.provider.toUpperCase());
-  expect(markup).toContain("Thinking");
+  // Thinking is now a separate ReasoningVariantPicker, not inside the model popover
+  expect(markup).not.toContain("Thinking");
 });

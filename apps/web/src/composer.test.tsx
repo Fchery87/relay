@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DEFAULT_MODEL_ID } from "@relay/shared";
+import { DEFAULT_MODEL_ID, listThinkingLevels, MODEL_CATALOG } from "@relay/shared";
 
 import { Composer } from "./composer";
 
@@ -62,4 +62,26 @@ test("attachments render with remove affordances and errors surface", () => {
   expect(markup).toContain("notes.md");
   expect(markup).toContain("Remove notes.md");
   expect(markup).toContain("too big");
+});
+
+test("reasoning variant picker appears for multi-level models and hides for single-level", () => {
+  const multiLevelModel = MODEL_CATALOG.models.find((entry) => listThinkingLevels(entry).length > 1);
+  if (!multiLevelModel) throw new Error("Catalog needs at least one multi-thinking-level model");
+  const multiMarkup = render({ modelId: multiLevelModel.id, thinkingLevel: "medium" });
+  expect(multiMarkup).toContain('aria-label="Reasoning variant"');
+  expect(multiMarkup).toContain("Medium");
+
+  // Default model (deepseek-chat) only has 'none' — picker should be absent
+  const singleMarkup = render();
+  expect(singleMarkup).not.toContain('aria-label="Reasoning variant"');
+});
+
+test("running turns lock the model and reasoning variant pickers", () => {
+  const multiLevelModel = MODEL_CATALOG.models.find((entry) => listThinkingLevels(entry).length > 1)!;
+  const markup = render({ modelId: multiLevelModel.id, status: "running", thinkingLevel: "high" });
+  // Both model and reasoning triggers should be disabled
+  const modelTrigger = markup.match(/aria-label="Model"[^]*?disabled/);
+  expect(modelTrigger).not.toBeNull();
+  const reasoningTrigger = markup.match(/aria-label="Reasoning variant"[^]*?disabled/);
+  expect(reasoningTrigger).not.toBeNull();
 });

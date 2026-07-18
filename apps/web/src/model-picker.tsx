@@ -30,8 +30,7 @@ export function ModelPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   const model = MODEL_CATALOG.models.find((entry) => entry.id === modelId) ?? MODEL_CATALOG.models.find((entry) => entry.id === DEFAULT_MODEL_ID);
   if (!model) throw new Error("Catalog default model is missing");
-  const thinkingLevels = listThinkingLevels(model);
-  const activeThinking = thinkingLevels.includes(thinkingLevel) ? thinkingLevel : thinkingLevels[0] ?? "none";
+  const activeThinking = listThinkingLevels(model).includes(thinkingLevel) ? thinkingLevel : listThinkingLevels(model)[0] ?? "none";
 
   useEffect(() => {
     if (!open) return;
@@ -53,7 +52,7 @@ export function ModelPicker({
         onClick={() => setOpen((current) => !current)}
         type="button"
       >
-        <span aria-hidden="true">◈</span> {model.name}{activeThinking !== "none" ? ` · ${activeThinking}` : ""} <span aria-hidden="true">▾</span>
+        <span aria-hidden="true">◈</span> {model.name} <span aria-hidden="true">▾</span>
       </button>
       {open ? (
         <div className="composer-popover" role="listbox" aria-label="Models">
@@ -78,23 +77,6 @@ export function ModelPicker({
               ))}
             </div>
           ))}
-          {thinkingLevels.length > 1 ? (
-            <div className="composer-popover-thinking">
-              <p className="composer-popover-caption">Thinking</p>
-              <div role="group" aria-label="Thinking level">
-                {thinkingLevels.map((level) => (
-                  <button
-                    aria-pressed={level === activeThinking}
-                    key={level}
-                    onClick={() => void onChange({ modelId: model.id, thinkingLevel: level })}
-                    type="button"
-                  >
-                    {level}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </div>
       ) : null}
     </div>

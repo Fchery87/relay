@@ -3,6 +3,7 @@ import type { ThinkingLevel } from "@relay/shared";
 
 import { AccessPicker, type PermissionProfile } from "./access-picker";
 import { ModelPicker } from "./model-picker";
+import { ReasoningVariantPicker } from "./reasoning-variant-picker";
 import type { TextAttachment } from "./message-attachments";
 import type { ThreadStatus } from "./thread-messages";
 
@@ -82,7 +83,10 @@ export function Composer({
         {isPlanRun ? (
           <span className="composer-plan-pair" title="Plan runs use the configured plan and build models"><span aria-hidden="true">◈</span> Plan pair</span>
         ) : (
-          <ModelPicker modelId={modelId} onChange={onModelChange} thinkingLevel={thinkingLevel} />
+          <>
+            <ModelPicker disabled={midTurn} modelId={modelId} onChange={onModelChange} thinkingLevel={thinkingLevel} />
+            <ReasoningVariantPicker disabled={midTurn} modelId={modelId} onChange={(thinkingLevel) => onModelChange({ modelId, thinkingLevel })} thinkingLevel={thinkingLevel} />
+          </>
         )}
         <AccessPicker disabled={midTurn} onChange={onPermissionChange} value={permissionProfile} />
         <button aria-label="Send" className="button-primary composer-send" disabled={queued || isSubmitting} type="submit">
