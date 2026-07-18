@@ -14,8 +14,27 @@ export function resolveInsideRoot({ path, root }: { path: string; root: string }
   return resolved;
 }
 
-export async function readProjectFile(input: { path: string; root: string }): Promise<string> {
-  return readFile(resolveInsideRoot(input), "utf8");
+export async function readProjectFile(input: { limit?: number; offset?: number; path: string; root: string }): Promise<string> {
+  const MAX_BYTES = 50_000;
+  const DEFAULT_LIMIT = 2000;
+  const resolved = resolveInsideRoot(input);
+  const content = await readFile(resolved, "utf8");
+  if (content.length > MAX_BYTES) {
+    const truncated = content.slice(0, MAX_BYTES);
+    return prefixLineNumbers(truncated, input.offset ?? 1) + "\n[truncated — use offset to continue]";
+  }
+  const lines = content.split("\n");
+  const offset = input.offset ?? 1;
+  const limit = input.limit ?? DEFAULT_LIMIT;
+  const sliced = lines.slice(offset - 1, offset - 1 + limit);
+  const result = prefixLineNumbers(sliced.join("\n"), offset);
+  if (lines.length > offset - 1 + limit) return result + "\n[truncated — use offset to continue]";
+  return result;
+}
+
+function prefixLineNumbers(text: string, startLine: number): string {
+  if (!text) return "";
+  return text.split("\n").map((line, index) => `${startLine + index}→ ${line}`).join("\n");
 }
 
 export async function editFile({ content, path, root }: { content: string; path: string; root: string }): Promise<void> {
@@ -24,15 +43,55 @@ export async function editFile({ content, path, root }: { content: string; path:
   await writeFile(target, content, "utf8");
 }
 
-export async function runCommand({ command, onOutput, platform, root }: { command: string; onOutput?: (chunk: string) => Promise<void>; platform: MachinePlatform; root: string }) {
+export async function runCommand({ command, onOutput, platform, root, timeout = 120_000 }: {
+  command: string;
+  onOutput?: (chunk: string) => Promise<void>;
+  platform: MachinePlatform;
+  root: string;
+  timeout?: number;
+}) {
+  const MAX_OUTPUT = 30_000;
+  const HEAD_KEEP = 10_000;
   const invocation = shellInvocation({ command, platform });
-  const process = Bun.spawn([invocation.executable, ...invocation.args], { cwd: root, stderr: "pipe", stdout: "pipe" });
+  const process = Bun.spawn([invocation.executable, ...invocation.args], {
+    cwd: root,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  let timedOut = false;
+  const timer = timeout > 0 ? setTimeout(() => {
+    timedOut = true;
+    process.kill("SIGKILL");
+  }, timeout) : undefined;
+
   const [stdout, stderr, exitCode] = await Promise.all([
     collectOutput({ onOutput, stream: process.stdout }),
     collectOutput({ onOutput, stream: process.stderr }),
     process.exited,
   ]);
-  return { exitCode, stderr, stdout };
+
+  if (timer) clearTimeout(timer);
+
+  // Cap output
+  const combined = stderr ? `${stdout}\n${stderr}` : stdout;
+  let output: string;
+  let stderrResult: string;
+  if (combined.length > MAX_OUTPUT) {
+    const head = combined.slice(0, HEAD_KEEP);
+    const tail = combined.slice(-(MAX_OUTPUT - HEAD_KEEP));
+    output = head + `\n... [truncated] ...\n` + tail;
+    stderrResult = "";
+  } else {
+    output = stdout;
+    stderrResult = stderr;
+  }
+
+  if (timedOut) {
+    output += `\n[timed out after ${Math.round(timeout / 1000)}s]`;
+  }
+
+  return { exitCode, stderr: stderrResult, stdout: output };
 }
 
 async function collectOutput({ onOutput, stream }: { onOutput?: (chunk: string) => Promise<void>; stream: ReadableStream<Uint8Array> }): Promise<string> {

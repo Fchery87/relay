@@ -4,8 +4,8 @@ import { editFile, readProjectFile, runCommand } from "./tools";
 
 export type ToolCall =
   | { content: string; kind: "edit"; path: string }
-  | { kind: "read"; path: string }
-  | { command: string; kind: "bash" }
+  | { kind: "read"; limit?: number; offset?: number; path: string }
+  | { command: string; kind: "bash"; timeout?: number }
   | { capabilities: Capability[]; kind: "task"; role: string; task: string }
   | { arguments: Record<string, unknown>; kind: "mcp"; name: string; risk?: "low" | "high" | "critical"; serverId: string }
   | { kind: "web_search"; query: string }
@@ -52,11 +52,11 @@ export async function executeToolCall({ call, onCompleted, onMcp, onOutput, onTa
     return { output: "File edited", succeeded: true };
   }
   if (call.kind === "read") {
-    const content = await readProjectFile({ path: call.path, root });
+    const content = await readProjectFile({ limit: (call as { limit?: number }).limit, offset: (call as { offset?: number }).offset, path: call.path, root });
     await onCompleted({ summary: `Read ${call.path}`, tool: "read" });
     return { output: content, succeeded: true };
   }
-  const result = await runCommand({ command: call.command, onOutput, platform, root });
+  const result = await runCommand({ command: call.command, onOutput, platform, root, timeout: (call as { timeout?: number }).timeout });
   await onCompleted({ summary: `Ran ${call.command}`, tool: "bash" });
   return { output: `${result.stdout}${result.stderr}`, succeeded: result.exitCode === 0 };
 }

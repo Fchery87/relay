@@ -11,9 +11,11 @@ const thinkingMapSchema = z.object({
 });
 export const catalogModelSchema = z.object({
   apiKind: apiKindSchema,
+  contextWindow: z.number().positive().optional(),
   cost: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative(), cacheRead: z.number().nonnegative().optional(), cacheWrite: z.number().nonnegative().optional() }),
   fallbacks: z.array(z.string().min(1)),
   id: z.string().min(1),
+  maxOutputTokens: z.number().positive().optional(),
   name: z.string().min(1),
   provider: z.string().min(1),
   thinking: thinkingMapSchema,
