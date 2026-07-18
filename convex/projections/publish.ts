@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { mutation } from "../_generated/server";
+import { mutation, query } from "../_generated/server";
+import { requireActiveMachine, requireUser } from "../auth_helpers";
 import type { Id } from "../_generated/dataModel";
 
 // ---------------------------------------------------------------------------
@@ -18,57 +19,35 @@ export const appendEvents = mutation({
         occurredAt: v.number(),
       }),
     ),
-    machineId: v.string(),
+    deviceToken: v.string(),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const ownerId: Id<"users"> | undefined = undefined; // populated during auth hardening (ticket 8)
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
+    if (!machine.ownerId) throw new Error("Machine is not owned by an authenticated user");
+    const ownerId: Id<"users"> = machine.ownerId;
 
     for (const ev of args.events) {
       // Check for exact duplicate (idempotent)
       const existing = await ctx.db
         .query("projectionEvents")
-        .withIndex("by_run_sequence", (q) =>
-          q.eq("runId", ev.runId).eq("sequence", ev.sequence),
-        )
+        .withIndex("by_run_sequence", (q) => q.eq("runId", ev.runId).eq("sequence", ev.sequence))
         .first();
 
       if (existing) {
-        if (existing.eventId !== ev.eventId) {
-          throw new Error(
-            `Sequence ${ev.sequence} for run ${ev.runId} already has event ${existing.eventId}, cannot append ${ev.eventId}`,
-          );
+        if (existing.eventId !== ev.eventId || existing.payloadJson !== ev.payloadJson || existing.type !== ev.type || existing.occurredAt !== ev.occurredAt || existing.ownerId !== ownerId) {
+          throw new Error(`Conflicting duplicate projection event for ${ev.runId}:${ev.sequence}`);
         }
-        // Exact duplicate — skip
         continue;
       }
 
-      // Ensure it's the next sequence (no gaps)
-      const prev = await ctx.db
-        .query("projectionEvents")
-        .withIndex("by_run_sequence", (q) =>
-          q.eq("runId", ev.runId).eq("sequence", ev.sequence - 1),
-        )
-        .first();
+      const previous = await ctx.db.query("projectionEvents").withIndex("by_run_sequence", (q) => q.eq("runId", ev.runId).eq("sequence", ev.sequence - 1)).first();
+      if (ev.sequence > 1 && (!previous || previous.ownerId !== ownerId)) throw new Error(`Gap or ownership mismatch for ${ev.runId}:${ev.sequence}`);
 
-      // If this is the first event (sequence 1), no prev needed.
-      // If sequence > 1 and no prev, there's a gap — reject.
-      if (ev.sequence > 1 && !prev) {
-        throw new Error(
-          `Gap detected: event ${ev.eventId} has sequence ${ev.sequence} but sequence ${ev.sequence - 1} is missing for run ${ev.runId}`,
-        );
-      }
+      const priorById = await ctx.db.query("projectionEvents").withIndex("by_event_id", (q) => q.eq("eventId", ev.eventId)).first();
+      if (priorById && (priorById.runId !== ev.runId || priorById.sequence !== ev.sequence)) throw new Error(`Event ID already belongs to another projection position: ${ev.eventId}`);
 
-      await ctx.db.insert("projectionEvents", {
-        eventId: ev.eventId,
-        occurredAt: ev.occurredAt,
-        ownerId,
-        payloadJson: ev.payloadJson,
-        publishedAt: now,
-        runId: ev.runId,
-        sequence: ev.sequence,
-        type: ev.type,
-      });
+      await ctx.db.insert("projectionEvents", { eventId: ev.eventId, machineId: machine._id, occurredAt: ev.occurredAt, ownerId, payloadJson: ev.payloadJson, publishedAt: now, runId: ev.runId, sequence: ev.sequence, type: ev.type });
     }
   },
 });
@@ -82,9 +61,11 @@ export const upsertSnapshot = mutation({
     runId: v.string(),
     sequence: v.number(),
     snapshotJson: v.string(),
+    deviceToken: v.string(),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
 
     const existing = await ctx.db
       .query("projectionSnapshots")
@@ -92,18 +73,17 @@ export const upsertSnapshot = mutation({
       .first();
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        sequence: args.sequence,
-        snapshotJson: args.snapshotJson,
-        updatedAt: now,
-      });
+      if (existing.machineId !== machine._id || existing.ownerId !== machine.ownerId) throw new Error("Projection ownership mismatch");
+      if (args.sequence < existing.sequence) throw new Error(`Snapshot regression for ${args.runId}`);
+      if (args.sequence === existing.sequence && args.snapshotJson !== existing.snapshotJson) throw new Error(`Conflicting snapshot at ${args.runId}:${args.sequence}`);
+      if (args.sequence === existing.sequence) return;
+      await ctx.db.patch(existing._id, { sequence: args.sequence, snapshotJson: args.snapshotJson, updatedAt: now });
     } else {
-      await ctx.db.insert("projectionSnapshots", {
-        runId: args.runId,
-        sequence: args.sequence,
-        snapshotJson: args.snapshotJson,
-        updatedAt: now,
-      });
+      if (args.sequence > 0) {
+        const last = await ctx.db.query("projectionEvents").withIndex("by_run_sequence", (q) => q.eq("runId", args.runId).eq("sequence", args.sequence)).first();
+        if (!last || last.ownerId !== machine.ownerId) throw new Error(`Snapshot sequence ${args.sequence} has not been published for ${args.runId}`);
+      }
+      await ctx.db.insert("projectionSnapshots", { machineId: machine._id, ownerId: machine.ownerId, runId: args.runId, sequence: args.sequence, snapshotJson: args.snapshotJson, updatedAt: now });
     }
   },
 });
@@ -117,8 +97,11 @@ export const advanceCursor = mutation({
     direction: v.union(v.literal("inbound"), v.literal("outbound")),
     machineId: v.string(),
     sequence: v.number(),
+    deviceToken: v.string(),
   },
   handler: async (ctx, args) => {
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
+    if (machine._id !== ctx.db.normalizeId("machines", args.machineId as Id<"machines">)) throw new Error("Projection cursor machine mismatch");
     const existing = await ctx.db
       .query("projectionCursors")
       .withIndex("by_machine_direction", (q) =>
@@ -127,10 +110,9 @@ export const advanceCursor = mutation({
       .first();
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        sequence: args.sequence,
-        updatedAt: Date.now(),
-      });
+      if (args.sequence < existing.sequence) throw new Error(`Cursor regression for ${args.machineId}:${args.direction}`);
+      if (args.sequence === existing.sequence) return;
+      await ctx.db.patch(existing._id, { sequence: args.sequence, updatedAt: Date.now() });
     } else {
       await ctx.db.insert("projectionCursors", {
         direction: args.direction,
@@ -139,5 +121,71 @@ export const advanceCursor = mutation({
         updatedAt: Date.now(),
       });
     }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Owner-scoped projection reads — browser data plane.
+// ---------------------------------------------------------------------------
+
+export const getRunSnapshot = query({
+  args: { runId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const snap = await ctx.db.query("projectionSnapshots").withIndex("by_run", (q) => q.eq("runId", args.runId)).first();
+    if (!snap || snap.ownerId !== userId) return null;
+    return snap;
+  },
+});
+
+export const listRunEvents = query({
+  args: { afterSequence: v.number(), limit: v.number(), runId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const page = await ctx.db
+      .query("projectionEvents")
+      .withIndex("by_run_sequence", (q) => q.eq("runId", args.runId).gt("sequence", args.afterSequence))
+      .take(args.limit);
+    for (const ev of page) { if (ev.ownerId !== userId) throw new Error("Access denied"); }
+    return page;
+  },
+});
+
+export const getProjectionCursor = query({
+  args: { direction: v.union(v.literal("inbound"), v.literal("outbound")), machineId: v.id("machines") },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const machine = await ctx.db.get(args.machineId);
+    if (!machine || machine.ownerId !== userId) return null;
+    return ctx.db.query("projectionCursors").withIndex("by_machine_direction", (q) => q.eq("machineId", args.machineId).eq("direction", args.direction)).first();
+  },
+});
+
+/** List projection snapshots belonging to a project for the authenticated user. */
+export const listProjectionRuns = query({
+  args: { projectId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const snaps = await ctx.db
+      .query("projectionSnapshots")
+      .filter((q) => q.eq(q.field("ownerId"), userId))
+      .take(200);
+    // The projection schema stores projectId inside the snapshot JSON, not as a column.
+    // Until a dedicated index exists, filter in-memory.
+    return snaps
+      .filter((s) => {
+        try {
+          const parsed = JSON.parse(s.snapshotJson) as Record<string, unknown>;
+          return (parsed.projectId as string) === args.projectId;
+        } catch { return false; }
+      })
+      .map((s) => ({
+        runId: s.runId,
+        sequence: s.sequence,
+        status: "active",
+        title: `Run ${s.runId.slice(-8)}`,
+        projectId: args.projectId,
+        updatedAt: s._creationTime,
+      }));
   },
 });

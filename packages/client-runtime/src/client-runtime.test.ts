@@ -43,7 +43,7 @@ describe("ClientRuntime", () => {
     const rt = new ClientRuntime(cfg({
       fetchEvents: async (_rid: string, after: number) => {
         fetchCalls.push(after as number);
-        return [ev(2)].filter((e: { sequence: number }) => e.sequence > (after as number));
+        return [ev(1), ev(2)].filter((e: { sequence: number }) => e.sequence > (after as number));
       },
     }));
     await rt.connect("run-1");
@@ -84,5 +84,16 @@ describe("ClientRuntime", () => {
     }));
     await rt.connect("run-1");
     expect(seen).toEqual([1, 2]);
+  });
+
+  test("rejects a sequence gap instead of advancing the cursor", async () => {
+    const rt = new ClientRuntime(cfg({ fetchEvents: async () => [ev(2)] }));
+    await expect(rt.connect("run-1")).rejects.toThrow("Projection gap");
+  });
+
+  test("does not treat turn completion as run termination", async () => {
+    const rt = new ClientRuntime(cfg({ fetchEvents: async () => [ev(1, "turn.completed")] }));
+    const state = await rt.connect("run-1");
+    expect(state.terminal).toBe(false);
   });
 });

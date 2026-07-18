@@ -7,61 +7,28 @@ import { makeFunctionReference } from "convex/server";
 
 const submitCommandMutation = makeFunctionReference<
   "mutation",
-  {
-    correlationId: string;
-    kind: string;
-    machineId: string;
-    ownerId?: string;
-    payloadJson: string;
-    runId?: string;
-  },
+  { commandId: string; correlationId: string; kind: string; payloadJson: string; threadId: string },
   string
 >("commands/inbox:submitToInbox");
 
 const claimCommandBatch = makeFunctionReference<
   "mutation",
   { deviceToken: string; leaseDurationMs: number; limit: number },
-  Array<{
-    _id: string;
-    correlationId: string;
-    kind: string;
-    payloadJson: string;
-    runId?: string;
-  }>
+  Array<{ _id: string; commandId?: string; correlationId: string; kind: string; leaseGeneration?: number; payloadJson: string; runId?: string }>
 >("commands/inbox:claimBatch");
 
 const completeCommand = makeFunctionReference<
   "mutation",
-  { commandId: string; deviceToken: string; status: "completed" | "rejected" },
+  { commandId: string; deviceToken: string; leaseGeneration: number; status: "completed" | "rejected" },
   null
 >("commands/inbox:completeInbox");
 
 export type CommandGateway = {
-  submitCommand(input: {
-    correlationId: string;
-    kind: string;
-    machineId: string;
-    payloadJson: string;
-    runId?: string;
-  }): Promise<string>;
-  claimBatch(input: {
-    deviceToken: string;
-    leaseDurationMs: number;
-    limit: number;
-  }): Promise<
-    Array<{
-      commandId: string;
-      correlationId: string;
-      kind: string;
-      payloadJson: string;
-      runId?: string;
-    }>
+  submitCommand(input: { commandId: string; correlationId: string; kind: string; payloadJson: string; threadId: string }): Promise<string>;
+  claimBatch(input: { deviceToken: string; leaseDurationMs: number; limit: number }): Promise<
+    Array<{ commandId: string; correlationId: string; externalCommandId: string; kind: string; leaseGeneration: number; payloadJson: string; runId?: string }>
   >;
-  completeCommand(input: {
-    commandId: string;
-    deviceToken: string;
-    status: "completed" | "rejected";
-  }): Promise<void>;
+  completeCommand(input: { commandId: string; deviceToken: string; leaseGeneration: number; status: "completed" | "rejected" }): Promise<void>;
 };
 
 export function createConvexCommandSource(opts: {
@@ -70,31 +37,23 @@ export function createConvexCommandSource(opts: {
 }): CommandGateway {
   return {
     submitCommand: async (input) => {
-      const result = await fetchMutation(opts.deploymentUrl, submitCommandMutation, {
-        ...input,
-      });
+      const result = await fetchMutation(opts.deploymentUrl, submitCommandMutation, { ...input });
       return result as string;
     },
     claimBatch: async (input) => {
-      const rows = (await fetchMutation(opts.deploymentUrl, claimCommandBatch, {
-        deviceToken: opts.deviceToken,
-        leaseDurationMs: input.leaseDurationMs,
-        limit: input.limit,
-      })) as Array<Record<string, unknown>> | null;
+      const rows = (await fetchMutation(opts.deploymentUrl, claimCommandBatch, { deviceToken: opts.deviceToken, leaseDurationMs: input.leaseDurationMs, limit: input.limit })) as Array<Record<string, unknown>> | null;
       return (rows ?? []).map((row: Record<string, unknown>) => ({
         commandId: row._id as string,
         correlationId: row.correlationId as string,
+        externalCommandId: (row.commandId as string) ?? (row._id as string),
         kind: row.kind as string,
+        leaseGeneration: (row.leaseGeneration as number) ?? 0,
         payloadJson: row.payloadJson as string,
         runId: row.runId as string | undefined,
       }));
     },
     completeCommand: async (input) => {
-      await fetchMutation(opts.deploymentUrl, completeCommand, {
-        commandId: input.commandId,
-        deviceToken: opts.deviceToken,
-        status: input.status,
-      });
+      await fetchMutation(opts.deploymentUrl, completeCommand, { commandId: input.commandId, deviceToken: opts.deviceToken, leaseGeneration: input.leaseGeneration, status: input.status });
     },
   };
 }

@@ -4,12 +4,15 @@
 // into a single polling loop, replacing the legacy per-work-type pollers.
 //
 // Activated when RELAY_RUNTIME_MODE=kernel or shadow.
+// When RELAY_CODEX_ENABLED=1, turn.send uses a real Codex app-server session
+// adapter instead of the catalog LLM provider.
 // ---------------------------------------------------------------------------
 
 import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { isDeviceTokenRejected } from "./device-auth";
+import { createCodexSessionAdapter, type CodexSessionAdapter, type CodexTransportConfig, type NormalizedEvent } from "@relay/codex-app-server";
 import { LocalHarnessRuntime } from "@relay/harness-runtime";
 import { DEFAULT_MODEL_ID, type Capability } from "@relay/shared";
 import {
@@ -74,7 +77,86 @@ export type KernelDaemonConfig = {
     policy?: Policy;
     platform?: MachinePlatform;
   };
+  /** Opt-in Codex app-server transport config (requires RELAY_CODEX_ENABLED=1). */
+  codexTransport?: CodexTransportConfig & { enabled: boolean };
 };
+
+// ---------------------------------------------------------------------------
+// Codex turn executor — bridges the Codex app-server into the kernel's event stream.
+// Activated when codexTransport.enabled is true and RELAY_CODEX_ENABLED=1.
+// ---------------------------------------------------------------------------
+
+async function executeTurnViaCodex({
+  runId,
+  prompt,
+  codexAdapter,
+  runtime,
+  threadId,
+  onFirstToken,
+}: {
+  runId: string;
+  prompt: string;
+  codexAdapter: CodexSessionAdapter;
+  runtime: LocalHarnessRuntime;
+  threadId?: string;
+  onFirstToken?: (latencyMs: number) => void;
+}): Promise<boolean> {
+  const turnStart = Date.now();
+  let firstTokenEmitted = false;
+  let succeeded = true;
+
+  const unsub = codexAdapter.onEvent(async (ev: NormalizedEvent) => {
+    // Normalize & append each canonical event from the Codex session
+    const result = await runtime.appendEvent(runId, {
+      eventId: `ev-codex-${runId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: ev.type,
+      payload: ev.payload,
+    });
+    if (!result.ok) {
+      console.error("Kernel daemon: failed to append Codex event", result.reason);
+    }
+
+    // SLO: track first text delta
+    if (!firstTokenEmitted && ev.type === "assistant.delta" && onFirstToken) {
+      firstTokenEmitted = true;
+      onFirstToken(Date.now() - turnStart);
+    }
+
+    // Detect terminal states
+    if (ev.type === "turn.failed") succeeded = false;
+
+    incrementMetric("eventsProcessed");
+  });
+
+  try {
+    if (threadId) {
+      await codexAdapter.resumeThread(threadId);
+    } else {
+      await codexAdapter.startThread();
+    }
+    // Start the turn — Codex notifications stream back via onEvent
+    await codexAdapter.startTurn(codexAdapter.activeThreadId ?? "", prompt);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await runtime.appendEvent(runId, {
+      eventId: `ev-codex-failed-${runId}-${Date.now()}`,
+      type: "turn.failed",
+      payload: { error: message },
+    });
+    console.error("Kernel daemon: Codex turn failed", message);
+    succeeded = false;
+  }
+
+  unsub();
+
+  await runtime.appendEvent(runId, {
+    eventId: `ev-codex-completed-${runId}-${Date.now()}`,
+    type: succeeded ? "turn.completed" : "turn.failed",
+    payload: {},
+  });
+
+  return succeeded;
+}
 
 // ---------------------------------------------------------------------------
 // Turn executor — bridges the provider into the kernel's event stream
@@ -154,9 +236,11 @@ async function executeTurn({
 // ---------------------------------------------------------------------------
 
 async function flushProjections({
+  deviceToken,
   runtime,
   projectionSink,
 }: {
+  deviceToken: string;
   runtime: LocalHarnessRuntime;
   projectionSink: ProjectionSink;
 }): Promise<void> {
@@ -170,6 +254,7 @@ async function flushProjections({
         runId: snapshot.runId as string,
         sequence: snapshot.sequence,
         snapshotJson: JSON.stringify(snapshot),
+        deviceToken,
       });
     }
   } catch (error) {
@@ -186,6 +271,7 @@ export class KernelDaemon {
   private provider!: ModelProviderRouter;
   private commandGateway!: CommandGateway;
   private projectionSink!: ProjectionSink;
+  private codexAdapter: CodexSessionAdapter | null = null;
   private shuttingDown = false;
   private tracer = new Tracer();
   private supervisor!: DaemonSupervisor;
@@ -211,6 +297,18 @@ export class KernelDaemon {
       fallbackProvider: fallback,
     });
 
+    // 2b. Create optional Codex session adapter
+    if (this.config.codexTransport?.enabled && Bun.env.RELAY_CODEX_ENABLED === "1") {
+      this.codexAdapter = createCodexSessionAdapter({
+        transport: {
+          codexPath: this.config.codexTransport.codexPath,
+          clientInfo: this.config.codexTransport.clientInfo,
+          capabilities: this.config.codexTransport.capabilities,
+        },
+      });
+      console.info("Kernel daemon: Codex app-server transport enabled");
+    }
+
     // 3. Create Convex adapters
     this.commandGateway = createConvexCommandSource({
       deploymentUrl: this.config.deploymentUrl,
@@ -218,6 +316,7 @@ export class KernelDaemon {
     });
     this.projectionSink = createConvexProjectionSink({
       deploymentUrl: this.config.deploymentUrl,
+      deviceToken: this.config.deviceToken,
     });
 
     // 4. Operational wiring
@@ -256,6 +355,7 @@ export class KernelDaemon {
       this.shuttingDown = true;
       clearInterval(heartbeatInterval);
       clearInterval(pollInterval);
+      this.codexAdapter?.close();
       await this.flush();
       this.runtime.close();
       this.tracer.endSpan(startSpan);
@@ -291,12 +391,13 @@ export class KernelDaemon {
           await this.commandGateway.completeCommand({
             commandId: cmd.commandId,
             deviceToken: this.config.deviceToken,
+            leaseGeneration: cmd.leaseGeneration,
             status: "rejected",
           });
           continue;
         }
 
-        await this.processCommand(cmd.commandId, cmd.kind, payload, cmd.runId);
+        await this.processCommand(cmd.commandId, cmd.externalCommandId, cmd.kind, payload, cmd.runId, cmd.leaseGeneration);
       }
     } catch (error) {
       if (!this.shuttingDown) {
@@ -308,9 +409,11 @@ export class KernelDaemon {
 
   private async processCommand(
     commandId: string,
+    externalCommandId: string,
     kind: string,
     payload: Record<string, unknown>,
     runId?: string,
+    leaseGeneration?: number,
   ): Promise<void> {
     const span = this.tracer.startSpan(`command.${kind}`);
     span.tags["commandId"] = commandId;
@@ -319,6 +422,7 @@ export class KernelDaemon {
       this.commandGateway.completeCommand({
         commandId,
         deviceToken: this.config.deviceToken,
+        leaseGeneration: leaseGeneration ?? 0,
         status,
       });
 
@@ -363,24 +467,41 @@ export class KernelDaemon {
 
           await this.runtime.sendTurn({ runId: rId as never, prompt });
 
-          const turnProvider = this.provider.resolve({
-            modelId,
-            thinkingLevel:
-              (payload.thinkingLevel as "none" | "low" | "medium" | "high") ??
-              "none",
-          });
-
-          // SLO: track prompt-to-first-token latency
+          let succeeded: boolean;
           const turnStart = Date.now();
-          const succeeded = await executeTurn({
-            runId: rId,
-            prompt,
-            provider: turnProvider,
-            runtime: this.runtime,
-            onFirstToken: (latencyMs) => {
-              this.firstTokenLatencies.push(latencyMs);
-            },
-          });
+
+          if (this.codexAdapter) {
+            // Real Codex app-server path
+            succeeded = await executeTurnViaCodex({
+              runId: rId,
+              prompt,
+              codexAdapter: this.codexAdapter,
+              runtime: this.runtime,
+              threadId: payload.threadId as string | undefined,
+              onFirstToken: (latencyMs) => {
+                this.firstTokenLatencies.push(latencyMs);
+              },
+            });
+          } else {
+            // Catalog LLM provider path (legacy / fake)
+            const turnProvider = this.provider.resolve({
+              modelId,
+              thinkingLevel:
+                (payload.thinkingLevel as "none" | "low" | "medium" | "high") ??
+                "none",
+            });
+
+            succeeded = await executeTurn({
+              runId: rId,
+              prompt,
+              provider: turnProvider,
+              runtime: this.runtime,
+              onFirstToken: (latencyMs) => {
+                this.firstTokenLatencies.push(latencyMs);
+              },
+            });
+          }
+
           const turnLatency = Date.now() - turnStart;
 
           if (succeeded) {
@@ -486,8 +607,8 @@ export class KernelDaemon {
           break;
         }
         default: {
-          console.warn("Kernel daemon: unknown command kind", kind);
-          await complete("completed");
+          console.warn("Kernel daemon: unknown command kind — rejecting", kind);
+          await complete("rejected");
         }
       }
     } catch (error) {
@@ -501,6 +622,7 @@ export class KernelDaemon {
 
   private async flush(): Promise<void> {
     await flushProjections({
+      deviceToken: this.config.deviceToken,
       runtime: this.runtime,
       projectionSink: this.projectionSink,
     });

@@ -1,4 +1,4 @@
-import { commitChanges, pushChanges, stageAll } from "./git-review";
+import { commitChanges, computeGitPreview, pushChanges, stageAll, verifyGitPreview } from "./git-review";
 
 export async function runQueuedGitAction({ gateway, resolveProjectRoot }: {
   gateway: { claim(): Promise<{ action: "stage" | "commit" | "push"; actionId: string; message?: string; projectPath: string; threadId: string } | null>; complete(input: { actionId: string; status: "complete" | "failed" }): Promise<unknown> };
@@ -8,6 +8,10 @@ export async function runQueuedGitAction({ gateway, resolveProjectRoot }: {
   if (!queued) return false;
   const root = await resolveProjectRoot({ repoPath: queued.projectPath, threadId: queued.threadId });
   try {
+    // Compute authoritative preview before execution
+    const preview = await computeGitPreview({ action: queued.action, root });
+    // Re-verify worktree state is identical just before acting
+    await verifyGitPreview(preview);
     if (queued.action === "stage") await stageAll({ root });
     else if (queued.action === "commit") await commitChanges({ message: queued.message ?? "Relay changes", root });
     else await pushChanges({ root });

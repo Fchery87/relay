@@ -6,68 +6,38 @@ import { makeFunctionReference } from "convex/server";
 
 const appendEventsMutation = makeFunctionReference<
   "mutation",
-  {
-    events: Array<{
-      eventId: string;
-      occurredAt: number;
-      payloadJson: string;
-      runId: string;
-      sequence: number;
-      type: string;
-    }>;
-    machineId: string;
-  },
+  { events: Array<{ eventId: string; occurredAt: number; payloadJson: string; runId: string; sequence: number; type: string }>; deviceToken: string },
   null
 >("projections/publish:appendEvents");
 
 const upsertSnapshotMutation = makeFunctionReference<
   "mutation",
-  { runId: string; sequence: number; snapshotJson: string },
+  { runId: string; sequence: number; snapshotJson: string; deviceToken: string },
   null
 >("projections/publish:upsertSnapshot");
 
 const advanceCursorMutation = makeFunctionReference<
   "mutation",
-  { direction: "inbound" | "outbound"; machineId: string; sequence: number },
+  { direction: "inbound" | "outbound"; machineId: string; sequence: number; deviceToken: string },
   null
 >("projections/publish:advanceCursor");
 
 export type ProjectionSink = {
-  appendEvents(input: {
-    events: Array<{
-      eventId: string;
-      occurredAt: number;
-      payloadJson: string;
-      runId: string;
-      sequence: number;
-      type: string;
-    }>;
-    machineId: string;
-  }): Promise<void>;
-  upsertSnapshot(input: {
-    runId: string;
-    sequence: number;
-    snapshotJson: string;
-  }): Promise<void>;
-  advanceCursor(input: {
-    direction: "inbound" | "outbound";
-    machineId: string;
-    sequence: number;
-  }): Promise<void>;
+  appendEvents(input: { events: Array<{ eventId: string; occurredAt: number; payloadJson: string; runId: string; sequence: number; type: string }>; deviceToken: string }): Promise<void>;
+  upsertSnapshot(input: { runId: string; sequence: number; snapshotJson: string; deviceToken: string }): Promise<void>;
+  advanceCursor(input: { direction: "inbound" | "outbound"; machineId: string; sequence: number; deviceToken: string }): Promise<void>;
 };
 
-export function createConvexProjectionSink(opts: {
-  deploymentUrl: string;
-}): ProjectionSink {
+export function createConvexProjectionSink(opts: { deploymentUrl: string; deviceToken: string }): ProjectionSink {
   return {
     appendEvents: async (input) => {
-      await fetchMutation(opts.deploymentUrl, appendEventsMutation, input as unknown as Record<string, unknown>);
+      await fetchMutation(opts.deploymentUrl, appendEventsMutation, { ...input, deviceToken: opts.deviceToken } as unknown as Record<string, unknown>);
     },
     upsertSnapshot: async (input) => {
-      await fetchMutation(opts.deploymentUrl, upsertSnapshotMutation, input as unknown as Record<string, unknown>);
+      await fetchMutation(opts.deploymentUrl, upsertSnapshotMutation, { ...input, deviceToken: opts.deviceToken } as unknown as Record<string, unknown>);
     },
     advanceCursor: async (input) => {
-      await fetchMutation(opts.deploymentUrl, advanceCursorMutation, input as unknown as Record<string, unknown>);
+      await fetchMutation(opts.deploymentUrl, advanceCursorMutation, { ...input, deviceToken: opts.deviceToken } as unknown as Record<string, unknown>);
     },
   };
 }

@@ -20,6 +20,7 @@
         "relay": "src/cli.ts",
       },
       "dependencies": {
+        "@relay/codex-app-server": "workspace:*",
         "@relay/harness-runtime": "workspace:*",
         "@relay/local-store": "workspace:*",
         "@relay/shared": "workspace:*",

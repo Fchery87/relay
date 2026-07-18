@@ -7,6 +7,28 @@ import type { CanonicalEvent, CanonicalEventType } from "@relay/contracts";
 // Unknown notifications become bounded diagnostic records, never crashes.
 // ---------------------------------------------------------------------------
 
+const MAX_PROJECTION_STRING_BYTES = 16_384;
+const MAX_PROJECTION_PAYLOAD_KEYS = 40;
+
+function sanitizeString(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  if (bytes.length <= MAX_PROJECTION_STRING_BYTES) return value;
+  return new TextDecoder().decode(bytes.slice(0, MAX_PROJECTION_STRING_BYTES)) + "…[truncated]";
+}
+
+export function sanitizeProjectionPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const keys = Object.keys(payload).slice(0, MAX_PROJECTION_PAYLOAD_KEYS);
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string") out[key] = sanitizeString(value);
+    else if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+    else if (typeof value === "boolean") out[key] = value;
+    else if (value === null) out[key] = null;
+  }
+  return out;
+}
+
 export type CodexNotification = {
   readonly method: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,13 +52,24 @@ export function normalizeCodexNotification(
 ): NormalizedEvent[] {
   switch (notification.method) {
     case "thread/created":
-    case "thread/resumed":
       return [
         {
           type: "provider.session.started",
           payload: {
             providerInstanceId,
             providerThreadId: notification.params?.threadId,
+          },
+        },
+        { type: "run.started", payload: {} },
+      ];
+
+    case "thread/resumed":
+      return [
+        {
+          type: "provider.session.resumed",
+          payload: {
+            providerInstanceId,
+            providerThreadId: notification.params?.threadId ?? "",
           },
         },
         { type: "run.started", payload: {} },
@@ -183,6 +216,24 @@ export function normalizeCodexNotification(
             thinkingTokens: notification.params?.thinkingTokens ?? 0,
             modelId: notification.params?.modelId ?? "unknown",
           },
+        },
+      ];
+
+    case "error":
+      return [
+        {
+          type: "turn.failed",
+          payload: {
+            error: (notification.params as Record<string, unknown> | undefined)?.message ?? "Codex app-server error",
+          },
+        },
+      ];
+
+    case "thread/closed":
+      return [
+        {
+          type: "provider.session.stopped",
+          payload: { providerInstanceId, reason: "completed" },
         },
       ];
 

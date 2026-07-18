@@ -64,6 +64,12 @@ export function appendEvents(
 
     if (existing) {
       // Idempotent: return the cached snapshot from the original receipt.
+      if (existing.result_json) {
+        try {
+          const cached = JSON.parse(existing.result_json) as RunSnapshot;
+          return { ok: false, reason: "duplicate_command", duplicateSnapshot: cached };
+        } catch { /* fall through to re-read */ }
+      }
       const dup = db
         .query("SELECT * FROM run_snapshots WHERE run_id = ?")
         .get(input.runId) as RunSnapshotRow | undefined;
@@ -144,15 +150,16 @@ export function appendEvents(
       [seq, stream, JSON.stringify(payload), now, input.runId],
     );
 
-    // 5. Command receipt
+    // 5. Command receipt — store the full snapshot so duplicate returns the immutable result
+    const finalSnapshot = rowToSnapshot({ ...row, sequence: seq, stream_version: stream, payload_json: JSON.stringify(payload), updated_at: now });
     db.run(
       `INSERT INTO command_receipts (command_id, run_id, completed_at, result_json) VALUES (?, ?, ?, ?)`,
-      [input.commandId, input.runId, now, JSON.stringify({ sequence: seq })],
+      [input.commandId, input.runId, now, JSON.stringify(finalSnapshot)],
     );
 
     return {
       ok: true,
-      snapshot: rowToSnapshot({ ...row, sequence: seq, stream_version: stream, payload_json: JSON.stringify(payload), updated_at: now }),
+      snapshot: finalSnapshot,
       events: envelopes,
     };
   })();

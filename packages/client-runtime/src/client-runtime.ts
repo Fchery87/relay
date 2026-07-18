@@ -101,13 +101,17 @@ export class ClientRuntime {
     // Fetch events after the cursor
     const events = await this.config.fetchEvents(runId, state.cursor);
 
-    for (const ev of events) {
+    const orderedEvents = [...events].sort((left, right) => left.sequence - right.sequence);
+    for (const ev of orderedEvents) {
       if (ev.sequence <= state.cursor) continue; // already applied
+      if (ev.sequence !== state.cursor + 1) {
+        throw new Error(`Projection gap for run ${runId}: expected sequence ${state.cursor + 1}, received ${ev.sequence}`);
+      }
       state.cursor = ev.sequence;
       if (this.config.onEvent) this.config.onEvent(ev);
 
-      // Detect terminal
-      if (ev.type === "run.stopped" || ev.type === "run.failed" || ev.type === "turn.completed") {
+      // A completed turn is not the same as a completed run.
+      if (ev.type === "run.stopped" || ev.type === "run.failed") {
         state.terminal = true;
         if (this.config.onTerminal) this.config.onTerminal(ev.type);
       }

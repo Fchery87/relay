@@ -1,5 +1,5 @@
 import { expect, test, describe } from "bun:test";
-import { normalizeCodexNotification } from "./normalize-event";
+import { normalizeCodexNotification, sanitizeProjectionPayload } from "./normalize-event";
 
 describe("normalizeCodexNotification", () => {
   test("thread/created produces provider.session.started and run.started", () => {
@@ -11,6 +11,24 @@ describe("normalizeCodexNotification", () => {
     expect(result).toHaveLength(2);
     expect(result[0]!.type).toBe("provider.session.started");
     expect(result[1]!.type).toBe("run.started");
+  });
+
+  test("thread/resumed produces provider.session.resumed", () => {
+    const result = normalizeCodexNotification(
+      { method: "thread/resumed", params: { threadId: "th-2" } },
+      "run-1",
+      "pi-1" as never,
+    );
+    expect(result.some((e) => e.type === "provider.session.resumed")).toBe(true);
+  });
+
+  test("error notification produces turn.failed", () => {
+    const result = normalizeCodexNotification(
+      { method: "error", params: { message: "connection lost" } },
+      "run-1",
+      "pi-1" as never,
+    );
+    expect(result[0]!.type).toBe("turn.failed");
   });
 
   test("turn/started produces turn.started with prompt", () => {
@@ -75,5 +93,29 @@ describe("normalizeCodexNotification", () => {
       "pi-1" as never,
     );
     expect(result[0]!.type).toBe("usage.recorded");
+  });
+
+  test("sanitizes payloads to projection-safe scalars", () => {
+    const clean = sanitizeProjectionPayload({ text: "ok", count: 5, flag: true, nil: null, nested: { secret: "x" }, arr: [1], undef: undefined });
+    expect(clean.text).toBe("ok");
+    expect(clean.count).toBe(5);
+    expect(clean.flag).toBe(true);
+    expect(clean.nil).toBe(null);
+    expect(clean).not.toHaveProperty("nested");
+    expect(clean).not.toHaveProperty("arr");
+    expect(clean).not.toHaveProperty("undef");
+  });
+
+  test("truncates projection strings beyond the byte budget", () => {
+    const long = "x".repeat(32_768);
+    const clean = sanitizeProjectionPayload({ text: long });
+    expect((clean.text as string).length).toBeLessThan(long.length);
+  });
+
+  test("caps projection payload keys at the configured limit", () => {
+    const large: Record<string, unknown> = {};
+    for (let i = 0; i < 100; i++) large[`key-${i}`] = i;
+    const clean = sanitizeProjectionPayload(large);
+    expect(Object.keys(clean).length).toBeLessThanOrEqual(40);
   });
 });
