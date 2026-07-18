@@ -11,6 +11,8 @@ import { join } from "node:path";
 import type { TrustStore } from "./trust";
 import { parseSlashInvocation, expandCommand } from "./slash-commands";
 import { getBuiltinCommand, BUILTIN_COMMANDS } from "./builtin-commands";
+import { buildSystemPrompt } from "./system-prompt";
+import type { Skill } from "./skills";
 
 export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
@@ -101,6 +103,7 @@ export async function runQueuedTurn({
   provider,
   platform = "linux",
   resolveProjectRoot,
+  resolveSkills,
   resolveSlashCommands,
   trustStore,
   yolo = false,
@@ -113,6 +116,7 @@ export async function runQueuedTurn({
   provider: ModelProvider | ModelProviderRouter;
   platform?: MachinePlatform;
   resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
+  resolveSkills?: (input: { projectPath: string }) => Promise<Skill[]>;
   resolveSlashCommands?: (input: { projectPath: string }) => Promise<Array<{ model?: string; name: string; template: string }>>;
   trustStore?: TrustStore;
   yolo?: boolean;
@@ -164,12 +168,16 @@ export async function runQueuedTurn({
     }
   }
 
+  const loadedSkills = resolveSkills ? await resolveSkills({ projectPath: queued.projectPath }) : [];
+  const systemPrompt = await buildSystemPrompt({ platform, root, skills: loadedSkills });
+  const skills = new Map(loadedSkills.map((skill) => [skill.name, { body: skill.body, directory: skill.directory }]));
+
   try {
     // Use agentic loop if the resolved provider supports it
     if (isTurnModelProvider(turnProvider)) {
-      return await runAgenticClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt: expandedPrompt, queued, reviewComments, root, turnProvider });
+      return await runAgenticClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt: expandedPrompt, queued, reviewComments, root, skills, system: systemPrompt, turnProvider });
     }
-    return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt: expandedPrompt, queued, reviewComments, root, turnProvider });
+    return await runClaimedTurn({ deviceToken, gateway, governance, mcp, mcpTools, messageId, policy: turnPolicy, platform, prompt: expandedPrompt, queued, reviewComments, root, skills, system: systemPrompt, turnProvider });
   } catch (error) {
     // Mark the turn failed so claimQueuedMessage stops skipping this thread (it treats "running" as busy).
     // Without this, an uncaught error here leaves the thread stuck and every later message sits queued forever.
@@ -191,6 +199,8 @@ async function runClaimedTurn({
   queued,
   reviewComments,
   root,
+  skills,
+  system,
   turnProvider,
 }: {
   deviceToken: string;
@@ -205,6 +215,8 @@ async function runClaimedTurn({
   queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
   reviewComments: ReviewComment[];
   root: string;
+  skills: Map<string, { body: string; directory: string }>;
+  system: string;
   turnProvider: ModelProvider;
 }): Promise<boolean> {
   const steeringMessages: string[] = [];
@@ -217,8 +229,9 @@ async function runClaimedTurn({
     await gateway.recordCheckpoint({ ...checkpoint, deviceToken, messageId, threadId: queued.threadId });
     checkpointed = true;
   };
+  const systemPrefixedPrompt = system ? `${system}\n\n---\n\n${prompt}` : prompt;
   if (turnProvider.toolCalls) {
-    for await (const call of turnProvider.toolCalls({ prompt, tools: mcpTools })) {
+    for await (const call of turnProvider.toolCalls({ prompt: systemPrefixedPrompt, tools: mcpTools })) {
       if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
         await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
         return true;
@@ -241,6 +254,7 @@ async function runClaimedTurn({
         platform,
         policy,
         root,
+        skills,
         threadId: queued.threadId,
       });
       toolResults.push(toolResult.output);
@@ -263,7 +277,7 @@ async function runClaimedTurn({
   let lastFlushedContent = "";
   const toolContext = toolResults.length === 0 ? "" : `\n\n<tool_results>\n${toolResults.map(escapeXml).join("\n")}\n</tool_results>`;
   const steeringContext = steeringMessages.length === 0 ? "" : `\n\n<steering_messages>\n${steeringMessages.map((message) => `<message>${escapeXml(message)}</message>`).join("\n")}\n</steering_messages>`;
-  const responsePrompt = `${prompt}${toolContext}${steeringContext}`;
+  const responsePrompt = `${systemPrefixedPrompt}${toolContext}${steeringContext}`;
   if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
     await checkpointTurn();
     await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
@@ -376,6 +390,8 @@ async function runAgenticClaimedTurn({
   queued,
   reviewComments,
   root,
+  skills,
+  system,
   turnProvider,
 }: {
   deviceToken: string;
@@ -390,6 +406,8 @@ async function runAgenticClaimedTurn({
   queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
   reviewComments: ReviewComment[];
   root: string;
+  skills: Map<string, { body: string; directory: string }>;
+  system: string;
   turnProvider: TurnModelProvider;
 }): Promise<boolean> {
   let mutated = false;
@@ -436,6 +454,7 @@ async function runAgenticClaimedTurn({
             platform,
             policy,
             root,
+            skills,
             threadId: queued.threadId,
           });
 
@@ -453,7 +472,6 @@ async function runAgenticClaimedTurn({
   };
 
   try {
-    const system = "You are Relay, an agent running on the user's machine. You have access to tools for reading files, editing files, running commands, searching the web, and delegating tasks to subagents. Always read a file before editing it. Be concise in your final replies.";
     const messages: ChatMessage[] = [{ content: prompt, role: "user" }];
 
     const result = await runAgenticTurn({

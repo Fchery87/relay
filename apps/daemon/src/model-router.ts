@@ -13,6 +13,7 @@ export const TOOL_PARAMETERS = {
   task: { properties: { capabilities: { items: { enum: ["read", "edit", "exec", "task"], type: "string" }, type: "array" }, role: { type: "string" }, task: { type: "string" } }, required: ["role", "task", "capabilities"], type: "object" },
   web_search: { properties: { query: { description: "Search query to look up on the web", type: "string" } }, required: ["query"], type: "object" },
   web_fetch: { properties: { url: { description: "URL to fetch content from", type: "string" }, prompt: { description: "What to extract from the page", type: "string" } }, required: ["url", "prompt"], type: "object" },
+  skill: { properties: { name: { description: "Skill name, as listed in AVAILABLE SKILLS", type: "string" } }, required: ["name"], type: "object" },
 } as const;
 
 export function mcpModelName(_tool: Pick<McpModelTool, "name" | "serverId">, index = 0): string {

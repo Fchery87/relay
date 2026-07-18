@@ -22,7 +22,7 @@ export async function executeGovernedToolCall({ call, governance, onCompleted, o
   platform: MachinePlatform;
   policy: Policy;
   root: string;
-  skills?: Map<string, string>;
+  skills?: Map<string, { body: string; directory: string }>;
   threadId: string;
 }): Promise<GovernedToolResult> {
   const classification = classifyToolCall(call);
@@ -40,8 +40,8 @@ export async function executeGovernedToolCall({ call, governance, onCompleted, o
   }
   // Resolve skill body for skill tool calls
   if (call.kind === "skill" && skills) {
-    const body = skills.get(call.name);
-    if (body) (call as any).body = `Skill directory: ${body}\n\n---\n\n${body}`;
+    const skill = skills.get(call.name);
+    (call as any).body = skill ? `Skill directory: ${skill.directory}\n\n---\n\n${skill.body}` : `Unknown skill: ${call.name}`;
   }
   return { kind: "executed", ...await executeToolCall({ call, onCompleted, onMcp, onOutput, onTask, platform, root }) };
 }

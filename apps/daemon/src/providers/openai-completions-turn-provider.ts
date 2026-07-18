@@ -181,7 +181,7 @@ export class OpenAICompletionsTurnProvider implements TurnModelProvider {
 
 function buildToolDefinitions(mcpTools: McpModelTool[]): Array<{ function: { description: string; name: string; parameters: Record<string, unknown> }; type: "function" }> {
   const definitions: Array<{ function: { description: string; name: string; parameters: Record<string, unknown> }; type: "function" }> = [];
-  const nativeTools = ["bash", "read", "edit", "task", "web_search", "web_fetch"];
+  const nativeTools = ["bash", "read", "edit", "task", "web_search", "web_fetch", "skill"];
 
   for (const name of nativeTools) {
     definitions.push({
@@ -224,6 +224,7 @@ function toolCallToArgs(call: ToolCall): Record<string, unknown> {
   if (call.kind === "web_search") return { query: call.query };
   if (call.kind === "web_fetch") return { prompt: call.prompt ?? "", url: call.url };
   if (call.kind === "mcp") return call.arguments;
+  if (call.kind === "skill") return { name: call.name };
   return {};
 }
 

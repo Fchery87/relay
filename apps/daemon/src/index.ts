@@ -26,6 +26,7 @@ import { TrustStore } from "./trust";
 import { loadSlashCommands } from "./slash-commands";
 import { BUILTIN_COMMANDS } from "./builtin-commands";
 import { resolveExtensionRoots } from "./extension-paths";
+import { loadSkills } from "./skills";
 
 export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
@@ -160,6 +161,11 @@ setInterval(() => {
     provider,
     platform: config.registration.platform,
     resolveProjectRoot: (input) => worktrees.resolve(input),
+    resolveSkills: async ({ projectPath }) => {
+      const trustState = await trustStore.get(projectPath);
+      const roots = resolveExtensionRoots({ daemonHome, kind: "skills", projectRoot: projectPath, projectTrusted: trustState === "trusted" });
+      return loadSkills(roots);
+    },
     resolveSlashCommands: async ({ projectPath }) => {
       const userCommands = await loadSlashCommands([{ root: join(daemonHome, "commands"), scope: "user" }]);
       const trustState = await trustStore.get(projectPath);

@@ -131,6 +131,47 @@ test("surfaces discovered MCP tools to the provider and executes through governa
   expect(calls).toMatchObject([{ arguments: { query: "relay" }, name: "search", serverId: "docs" }]);
 });
 
+test("loaded skills are advertised in the system prompt and their body is resolved when invoked", async () => {
+  const prompts: string[] = [];
+  const resolvedProjectPaths: string[] = [];
+  const provider: ModelProvider = {
+    async *toolCalls({ prompt }) {
+      prompts.push(prompt);
+      yield { kind: "skill", name: "deploy-checklist" };
+    },
+    async *streamReply({ prompt }) {
+      prompts.push(prompt);
+      yield { kind: "text", text: "ok" };
+      yield { kind: "usage", usage: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 } };
+    },
+  };
+  await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    policy: { rules: [{ capability: "read", decision: "allow", risk: "low" }] },
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async () => undefined,
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "deploy this", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    provider,
+    resolveSkills: async ({ projectPath }) => {
+      resolvedProjectPaths.push(projectPath);
+      return [{ body: "1. Run tests\n2. Tag release", description: "Steps to deploy Relay", directory: "/skills/deploy-checklist", name: "deploy-checklist", scope: "user" }];
+    },
+  });
+
+  expect(resolvedProjectPaths).toEqual(["/tmp"]);
+  expect(prompts[0]).toContain("AVAILABLE SKILLS");
+  expect(prompts[0]).toContain("deploy-checklist: Steps to deploy Relay");
+  expect(prompts[1]).toContain("1. Run tests\n2. Tag release");
+});
+
 test("records MCP task progress as thread events", async () => {
   const statuses: string[] = [];
   await runQueuedTurn({ deviceToken: "device", governance, policy: { rules: [{ capability: "exec", decision: "allow", risk: "high" }] }, gateway: {

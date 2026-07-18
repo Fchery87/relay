@@ -90,3 +90,37 @@ test("does not invoke MCP when approval is denied", async () => {
   expect(invoked).toBe(false);
   expect(result.kind).toBe("refused");
 });
+
+const readPolicy: Policy = { rules: [{ capability: "read", decision: "allow", risk: "low" }] };
+
+test("resolves a skill's body and directory onto the tool call", async () => {
+  const result = await executeGovernedToolCall({
+    call: { kind: "skill", name: "deploy-checklist" },
+    governance: { recordDecision: async () => undefined, requestApproval: async () => "allow" },
+    onCompleted: async () => undefined,
+    platform: "linux",
+    policy: readPolicy,
+    root: ".",
+    skills: new Map([["deploy-checklist", { body: "1. Run tests\n2. Tag release", directory: "/home/user/.config/relay/skills/deploy-checklist" }]]),
+    threadId: "thread",
+  });
+  expect(result).toEqual({
+    kind: "executed",
+    output: "Skill directory: /home/user/.config/relay/skills/deploy-checklist\n\n---\n\n1. Run tests\n2. Tag release",
+    succeeded: true,
+  });
+});
+
+test("an unresolvable skill name reports back to the model instead of throwing", async () => {
+  const result = await executeGovernedToolCall({
+    call: { kind: "skill", name: "does-not-exist" },
+    governance: { recordDecision: async () => undefined, requestApproval: async () => "allow" },
+    onCompleted: async () => undefined,
+    platform: "linux",
+    policy: readPolicy,
+    root: ".",
+    skills: new Map(),
+    threadId: "thread",
+  });
+  expect(result).toEqual({ kind: "executed", output: "Unknown skill: does-not-exist", succeeded: true });
+});

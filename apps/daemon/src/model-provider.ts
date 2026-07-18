@@ -235,6 +235,7 @@ const toolCallSchema = z.discriminatedUnion("kind", [
   z.object({ capabilities: z.array(z.enum(["read", "edit", "exec", "task"])), kind: z.literal("task"), role: z.string(), task: z.string() }),
   z.object({ kind: z.literal("web_search"), query: z.string() }),
   z.object({ kind: z.literal("web_fetch"), prompt: z.string().optional(), url: z.string() }),
+  z.object({ kind: z.literal("skill"), name: z.string() }),
 ]);
 
 function parseProviderToolCalls(payload: unknown, apiKind: CatalogModel["apiKind"], mcpTools: McpModelTool[] = []): ToolCall[] {
