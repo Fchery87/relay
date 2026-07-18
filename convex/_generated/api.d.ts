@@ -31,6 +31,7 @@ import type * as narrow from "../narrow.js";
 import type * as pairing from "../pairing.js";
 import type * as plans from "../plans.js";
 import type * as projections_publish from "../projections/publish.js";
+import type * as projects from "../projects.js";
 import type * as schema_narrow from "../schema_narrow.js";
 import type * as subagents from "../subagents.js";
 import type * as test_helpers from "../test_helpers.js";
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   pairing: typeof pairing;
   plans: typeof plans;
   "projections/publish": typeof projections_publish;
+  projects: typeof projects;
   schema_narrow: typeof schema_narrow;
   subagents: typeof subagents;
   test_helpers: typeof test_helpers;

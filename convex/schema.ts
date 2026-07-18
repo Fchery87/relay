@@ -24,9 +24,11 @@ export default defineSchema({
   }).index("by_code_hash", ["codeHash"]).index("by_device_token_hash", ["deviceTokenHash"]),
   projects: defineTable({
     archivedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
     machineId: v.id("machines"),
     name: v.string(),
     path: v.string(),
+    status: v.optional(v.union(v.literal("pending"), v.literal("active"), v.literal("error"))),
   }).index("by_machine", ["machineId"]).index("by_machine_path", ["machineId", "path"]),
   mcpServers: defineTable({
     approvalThreadId: v.id("threads"),

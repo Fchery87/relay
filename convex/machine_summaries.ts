@@ -1,13 +1,17 @@
 export function toProjectSummary({
   _id,
   archivedAt,
+  error,
   name,
   path,
+  status,
 }: {
   _id: string;
   archivedAt?: number;
+  error?: string;
   name: string;
   path: string;
-}): { archivedAt?: number; id: string; name: string; path: string } {
-  return { archivedAt, id: _id, name, path };
+  status?: string;
+}): { archivedAt?: number; error?: string; id: string; name: string; path: string; status?: string } {
+  return { archivedAt, error, id: _id, name, path, status };
 }

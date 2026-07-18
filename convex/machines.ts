@@ -61,9 +61,9 @@ export const registerMachine = mutationGeneric({
       const existingProject = existingProjects.find((existing) => existing.path === project.path);
 
       if (existingProject) {
-        await ctx.db.patch(existingProject._id, { archivedAt: undefined, name: project.name });
+        await ctx.db.patch(existingProject._id, { archivedAt: undefined, name: project.name, status: "active" as const });
       } else {
-        await ctx.db.insert("projects", { ...project, machineId });
+        await ctx.db.insert("projects", { ...project, machineId, status: "active" as const });
       }
     }
 

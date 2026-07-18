@@ -180,6 +180,7 @@ export const claimQueuedMessage = mutationGeneric({
       if (thread.mode === "plan" && thread.planPhase === "review") continue;
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id || project.archivedAt) continue;
+      if (project.status === "pending" || project.status === "error") continue;
       const reviewComments = await ctx.db.query("diffComments")
         .withIndex("by_thread", (q) => q.eq("threadId", thread._id))
         .filter((q) => q.eq(q.field("resolved"), false))
