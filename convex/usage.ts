@@ -54,8 +54,9 @@ export const record = mutationGeneric({
     const [message, thread] = await Promise.all([ctx.db.get("messages", args.messageId), ctx.db.get("threads", args.threadId)]);
     if (!message || message.threadId !== args.threadId || message.role !== "assistant") throw new Error("Usage message must be an assistant message in the thread");
     if (!thread) throw new Error("Usage thread does not exist");
-    const model = MODEL_CATALOG.models.find((entry) => entry.id === args.modelId);
-    if (!model) throw new Error("Usage model is not in the catalog");
+    const model = MODEL_CATALOG.models.find((entry) => entry.id === args.modelId)
+      ?? MODEL_CATALOG.models.find((entry) => entry.id === MODEL_CATALOG.defaultModelId);
+    if (!model) throw new Error("Usage model is not in the catalog and no default is configured");
     if (!args.role.trim()) throw new Error("Usage role is required");
     const costUsd = computeUsageCost({ cost: model.cost, usage: args.usage });
     assertUsageValues({ costUsd, ...args.usage });

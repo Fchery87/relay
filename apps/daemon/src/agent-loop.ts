@@ -1,6 +1,4 @@
 import type { McpModelTool, ModelProvider, ModelProviderRouter } from "./model-provider";
-import { resolveTurnProvider } from "./model-provider";
-import { resolveProviderConfig } from "./model-router";
 import { DEFAULT_MODEL_ID, narrowCapabilities, type Capability, type MachinePlatform, type SubagentResult, type TokenUsage } from "@relay/shared";
 import { executeGovernedToolCall, summarizeToolCall, type GovernanceGateway, type GovernedToolResult } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";

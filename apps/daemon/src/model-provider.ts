@@ -101,9 +101,18 @@ export class ScriptedModelProvider implements ModelProvider {
   readonly #chunks: readonly string[];
   readonly #toolCalls: readonly import("./tool-executor").ToolCall[];
   readonly #usage: TokenUsage;
+  readonly #modelId: string;
 
-  constructor({ chunks, toolCalls = [], usage = zeroUsage() }: { chunks: readonly string[]; toolCalls?: readonly import("./tool-executor").ToolCall[]; usage?: TokenUsage }) {
+  get modelId(): string { return this.#modelId; }
+
+  constructor({ chunks, modelId = "deepseek/deepseek-v4-flash", toolCalls = [], usage = zeroUsage() }: {
+    chunks: readonly string[];
+    modelId?: string;
+    toolCalls?: readonly import("./tool-executor").ToolCall[];
+    usage?: TokenUsage;
+  }) {
     this.#chunks = chunks;
+    this.#modelId = modelId;
     this.#toolCalls = toolCalls;
     this.#usage = tokenUsageSchema.parse(usage);
   }
