@@ -17,11 +17,11 @@ import { ScriptedModelProvider } from "./model-provider";
 import { createConvexCheckpointComparisonGateway, createConvexCheckpointGateway, createConvexCommandGateway, createConvexConversationGateway, createConvexGitGateway, createConvexGovernanceGateway, createConvexMachineGateway, createConvexMcpServerGateway, createConvexSubagentGateway, MachineReporter } from "./relay-client";
 import { createNestedSubagentWorktree, integrateNestedSubagentWorktree, resolveSubagentParentRoot, ThreadWorktrees } from "./worktrees";
 import { runQueuedSubagent } from "./subagent-worker";
-import { loadPolicy } from "./policy";
+import { ALLOW_ALL_POLICY, loadPolicy } from "./policy";
 import { LocalModelRouter } from "./catalog-provider-router";
 import { McpRegistry } from "./mcp-registry";
 
-export async function runDaemon(): Promise<void> {
+export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
 const daemonHome = resolveDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform });
 const storedCredentials = await loadDeviceCredentials({ daemonHome });
@@ -31,7 +31,10 @@ const reporter = new MachineReporter({
   registration: config.registration,
 });
 
+const yoloMode = yolo || Bun.env.RELAY_YOLO === "1";
+
 await reporter.connect();
+if (yoloMode) console.warn("⚠️  YOLO MODE: all permission checks are bypassed. Every tool call is auto-approved.");
 console.info(`Relay daemon connected as ${config.registration.name} (mode: ${runtimeMode})`);
 
 // ---------------------------------------------------------------------------
@@ -115,12 +118,13 @@ process.once("SIGTERM", () => void shutdown());
 const subagentGateway = createConvexSubagentGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken, depth: 1 });
 const nestedSubagentGateway = createConvexSubagentGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken, depth: 2 });
 await subagentGateway.seedDefaults();
+const subagentPolicy = yoloMode ? ALLOW_ALL_POLICY : policy;
 await subagentGateway.setCapabilityCeiling([...new Set(policy.rules.filter((rule) => rule.decision !== "deny" && rule.capability !== "search").map((rule) => rule.capability as "read" | "edit" | "exec" | "task"))]);
 let subagentRunning = false;
 setInterval(() => {
   if (subagentRunning) return;
   subagentRunning = true;
-  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: subagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: subagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay subagent failed", error))
     .finally(() => { subagentRunning = false; });
 }, 200);
@@ -128,7 +132,7 @@ let nestedSubagentRunning = false;
 setInterval(() => {
   if (nestedSubagentRunning) return;
   nestedSubagentRunning = true;
-  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: nestedSubagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: nestedSubagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay nested subagent failed", error))
     .finally(() => { nestedSubagentRunning = false; });
 }, 200);
@@ -142,10 +146,11 @@ setInterval(() => {
     gateway: conversationGateway,
     governance,
     mcp,
-    policy,
+    policy: subagentPolicy,
     provider,
     platform: config.registration.platform,
     resolveProjectRoot: (input) => worktrees.resolve(input),
+    yolo: yoloMode,
   })
     .catch((error: unknown) => console.error("Relay turn failed", error))
     .finally(() => { turnRunning = false; });
@@ -185,7 +190,7 @@ let commandRunning = false;
 setInterval(() => {
   if (commandRunning) return;
   commandRunning = true;
-  void runQueuedCommand({ gateway: commandGateway, governance, platform: config.registration.platform, policy, resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedCommand({ gateway: commandGateway, governance, platform: config.registration.platform, policy: subagentPolicy, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay command failed", error))
     .finally(() => { commandRunning = false; });
 }, 200);

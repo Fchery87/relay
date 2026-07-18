@@ -7,7 +7,7 @@ test("parses connect with an explicit Convex URL", () => {
 });
 
 test("uses start when no command is supplied", () => {
-  expect(parseCli([])).toEqual({ command: "start" });
+  expect(parseCli([])).toEqual({ command: "start", yolo: false });
 });
 
 test("dispatches the default command to the daemon runtime", async () => {
@@ -20,4 +20,21 @@ test("dispatches the default command to the daemon runtime", async () => {
 
 test("rejects unknown commands", () => {
   expect(() => parseCli(["unknown"])).toThrow("Unknown command");
+});
+
+test("parses start --yolo and its long alias", () => {
+  expect(parseCli(["start", "--yolo"])).toEqual({ command: "start", yolo: true });
+  expect(parseCli(["start", "--dangerously-skip-permissions"])).toEqual({ command: "start", yolo: true });
+  expect(parseCli(["start"])).toEqual({ command: "start", yolo: false });
+  expect(parseCli([])).toEqual({ command: "start", yolo: false });
+});
+
+test("start with unknown option throws", () => {
+  expect(() => parseCli(["start", "--foo"])).toThrow("Unknown option: --foo");
+});
+
+test("passes yolo flag to runDaemon", async () => {
+  let yoloPassed: boolean | undefined;
+  await runCli(["start", "--yolo"], { runDaemon: async (input) => { yoloPassed = input?.yolo; } });
+  expect(yoloPassed).toBe(true);
 });
