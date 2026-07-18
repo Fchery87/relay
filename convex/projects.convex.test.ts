@@ -81,3 +81,56 @@ test("claimQueuedMessage skips threads on pending or error projects", async () =
   const claimed = await t.mutation(api.conversations.claimQueuedMessage, { deviceToken });
   expect(claimed).toBeNull(); // Thread on pending project is skipped
 });
+
+test("requestTrust marks an undecided project as requested", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, machineId, owner } = await createOwnerWithMachine(t);
+
+  const projectId = await owner.mutation(api.projects.requestAdd, { machineId, name: "trust-me", path: "/repos/trust" });
+  await owner.mutation(api.projects.resolvePending, { deviceToken, projectId, ok: true });
+
+  await t.mutation(api.projects.requestTrust, { deviceToken, projectId });
+  const project = await t.run((ctx) => ctx.db.get(projectId));
+  expect(project!.trustState).toBe("requested");
+  expect(project!.trustRequestedAt).toBeGreaterThan(0);
+});
+
+test("requestTrust is a no-op on a decided project", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, machineId, owner } = await createOwnerWithMachine(t);
+
+  const projectId = await owner.mutation(api.projects.requestAdd, { machineId, name: "trusted-already", path: "/repos/trusted" });
+  await owner.mutation(api.projects.resolvePending, { deviceToken, projectId, ok: true });
+
+  // First resolve trust, then request again — should be a no-op
+  await owner.mutation(api.projects.resolveTrust, { projectId, trustState: "trusted" });
+  await t.mutation(api.projects.requestTrust, { deviceToken, projectId });
+
+  const project = await t.run((ctx) => ctx.db.get(projectId));
+  expect(project!.trustState).toBe("trusted"); // unchanged
+});
+
+test("resolveTrust stores the decision", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, machineId, owner } = await createOwnerWithMachine(t);
+
+  const projectId = await owner.mutation(api.projects.requestAdd, { machineId, name: "decide-me", path: "/repos/decide" });
+  await owner.mutation(api.projects.resolvePending, { deviceToken, projectId, ok: true });
+  await t.mutation(api.projects.requestTrust, { deviceToken, projectId });
+
+  await owner.mutation(api.projects.resolveTrust, { projectId, trustState: "untrusted" });
+  const project = await t.run((ctx) => ctx.db.get(projectId));
+  expect(project!.trustState).toBe("untrusted");
+});
+
+test("resolveTrust requires project ownership", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, machineId, owner } = await createOwnerWithMachine(t);
+
+  const projectId = await owner.mutation(api.projects.requestAdd, { machineId, name: "unauthorized", path: "/repos/unauth" });
+  await owner.mutation(api.projects.resolvePending, { deviceToken, projectId, ok: true });
+
+  const otherUserId = await t.run((ctx) => ctx.db.insert("users", {}));
+  const otherUser = t.withIdentity({ subject: `${otherUserId}|session` });
+  await expect(otherUser.mutation(api.projects.resolveTrust, { projectId, trustState: "trusted" })).rejects.toThrow();
+});

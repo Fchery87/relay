@@ -52,3 +52,33 @@ export const resolvePending = mutationGeneric({
     }
   },
 });
+
+export const requestTrust = mutationGeneric({
+  args: {
+    deviceToken: v.string(),
+    projectId: v.id("projects"),
+  },
+  handler: async (ctx, args) => {
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
+    const project = await ctx.db.get(args.projectId);
+    if (!project || project.machineId !== machine._id) throw new Error("Project not found on this machine");
+    // If already decided, no-op
+    if (project.trustState === "trusted" || project.trustState === "untrusted") return;
+    await ctx.db.patch(args.projectId, { trustRequestedAt: Date.now(), trustState: "requested" });
+  },
+});
+
+export const resolveTrust = mutationGeneric({
+  args: {
+    projectId: v.id("projects"),
+    trustState: v.union(v.literal("trusted"), v.literal("untrusted")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const project = await ctx.db.get(args.projectId);
+    if (!project) throw new Error("Project not found");
+    const machine = await ctx.db.get(project.machineId);
+    if (!machine || machine.ownerId !== userId) throw new Error("Machine does not belong to the current user");
+    await ctx.db.patch(args.projectId, { trustRequestedAt: undefined, trustState: args.trustState });
+  },
+});

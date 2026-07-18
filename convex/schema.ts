@@ -29,6 +29,8 @@ export default defineSchema({
     name: v.string(),
     path: v.string(),
     status: v.optional(v.union(v.literal("pending"), v.literal("active"), v.literal("error"))),
+    trustRequestedAt: v.optional(v.number()),
+    trustState: v.optional(v.union(v.literal("requested"), v.literal("trusted"), v.literal("untrusted"))),
   }).index("by_machine", ["machineId"]).index("by_machine_path", ["machineId", "path"]),
   mcpServers: defineTable({
     approvalThreadId: v.id("threads"),
