@@ -1,22 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type AriaAttributes, type ReactNode, type UIEvent } from "react";
-
-// Rows are rarely exactly `estimateRowHeight` tall (chat messages, tool output, etc. vary a
-// lot), so we track each row's real rendered height once it mounts and use that instead of the
-// estimate wherever we have it. Without this, the spacer heights and the visible-window math
-// drift from the actual DOM layout as soon as any row differs from the estimate, which is what
-// causes virtualized lists to jump/glitch while scrolling.
-export function indexAtOffset(offsets: readonly number[], target: number): number {
-  const lastIndex = offsets.length - 2;
-  if (lastIndex < 0) return 0;
-  let low = 0;
-  let high = lastIndex;
-  while (low < high) {
-    const mid = (low + high + 1) >> 1;
-    if (offsets[mid]! <= target) low = mid;
-    else high = mid - 1;
-  }
-  return low;
-}
+import { indexAtOffset } from "./virtual-list-utils";
 
 function VirtualRow({ children, index, onMeasure }: { children: ReactNode; index: number; onMeasure: (index: number, height: number) => void }) {
   const rowRef = useRef<HTMLDivElement | null>(null);

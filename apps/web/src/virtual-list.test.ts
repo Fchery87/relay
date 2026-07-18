@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { indexAtOffset } from "./virtual-list";
+import { indexAtOffset } from "./virtual-list-utils";
 
 test("finds the row whose span contains an offset, not a fixed-height division", () => {
   // Cumulative offsets for rows of heights [50, 400, 20, 96, 96] — deliberately uneven, the way

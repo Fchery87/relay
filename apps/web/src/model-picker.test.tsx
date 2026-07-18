@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MODEL_CATALOG } from "@relay/shared";
 
-import { groupModelsByProvider, ModelPicker } from "./model-picker";
+import { groupModelsByProvider } from "./model-utils";
+import { ModelPicker } from "./model-picker";
 
 test("groups catalog models by provider preserving catalog order", () => {
   const groups = groupModelsByProvider(MODEL_CATALOG.models);

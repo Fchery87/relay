@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { HandoffTrace, resolveHandoffStage } from "./handoff-trace";
+import { HandoffTrace } from "./handoff-trace";
+import { resolveHandoffStage } from "./handoff-trace-utils";
 import { WorkbenchTabs } from "./workbench-tabs";
 
 test("renders an ordered handoff trace with one current stage", () => {

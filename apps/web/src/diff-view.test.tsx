@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { DiffView, groupCommentsByFile, isReviewableDiff, parseFileStats, resolveFileKind, splitFiles, summarizeFiles } from "./diff-view";
+import { DiffView } from "./diff-view";
+import { groupCommentsByFile, isReviewableDiff, parseFileStats, resolveFileKind, splitFiles, summarizeFiles } from "./diff-utils";
 
 const PATCH_WITH_TWO_FILES = [
   "diff --git a/src/a.ts b/src/a.ts",
