@@ -5,6 +5,29 @@ import { unifiedMergeView } from "@codemirror/merge";
 
 export type DiffComment = { _id: string; content: string; endLine: number; filePath: string; resolved: boolean; startLine: number };
 
+export type FileChangeKind = "added" | "modified" | "deleted" | "renamed";
+
+export type ParsedFile = {
+  content: string;
+  name: string;
+  kind: FileChangeKind;
+  additions: number;
+  deletions: number;
+};
+
+export type DiffSummary = {
+  fileCount: number;
+  additions: number;
+  deletions: number;
+};
+
+const FILE_KIND_LABEL: Record<FileChangeKind, string> = {
+  added: "A",
+  deleted: "D",
+  modified: "M",
+  renamed: "R",
+};
+
 export function groupCommentsByFile(comments: DiffComment[]): Map<string, DiffComment[]> {
   const grouped = new Map<string, DiffComment[]>();
   for (const comment of comments) {
@@ -19,6 +42,47 @@ export function isReviewableDiff(content: string): boolean {
   return /^diff --git /m.test(content);
 }
 
+/** Count single-line additions (+) and deletions (−) in a git patch fragment. */
+export function parseFileStats(patch: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) additions++;
+    else if (line.startsWith("-")) deletions++;
+  }
+  return { additions, deletions };
+}
+
+/** Resolve the semantic change kind from the git patch headers. */
+export function resolveFileKind(patch: string): FileChangeKind {
+  if (/^new file mode\b/m.test(patch)) return "added";
+  if (/^deleted file mode\b/m.test(patch)) return "deleted";
+  if (/^rename from\b/m.test(patch) || /^rename to\b/m.test(patch)) return "renamed";
+  return "modified";
+}
+
+export function splitFiles(content: string): ParsedFile[] {
+  const starts = [...content.matchAll(/^diff --git /gm)].map((match) => match.index);
+  if (starts.length === 0) return [];
+  return starts.map((start, index) => {
+    const patch = content.slice(start, starts[index + 1] ?? content.length).trimEnd();
+    const name = /^\+\+\+ b\/(.+)$/m.exec(patch)?.[1] ?? /^diff --git a\/.+ b\/(.+)$/m.exec(patch)?.[1] ?? "Changed file";
+    const { additions, deletions } = parseFileStats(patch);
+    return { content: patch, name, kind: resolveFileKind(patch), additions, deletions };
+  });
+}
+
+export function summarizeFiles(files: readonly ParsedFile[]): DiffSummary {
+  let additions = 0;
+  let deletions = 0;
+  for (const file of files) {
+    additions += file.additions;
+    deletions += file.deletions;
+  }
+  return { fileCount: files.length, additions, deletions };
+}
+
 export function DiffView({ comments, content, onCreateComment }: {
   comments: DiffComment[];
   content: string;
@@ -28,10 +92,85 @@ export function DiffView({ comments, content, onCreateComment }: {
   const commentsByFile = groupCommentsByFile(comments);
   const reviewable = Boolean(onCreateComment) && isReviewableDiff(content);
   const createComment = onCreateComment ?? (async () => undefined);
-  return <div className="diff-files">{files.map((file) => <section className="diff-file" key={file.name}>
-    <h3>{file.name}</h3>
-    <DiffFile comments={commentsByFile.get(file.name) ?? []} content={file.content} filePath={file.name} onCreateComment={createComment} reviewable={reviewable} />
-  </section>)}</div>;
+
+  if (files.length === 0) {
+    return (
+      <div className="diff-empty" role="status">
+        <span aria-hidden="true" className="diff-empty-mark">◇</span>
+        <p className="diff-empty-text">{content || "No changes in the working tree."}</p>
+      </div>
+    );
+  }
+
+  const summary = summarizeFiles(files);
+
+  return (
+    <div className="diff-files">
+      <div className="diff-summary" role="status">
+        <span className="diff-summary-count">
+          {summary.fileCount} {summary.fileCount === 1 ? "file" : "files"} changed
+        </span>
+        <span className="diff-summary-bar">
+          <span className="diff-stat-add">+{summary.additions}</span>
+          <span className="diff-stat-del">−{summary.deletions}</span>
+        </span>
+      </div>
+      {files.map((file) => (
+        <DiffFileSection
+          key={file.name}
+          comments={commentsByFile.get(file.name) ?? []}
+          file={file}
+          onCreateComment={createComment}
+          reviewable={reviewable}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DiffFileSection({ comments, file, onCreateComment, reviewable }: {
+  comments: DiffComment[];
+  file: ParsedFile;
+  onCreateComment(input: { content: string; endLine: number; filePath: string; startLine: number }): Promise<unknown>;
+  reviewable: boolean;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const unresolvedCount = comments.filter((comment) => !comment.resolved).length;
+  const resolvedCount = comments.length - unresolvedCount;
+
+  return (
+    <section className="diff-file">
+      <button
+        aria-expanded={expanded}
+        aria-label={`${file.name} — ${file.kind}`}
+        className="diff-file-header"
+        onClick={() => setExpanded((value) => !value)}
+        type="button"
+      >
+        <span aria-hidden="true" className="diff-file-glyph">{expanded ? "▾" : "▸"}</span>
+        <span className="diff-file-path">{file.name}</span>
+        <span className="diff-file-kind" data-kind={file.kind} title={file.kind}>{FILE_KIND_LABEL[file.kind]}</span>
+        <span className="diff-file-stats">
+          {file.additions > 0 ? <span className="diff-stat-add">+{file.additions}</span> : null}
+          {file.deletions > 0 ? <span className="diff-stat-del">−{file.deletions}</span> : null}
+        </span>
+        {comments.length > 0 ? (
+          <span className="diff-file-comments" data-has-unresolved={unresolvedCount > 0 || undefined} title={`${unresolvedCount} unresolved, ${resolvedCount} resolved`}>
+            {comments.length}
+          </span>
+        ) : null}
+      </button>
+      {expanded ? (
+        <DiffFile
+          comments={comments}
+          content={file.content}
+          filePath={file.name}
+          onCreateComment={onCreateComment}
+          reviewable={reviewable}
+        />
+      ) : null}
+    </section>
+  );
 }
 
 function DiffFile({ comments, content, filePath, onCreateComment, reviewable }: {
@@ -80,14 +219,4 @@ function DiffFile({ comments, content, filePath, onCreateComment, reviewable }: 
     {reviewable && commenting ? <form className="diff-comment-form" onSubmit={(event) => void submitComment(event)}><textarea aria-label={`Comment on ${filePath} lines ${range.startLine}-${range.endLine}`} onChange={(event) => setComment(event.target.value)} value={comment} /><button disabled={!comment.trim()} type="submit">Add comment</button></form> : null}
     {comments.length > 0 ? <ol className="diff-comments">{comments.map((item) => <li className={item.resolved ? "diff-comment diff-comment-resolved" : "diff-comment"} key={item._id}><span>{item.startLine === item.endLine ? `Line ${item.startLine}` : `Lines ${item.startLine}-${item.endLine}`}</span><p>{item.content}</p><strong>{item.resolved ? "Resolved" : "Pending"}</strong></li>)}</ol> : null}
   </>;
-}
-
-function splitFiles(content: string): Array<{ content: string; name: string }> {
-  const starts = [...content.matchAll(/^diff --git /gm)].map((match) => match.index);
-  if (starts.length === 0) return [{ content, name: "Working tree" }];
-  return starts.map((start, index) => {
-    const patch = content.slice(start, starts[index + 1] ?? content.length).trimEnd();
-    const name = /^\+\+\+ b\/(.+)$/m.exec(patch)?.[1] ?? /^diff --git a\/.+ b\/(.+)$/m.exec(patch)?.[1] ?? "Changed file";
-    return { content: patch, name };
-  });
 }
