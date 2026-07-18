@@ -2930,3 +2930,131 @@ button:active:not(:disabled) {
     transform: none;
   }
 }
+
+/* --- Machine group separator --- */
+
+.machine-group + .machine-group {
+  border-top: 1px solid var(--color-border);
+}
+
+/* --- Add project row --- */
+
+.add-project-row {
+  padding: var(--space-1) var(--space-3);
+}
+
+.add-project-trigger {
+  background: transparent;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--rounded-sm);
+  color: var(--color-on-surface-subtle);
+  font-size: var(--text-caption);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  width: 100%;
+}
+
+.add-project-trigger:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.add-project-form {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.add-project-input {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-xs);
+  color: var(--color-on-surface);
+  font-size: var(--text-caption);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  width: 100%;
+}
+
+.add-project-input:focus {
+  border-color: var(--color-primary);
+  outline: 1px solid var(--color-primary);
+}
+
+.add-project-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.add-project-submit {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: var(--text-caption);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+}
+
+.add-project-submit:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.add-project-cancel {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-on-surface-muted);
+  font-size: var(--text-caption);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+}
+
+.add-project-cancel:hover {
+  color: var(--color-on-surface);
+}
+
+.add-project-error {
+  color: var(--color-error);
+  font-size: var(--text-caption);
+  margin: 0;
+}
+
+/* --- Project status badges --- */
+
+.project-badge {
+  border-radius: var(--rounded-xs);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 550;
+  line-height: 1;
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+
+.project-badge-pending {
+  background: rgba(197, 141, 88, 0.14);
+  color: var(--color-warning);
+}
+
+.project-badge-error {
+  background: rgba(200, 114, 107, 0.14);
+  color: var(--color-error);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-badge-archived {
+  background: transparent;
+  color: var(--color-on-surface-subtle);
+}
+
+.project-archived {
+  opacity: 0.52;
+}
+
+.project-archived .project-name {
+  text-decoration: line-through;
+}

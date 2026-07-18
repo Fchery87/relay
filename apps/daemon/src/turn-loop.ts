@@ -81,7 +81,7 @@ export async function runAgenticTurn({
           cacheWriteTokens: totalUsage.cacheWriteTokens + usage.cacheWriteTokens,
           inputTokens: totalUsage.inputTokens + usage.inputTokens,
           outputTokens: totalUsage.outputTokens + usage.outputTokens,
-          thinkingTokens: totalUsage.thinkingTokens + usage.thinkingTokens,
+          thinkingTokens: (totalUsage.thinkingTokens ?? 0) + (usage.thinkingTokens ?? 0),
         };
         callbacks.onUsage?.(usage);
       } else if (event.kind === "stop") {

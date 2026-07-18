@@ -28,8 +28,8 @@ class FakeTurnProvider implements TurnModelProvider {
   }
 }
 
-function fakeStop(reason: TurnStreamEvent["kind"] extends infer K ? (K extends "stop" ? K["reason"] : never) : never): TurnStreamEvent {
-  return { kind: "stop", reason } as TurnStreamEvent;
+function fakeStop(reason: "end_turn" | "max_tokens" | "tool_use"): TurnStreamEvent {
+  return { kind: "stop", reason };
 }
 
 test("read→edit sequence across multiple iterations", async () => {

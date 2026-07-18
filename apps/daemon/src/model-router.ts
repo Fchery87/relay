@@ -6,7 +6,7 @@ type ProviderSecrets = Readonly<Record<string, string>>;
 export type ProviderConfig = { apiKey: string; model: CatalogModel; thinkingValue: string | null };
 export type ProviderRequest = { body: Record<string, unknown>; headers: Record<string, string>; url: string };
 
-const TOOL_PARAMETERS = {
+export const TOOL_PARAMETERS = {
   bash: { properties: { command: { type: "string" } }, required: ["command"], type: "object" },
   edit: { properties: { content: { type: "string" }, path: { type: "string" } }, required: ["path", "content"], type: "object" },
   read: { properties: { path: { type: "string" } }, required: ["path"], type: "object" },

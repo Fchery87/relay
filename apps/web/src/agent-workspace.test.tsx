@@ -15,7 +15,7 @@ test("uses task and operations language across the shell", () => {
     <WorkspaceSidebar
       activeProjectId="project-1"
       attention={[{ kind: "approval", projectId: "project-1", projectName: "relay", threadId: "t1", title: "Fix auth" }]}
-      projects={[{ id: "project-1", machineName: "workstation-14", name: "relay", path: "/workspace/relay", presence: "online" }]}
+      projects={[{ id: "project-1", machineId: "machine-1", machineName: "workstation-14", name: "relay", path: "/workspace/relay", presence: "online" }]}
       renderRuns={() => null}
     />,
   );

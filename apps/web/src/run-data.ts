@@ -9,7 +9,7 @@ export type MachineSummary = {
   lastHeartbeatAt: number;
   name: string;
   platform: "darwin" | "linux" | "win32";
-  projects: ReadonlyArray<{ id: string; name: string; path: string }>;
+  projects: ReadonlyArray<{ archivedAt?: number; error?: string; id: string; name: string; path: string; status?: string }>;
 };
 
 export type PermissionProfile = "read-only" | "workspace-write" | "full-access";
@@ -55,6 +55,12 @@ export const removeThreadRef = makeFunctionReference<
   { threadId: string },
   null
 >("conversations:removeThread");
+
+export const requestAddProjectRef = makeFunctionReference<
+  "mutation",
+  { machineId: string; name: string; path: string },
+  string
+>("projects:requestAdd");
 
 export type ProjectionRunSummary = {
   runId: string;

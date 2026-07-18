@@ -14,7 +14,7 @@ import { resolveSettingsSection, SettingsView, type SettingsSection } from "./se
 import { shortcutForEvent, useShellState } from "./shell-state";
 import { SubagentPanel, type RoleRecord } from "./subagent-panel";
 import { ThreadView } from "./thread-view";
-import { createThreadRef, legacyRunData, listNeedsYou, removeThreadRef, type LegacyRunSummary, type MachineSummary } from "./run-data";
+import { createThreadRef, legacyRunData, listNeedsYou, removeThreadRef, requestAddProjectRef, type LegacyRunSummary, type MachineSummary } from "./run-data";
 import { WorkspaceSidebar, type SidebarProject } from "./workspace-sidebar";
 import type { ThinkingLevel } from "@relay/shared";
 
@@ -47,6 +47,7 @@ function flattenProjects(machines: ReadonlyArray<MachineSummary>, now: number) {
   return machines.flatMap((machine) => machine.projects.map((project) => ({
     ...project,
     capabilityCeiling: machine.capabilityCeiling,
+    machineId: machine.id,
     machineName: machine.name,
     presence: (now - machine.lastHeartbeatAt <= OFFLINE_AFTER_MS ? "online" : "offline") as "online" | "offline",
   })));
@@ -146,6 +147,7 @@ function Workspace({
   const { paletteOpen, panels, setPaletteOpen, toggle } = useShellState();
   const attention = useQuery(listNeedsYou, {});
   const create = useMutation(createThreadRef);
+  const requestAddProject = useMutation(requestAddProjectRef);
   const machineCount = machines?.length ?? 0;
   const projects = useMemo(() => flattenProjects(machines ?? [], now), [machines, now]);
   const requestedProject = params.projectId ? projects.find((project) => project.id === params.projectId) : undefined;
@@ -221,11 +223,15 @@ function Workspace({
   }
 
   const sidebarProjects: SidebarProject[] = projects.map((project) => ({
+    archivedAt: project.archivedAt,
+    error: project.error,
     id: project.id,
+    machineId: project.machineId,
     machineName: project.machineName,
     name: project.name,
     path: project.path,
     presence: project.presence,
+    status: project.status,
   }));
 
   return (
@@ -234,6 +240,7 @@ function Workspace({
         <WorkspaceSidebar
           activeProjectId={activeProject?.id}
           attention={attention ?? []}
+          onAddProject={(params) => void requestAddProject({ machineId: params.machineId, name: params.name, path: params.path })}
           onNewPlan={(projectId) => void startThread(projectId, "plan")}
           onNewTask={(projectId) => void startThread(projectId, "chat")}
           onOpenPalette={() => setPaletteOpen(true)}
