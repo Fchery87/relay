@@ -1,6 +1,7 @@
 import { expect, test, describe } from "bun:test";
 import { LocalHarnessRuntime } from "./local-harness-runtime";
 import type { RunSnapshot } from "@relay/contracts";
+import { createDeterministicProviderReactor } from "@relay/orchestration";
 
 // ---------------------------------------------------------------------------
 // Conformance suite re-run against the LOCAL implementation.
@@ -16,13 +17,17 @@ async function collectEventsThroughCurrentSequence(
   runtime: LocalHarnessRuntime,
   runId: RunSnapshot["runId"],
   afterSequence = -1,
-): Promise<Array<{ type: string; sequence: number }>> {
+): Promise<Array<{ type: string; sequence: number; turnId?: string }>> {
   const { sequence } = await runtime.snapshot({ runId });
   if (sequence <= afterSequence) return [];
-  const events: Array<{ type: string; sequence: number }> = [];
+  const events: Array<{ type: string; sequence: number; turnId?: string }> = [];
 
   for await (const event of runtime.observe({ runId, afterSequence })) {
-    events.push({ type: event.type, sequence: event.sequence });
+    events.push({
+      type: event.type,
+      sequence: event.sequence,
+      ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+    });
     if (event.sequence >= sequence) break;
   }
 
@@ -170,20 +175,19 @@ describe("LocalHarnessRuntime conformance", () => {
     expect(s.runId).toBe(snap.runId);
   });
 
-  test("distinct turn commands each produce one turn.started event", async () => {
+  test("rejects a second turn until the active turn is terminal", async () => {
     const h = rt();
     const snap = await h.createRun({ projectId: "test" });
     await h.resumeRun({ runId: snap.runId });
 
     const r1 = await h.sendTurn({ runId: snap.runId, prompt: "hello" });
-    const r2 = await h.sendTurn({ runId: snap.runId, prompt: "hello" });
-    expect(r2.turnId).toBeString(); // Still works — different commandId
+    await expect(
+      h.sendTurn({ runId: snap.runId, prompt: "overlap" }),
+    ).rejects.toThrow(`turn ${r1.turnId} is still active`);
 
-    // Count events
     const events = await collectEventsThroughCurrentSequence(h, snap.runId);
-    // Should have 2 turn.started events (one per sendTurn)
     const turnStarts = events.filter((e) => e.type === "turn.started");
-    expect(turnStarts).toHaveLength(2);
+    expect(turnStarts).toHaveLength(1);
   });
 });
 
@@ -192,6 +196,126 @@ describe("LocalHarnessRuntime conformance", () => {
 // ---------------------------------------------------------------------------
 
 describe("restart recovery", () => {
+  test("an exhausted provider reactor emits a terminal failure command", async () => {
+    let executions = 0;
+    const h = LocalHarnessRuntime.memory({
+      reactorMaxAttempts: 1,
+      reactors: {
+        "provider.send_turn": {
+          execute: async () => {
+            executions++;
+            throw new Error("provider unavailable");
+          },
+          recover: async () => {
+            executions++;
+            throw new Error("provider unavailable");
+          },
+        },
+      },
+    });
+    const snap = await h.createRun({ projectId: "test" });
+    await h.resumeRun({ runId: snap.runId });
+    const receipt = await h.sendTurn({
+      runId: snap.runId,
+      prompt: "fail truthfully",
+    });
+
+    expect(await h.drainEffects()).toBe(0);
+    expect(await h.drainEffects()).toBe(0);
+    expect(executions).toBe(1);
+    expect((await h.snapshot({ runId: snap.runId })).activeTurnId).toBeUndefined();
+    const events = await collectEventsThroughCurrentSequence(h, snap.runId);
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "turn.failed" && event.turnId === receipt.turnId,
+      ),
+    ).toHaveLength(1);
+    h.close();
+  });
+
+  test("a durable provider effect is reclaimed and completed exactly once", async () => {
+    const tmpPath = `/tmp/relay-reactor-recovery-${crypto.randomUUID()}.sqlite`;
+    const h1 = LocalHarnessRuntime.open(tmpPath);
+    const snap = await h1.createRun({ projectId: "test" });
+    await h1.resumeRun({ runId: snap.runId });
+    await h1.sendTurn({
+      runId: snap.runId,
+      prompt: "survive the crash",
+      commandId: "cmd-reactor-recovery" as never,
+      turnId: "turn-reactor-recovery" as never,
+    });
+    expect(
+      (await collectEventsThroughCurrentSequence(h1, snap.runId))
+        .map((event) => event.type),
+    ).not.toContain("assistant.completed");
+    h1.close();
+
+    let executions = 0;
+    const deterministic = createDeterministicProviderReactor({
+      text: "recovered output",
+    });
+    const h2 = LocalHarnessRuntime.open(tmpPath, {
+      reactors: {
+        "provider.send_turn": {
+          execute: async (effect, context) => {
+            executions++;
+            return deterministic.execute(effect, context);
+          },
+          recover: deterministic.recover,
+        },
+      },
+    });
+
+    expect(await h2.drainEffects()).toBe(1);
+    expect(await h2.drainEffects()).toBe(0);
+    expect(executions).toBe(1);
+
+    const events = await collectEventsThroughCurrentSequence(h2, snap.runId);
+    expect(events.map((event) => event.type)).toContain("assistant.completed");
+    expect(events.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+    expect((await h2.snapshot({ runId: snap.runId })).activeTurnId).toBeUndefined();
+
+    h2.close();
+    try { require("node:fs").unlinkSync(tmpPath); } catch { /* ok */ }
+  });
+
+  test("a turn receipt and its identity survive restart and redelivery", async () => {
+    const tmpPath = `/tmp/relay-turn-receipt-${crypto.randomUUID()}.sqlite`;
+    const commandId = "cmd-durable-turn" as never;
+    const turnId = "turn-durable-turn" as never;
+    const h1 = LocalHarnessRuntime.open(tmpPath);
+    const snap = await h1.createRun({ projectId: "test" });
+    await h1.resumeRun({ runId: snap.runId });
+
+    const original = await h1.sendTurn({
+      runId: snap.runId,
+      prompt: "durable",
+      commandId,
+      turnId,
+    });
+    expect(original).toEqual({ commandId, turnId });
+    expect((await h1.snapshot({ runId: snap.runId })).activeTurnId).toBe(turnId);
+    h1.close();
+
+    const h2 = LocalHarnessRuntime.open(tmpPath);
+    const redelivered = await h2.sendTurn({
+      runId: snap.runId,
+      prompt: "durable",
+      commandId,
+      turnId,
+    });
+    expect(redelivered).toEqual(original);
+
+    const events = await collectEventsThroughCurrentSequence(h2, snap.runId);
+    expect(events.filter((event) => event.type === "turn.started")).toEqual([
+      expect.objectContaining({ turnId }),
+    ]);
+
+    h2.close();
+    try { require("node:fs").unlinkSync(tmpPath); } catch { /* ok */ }
+  });
+
   test("an observer sees commits made through another runtime connection", async () => {
     const tmpPath = `/tmp/relay-cross-runtime-test-${crypto.randomUUID()}.sqlite`;
     const h1 = LocalHarnessRuntime.open(tmpPath);

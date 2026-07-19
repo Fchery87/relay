@@ -21,13 +21,51 @@ Completed:
 - implemented live ordered observation with cancellation, commit notifications, cursor verification, and cross-connection SQLite rechecks;
 - added characterization and integration coverage for truthful turns, reducer-owned provider events, atomic creation, duplicate terminal commands, FIFO draining, live observation, cancellation, and restart recovery.
 
+### 2026-07-18 — Increment 1, batch 2
+
+Completed:
+
+- persisted immutable, versioned command receipts and returned the canonical
+  `turnId` from storage on first delivery and redelivery;
+- carried `turnId` and `providerInstanceId` through canonical event drafts,
+  SQLite rows, observation, reducer state, and restart recovery;
+- added versioned runtime validation for snapshot, event payload, command, and
+  receipt boundaries, with legacy record compatibility and fail-closed reads;
+- made permission, workspace, provider session, active turn, checkpoint, and
+  reducer payload metadata round-trip in complete snapshots;
+- inserted durable effect intents in the same transaction as events,
+  projections, snapshots, and receipts;
+- moved snapshot loading, pure deciding/reducing, and optimistic-version
+  validation inside that same SQLite transaction;
+- added leased effect claiming, attempt counts, retry classes, terminal
+  completion/failure state, lease renewal, stable idempotency keys, and
+  idempotent internal result commands;
+- split reactor execution from recovery so a reclaimed lease reconciles by
+  idempotency key and never blindly invokes the original side effect twice;
+- fenced every internal result write against the live effect lease inside its
+  SQLite transaction, and gave provider results stable semantic identities so
+  partial batches recover without positional command-ID collisions;
+- enforced durable effect insertion order, fail-closed expiry for non-retryable
+  effects, terminal failure commands after retry exhaustion, exactly one final
+  terminal provider result, one active turn per run, and durable per-run
+  turn-ID uniqueness;
+- serialized overlapping drain requests as successor passes without losing
+  effects queued during promise settlement;
+- replaced the stub dispatcher with a reactor registry and a deterministic fake
+  provider reactor used only by tests;
+- proved that 100 concurrent duplicate turn deliveries persist one receipt, one
+  `turn.started`, and one provider effect;
+- proved that a provider effect survives runtime restart, completes through
+  canonical internal commands, and is not executed by a second drain.
+
 Next batch:
 
-- persist and return a durable turn receipt with a canonical turn ID;
-- add runtime schemas for persisted snapshots, events, commands, and receipts;
-- persist full turn/provider snapshot metadata;
-- replace stub effects with the deterministic durable reactor path;
-- add duplicate-effect and measured concurrency acceptance tests.
+- add bounded concurrent reactor scheduling while preserving per-run FIFO;
+- add retry timing/backoff and richer diagnostics for exhausted effects;
+- convert invalid persisted-record failures into a durable affected-run
+  diagnostic and stop transition;
+- complete the reducer command/state table and randomized crash/replay tests;
+- wire the first real Codex provider reactor through the daemon composition.
 
 ## Authority and relationship to existing plans
 

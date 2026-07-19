@@ -4,20 +4,13 @@ import type {
   CanonicalEvent,
   CanonicalEventDraft,
   CanonicalEventType,
+  EffectIntent,
 } from "@relay/contracts";
 import { reduceRun, applySnapshot } from "@relay/contracts";
 
 // ---------------------------------------------------------------------------
 // Effect intents — returned by the decider, dispatched by reactors.
 // ---------------------------------------------------------------------------
-
-export type EffectIntent =
-  | { readonly kind: "provider.start_session"; readonly providerInstanceId: string }
-  | { readonly kind: "provider.send_turn"; readonly prompt: string }
-  | { readonly kind: "provider.stop_session" }
-  | { readonly kind: "workspace.create"; readonly repoPath: string }
-  | { readonly kind: "checkpoint.capture"; readonly turnId: string }
-  | { readonly kind: "projection.publish" };
 
 // ---------------------------------------------------------------------------
 // Decider result
@@ -48,6 +41,10 @@ export function decide(
   const appendEvent = <TType extends CanonicalEventType>(
     type: TType,
     payload: Extract<CanonicalEvent, { type: TType }>["payload"],
+    metadata?: Pick<
+      Extract<CanonicalEventDraft, { type: TType }>,
+      "turnId" | "providerInstanceId"
+    >,
   ) => {
     const event = {
       eventId: `ev-${events.length + 1}-${command.commandId}` as never,
@@ -55,6 +52,7 @@ export function decide(
       payload,
       correlationId: corrId as never,
       causationId: causationId as never,
+      ...metadata,
     } as unknown as Extract<CanonicalEventDraft, { type: TType }>;
     events.push(event);
   };
@@ -93,9 +91,22 @@ export function decide(
 
     // --- turn lifecycle ---
     case "turn.send": {
-      appendEvent("turn.started", { prompt: command.payload.prompt });
+      if (snapshot.activeTurnId) {
+        throw new Error(
+          `Cannot start turn ${command.payload.turnId}; turn ${snapshot.activeTurnId} is still active`,
+        );
+      }
+      appendEvent(
+        "turn.started",
+        { prompt: command.payload.prompt },
+        { turnId: command.payload.turnId },
+      );
       // Emit a provider effect so the engine knows to route the turn
-      effects.push({ kind: "provider.send_turn", prompt: command.payload.prompt });
+      effects.push({
+        kind: "provider.send_turn",
+        prompt: command.payload.prompt,
+        turnId: command.payload.turnId,
+      });
       const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
@@ -107,7 +118,14 @@ export function decide(
     }
 
     case "turn.interrupt": {
-      appendEvent("turn.interrupted", { reason: command.payload.reason ?? "user" });
+      if (!snapshot.activeTurnId) {
+        return { events: [], effects: [], snapshot: null };
+      }
+      appendEvent(
+        "turn.interrupted",
+        { reason: command.payload.reason ?? "user" },
+        { turnId: snapshot.activeTurnId },
+      );
       const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
@@ -136,6 +154,13 @@ export function decide(
     case "provider.event": {
       // The provider adapter already normalised this event. Routing it through
       // an internal command keeps the decider as the sole transition owner.
+      if (
+        isTerminalTurnEvent(command.payload.normalizedEvent.type) &&
+        (!command.payload.normalizedEvent.turnId ||
+          command.payload.normalizedEvent.turnId !== snapshot.activeTurnId)
+      ) {
+        return { events: [], effects: [], snapshot: null };
+      }
       events.push(command.payload.normalizedEvent);
       const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
@@ -148,12 +173,39 @@ export function decide(
       return { events: [], effects: [], snapshot: null };
     }
 
+    case "effect.result": {
+      if (
+        command.payload.status === "failed" &&
+        command.payload.effectKind === "provider.send_turn" &&
+        command.payload.turnId !== undefined &&
+        snapshot.activeTurnId !== undefined &&
+        command.payload.turnId === snapshot.activeTurnId
+      ) {
+        appendEvent(
+          "turn.failed",
+          { error: command.payload.error },
+          { turnId: command.payload.turnId },
+        );
+        const updated = reduceAndApply(current, events, command.issuedAt);
+        return { events, effects, snapshot: updated };
+      }
+      return { events: [], effects: [], snapshot: null };
+    }
+
     default: {
       const _exhaustive: never = command;
       void _exhaustive;
       return { events: [], effects: [], snapshot: null };
     }
   }
+}
+
+function isTerminalTurnEvent(type: CanonicalEventType): boolean {
+  return (
+    type === "turn.completed" ||
+    type === "turn.failed" ||
+    type === "turn.interrupted"
+  );
 }
 
 // ---------------------------------------------------------------------------

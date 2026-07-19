@@ -21,13 +21,17 @@ describe("Backup/rollback rehearsal", () => {
       await runtime.resumeRun({ runId: snap.runId });
 
       // Send a turn, then simulate explicit provider output.
-      await runtime.sendTurn({ runId: snap.runId, prompt: "build a feature" });
+      const firstTurn = await runtime.sendTurn({
+        runId: snap.runId,
+        prompt: "build a feature",
+      });
       await completeTurn(runtime, runId, "before-restart");
 
       // Append additional events
       await runtime.appendEvent(runId, {
         eventId: "ev-ckpt-1",
         type: "checkpoint.captured",
+        turnId: firstTurn.turnId,
         payload: {
           checkpointId: "ckpt-1" as never,
           commit: "abc123def",
@@ -163,19 +167,24 @@ async function completeTurn(
   runId: string,
   suffix: string,
 ): Promise<void> {
+  const turnId = runtime.getSnapshotByRunId(runId)?.activeTurnId;
+  if (!turnId) throw new Error(`Run has no active turn: ${runId}`);
   await runtime.appendEvent(runId, {
     eventId: `ev-assistant-delta-${suffix}`,
     type: "assistant.delta",
+    turnId,
     payload: { text: "done" },
   });
   await runtime.appendEvent(runId, {
     eventId: `ev-assistant-completed-${suffix}`,
     type: "assistant.completed",
+    turnId,
     payload: {},
   });
   await runtime.appendEvent(runId, {
     eventId: `ev-turn-completed-${suffix}`,
     type: "turn.completed",
+    turnId,
     payload: { summary: "done" },
   });
 }

@@ -1,13 +1,23 @@
 import {
-  RUN_STATUSES,
   type CanonicalEventDraft,
+  type CommandReceipt,
+  type CommandReceiptDraft,
   type CommandId,
   type RunId,
   type RunSnapshot,
-  type RunStatus,
 } from "@relay/contracts";
 import type { CanonicalEventType, EventEnvelope } from "@relay/contracts";
 import type { StoreDatabase } from "./database";
+import { insertEffect, type EffectDraft } from "./effect-store";
+import {
+  decodeEventPayload,
+  decodeReceipt,
+  decodeSnapshot,
+  encodeEventPayload,
+  encodeReceipt,
+  encodeSnapshot,
+  PersistedRecordError,
+} from "./persistence-codecs";
 
 // ---------------------------------------------------------------------------
 // Input / output types
@@ -23,19 +33,28 @@ export type AppendInput = {
   /** Initial state to insert atomically when accepting a run.create command. */
   readonly initialSnapshot?: RunSnapshot;
   readonly events: ReadonlyArray<CanonicalEventDraft>;
+  /** Identifies the immutable result that will be stored for redelivery. */
+  readonly receipt?: CommandReceiptDraft;
+  /** Durable reactor work committed atomically with events and the receipt. */
+  readonly effects?: ReadonlyArray<EffectDraft>;
 };
 
 export type AppendResult =
   | {
       readonly ok: true;
       readonly snapshot: RunSnapshot;
+      readonly receipt: CommandReceipt;
       readonly events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>;
     }
   | {
       readonly ok: false;
-      readonly reason: "duplicate_command" | "version_conflict" | "run_not_found";
+      readonly reason:
+        | "duplicate_command"
+        | "version_conflict"
+        | "run_not_found"
+        | "effect_lease_lost";
       /** If duplicate, the original receipt result. */
-      readonly duplicateSnapshot?: RunSnapshot;
+      readonly duplicateReceipt?: CommandReceipt;
     };
 
 // ---------------------------------------------------------------------------
@@ -59,8 +78,9 @@ export function appendEvents(
   input: AppendInput,
 ): AppendResult {
   const now = Date.now();
+  const alreadyInTransaction = db.inTransaction;
 
-  const result = db.transaction((): AppendResult => {
+  const execute = (): AppendResult => {
     // 1. Duplicate check
     const existing = db
       .query("SELECT run_id, result_json FROM command_receipts WHERE command_id = ?")
@@ -75,10 +95,12 @@ export function appendEvents(
       }
       // Idempotent: return the cached snapshot from the original receipt.
       if (existing.result_json) {
-        try {
-          const cached = JSON.parse(existing.result_json) as RunSnapshot;
-          return { ok: false, reason: "duplicate_command", duplicateSnapshot: cached };
-        } catch { /* fall through to re-read */ }
+        const cached = decodeReceipt(
+          existing.result_json,
+          input.commandId,
+          input.runId,
+        );
+        return { ok: false, reason: "duplicate_command", duplicateReceipt: cached };
       }
       const dup = db
         .query("SELECT * FROM run_snapshots WHERE run_id = ?")
@@ -87,7 +109,14 @@ export function appendEvents(
       return {
         ok: false,
         reason: "duplicate_command",
-        duplicateSnapshot: dup ? rowToSnapshot(dup) : undefined,
+        duplicateReceipt: dup
+          ? createReceipt(
+              input.commandId,
+              input.runId,
+              rowToSnapshot(dup),
+              input.receipt ?? { kind: "snapshot" },
+            )
+          : undefined,
       };
     }
 
@@ -129,12 +158,29 @@ export function appendEvents(
     for (const ev of input.events) {
       seq++;
       stream++;
+      if (ev.type === "turn.started") {
+        if (!ev.turnId) {
+          throw new Error("turn.started requires a turn ID");
+        }
+        const inserted = db.run(
+          `INSERT OR IGNORE INTO run_turns (run_id, turn_id, started_at)
+           VALUES (?, ?, ?)`,
+          [input.runId, ev.turnId, now],
+        );
+        if (inserted.changes !== 1) {
+          throw new Error(
+            `Turn ID is already bound to this run: ${ev.turnId}`,
+          );
+        }
+      }
       const envelope: EventEnvelope<CanonicalEventType, unknown> = {
         eventId: ev.eventId as never,
         sequence: seq,
         streamVersion: stream,
         type: ev.type,
         runId: input.runId as never,
+        turnId: ev.turnId,
+        providerInstanceId: ev.providerInstanceId,
         correlationId: ev.correlationId as never,
         causationId: ev.causationId as never,
         occurredAt: now,
@@ -142,15 +188,17 @@ export function appendEvents(
       };
       envelopes.push(envelope);
       db.run(
-        `INSERT INTO run_events (event_id, run_id, sequence, stream_version, type, payload_json, correlation_id, causation_id, occurred_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO run_events (event_id, run_id, sequence, stream_version, type, payload_json, turn_id, provider_instance_id, correlation_id, causation_id, occurred_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           ev.eventId,
           input.runId,
           seq,
           stream,
           ev.type,
-          JSON.stringify(ev.payload),
+          encodeEventPayload(ev.type, ev.payload),
+          ev.turnId ?? null,
+          ev.providerInstanceId ?? null,
           ev.correlationId,
           ev.causationId ?? null,
           now,
@@ -184,29 +232,162 @@ export function appendEvents(
         snapshot.status,
         seq,
         stream,
-        JSON.stringify(snapshot),
+        encodeSnapshot(snapshot),
         snapshot.updatedAt,
         input.runId,
       ],
     );
 
-    // 5. Command receipt — store the full snapshot so duplicate returns the immutable result
+    const receipt = createReceipt(
+      input.commandId,
+      input.runId,
+      snapshot,
+      input.receipt ?? { kind: "snapshot" },
+    );
+
+    for (const effect of input.effects ?? []) {
+      if (effect.runId !== input.runId || effect.commandId !== input.commandId) {
+        throw new Error("Effect identity does not match its command");
+      }
+      insertEffect(db, effect, now);
+    }
+
+    // 5. Command receipt — store the full immutable result for redelivery.
     db.run(
       `INSERT INTO command_receipts (command_id, run_id, completed_at, result_json) VALUES (?, ?, ?, ?)`,
-      [input.commandId, input.runId, now, JSON.stringify(snapshot)],
+      [input.commandId, input.runId, now, encodeReceipt(receipt)],
     );
 
     return {
       ok: true,
       snapshot,
+      receipt,
       events: envelopes,
     };
+  };
+  const result = alreadyInTransaction
+    ? execute()
+    : db.transaction(execute)();
+
+  if (!alreadyInTransaction && result.ok && result.events.length > 0) {
+    eventCommitNotifier(db).notify(input.runId);
+  }
+
+  return result;
+}
+
+export type TransactionalCommandInput = {
+  readonly runId: RunId;
+  readonly commandId: CommandId;
+  readonly expectedStreamVersion?: number;
+  readonly initialSnapshot?: RunSnapshot;
+  readonly receipt?: CommandReceiptDraft;
+  /** Result commands must still own a live effect lease when persisted. */
+  readonly effectFence?: {
+    readonly effectId: string;
+    readonly leaseOwner: string;
+  };
+  readonly decide: (snapshot: RunSnapshot) => {
+    readonly nextSnapshot: RunSnapshot;
+    readonly events: ReadonlyArray<CanonicalEventDraft>;
+    readonly effects?: ReadonlyArray<EffectDraft>;
+  };
+};
+
+/**
+ * Load, decide, reduce, persist effects/events, and complete the receipt under
+ * one SQLite write transaction. The callback must remain pure and synchronous.
+ */
+export function transactCommand(
+  db: StoreDatabase,
+  input: TransactionalCommandInput,
+): AppendResult {
+  const result = db.transaction((): AppendResult => {
+    const existing = db
+      .query("SELECT run_id, result_json FROM command_receipts WHERE command_id = ?")
+      .get(input.commandId) as {
+        run_id: string;
+        result_json: string | null;
+      } | undefined;
+    if (existing) {
+      if (existing.run_id !== input.runId) {
+        throw new Error("Command ID is already bound to a different run");
+      }
+      const snapshotRow = db
+        .query("SELECT * FROM run_snapshots WHERE run_id = ?")
+        .get(input.runId) as RunSnapshotRow | undefined;
+      const duplicateReceipt = existing.result_json
+        ? decodeReceipt(existing.result_json, input.commandId, input.runId)
+        : snapshotRow
+          ? createReceipt(
+              input.commandId,
+              input.runId,
+              rowToSnapshot(snapshotRow),
+              input.receipt ?? { kind: "snapshot" },
+            )
+          : undefined;
+      return {
+        ok: false,
+        reason: "duplicate_command",
+        duplicateReceipt,
+      };
+    }
+
+    if (input.effectFence) {
+      const fenced = db.run(
+        `UPDATE effect_outbox
+         SET updated_at = updated_at
+         WHERE effect_id = ?
+           AND status = 'running'
+           AND lease_owner = ?
+           AND lease_expires_at > ?`,
+        [
+          input.effectFence.effectId,
+          input.effectFence.leaseOwner,
+          Date.now(),
+        ],
+      );
+      if (fenced.changes !== 1) {
+        return { ok: false, reason: "effect_lease_lost" };
+      }
+    }
+
+    const row = db
+      .query("SELECT * FROM run_snapshots WHERE run_id = ?")
+      .get(input.runId) as RunSnapshotRow | undefined;
+    if (row && input.initialSnapshot) {
+      return { ok: false, reason: "version_conflict" };
+    }
+    const snapshot = row
+      ? rowToSnapshot(row)
+      : input.initialSnapshot;
+    if (!snapshot) {
+      return { ok: false, reason: "run_not_found" };
+    }
+    if (
+      input.expectedStreamVersion !== undefined &&
+      input.expectedStreamVersion !== snapshot.streamVersion
+    ) {
+      return { ok: false, reason: "version_conflict" };
+    }
+
+    const decision = input.decide(snapshot);
+    return appendEvents(db, {
+      runId: input.runId,
+      commandId: input.commandId,
+      expectedStreamVersion:
+        input.expectedStreamVersion ?? snapshot.streamVersion,
+      initialSnapshot: input.initialSnapshot,
+      nextSnapshot: decision.nextSnapshot,
+      events: decision.events,
+      receipt: input.receipt,
+      effects: decision.effects,
+    });
   })();
 
   if (result.ok && result.events.length > 0) {
     eventCommitNotifier(db).notify(input.runId);
   }
-
   return result;
 }
 
@@ -226,7 +407,7 @@ export function insertSnapshot(
       snapshot.status,
       snapshot.sequence,
       snapshot.streamVersion,
-      JSON.stringify(snapshot),
+      encodeSnapshot(snapshot),
       snapshot.updatedAt,
     ],
   );
@@ -242,11 +423,11 @@ export function getSnapshot(
   return row ? rowToSnapshot(row) : undefined;
 }
 
-export function getCommandReceiptSnapshot(
+export function getCommandReceipt(
   db: StoreDatabase,
   commandId: CommandId,
   runId: RunId,
-): RunSnapshot | undefined {
+): CommandReceipt | undefined {
   const row = db
     .query("SELECT run_id, result_json FROM command_receipts WHERE command_id = ?")
     .get(commandId) as {
@@ -257,7 +438,7 @@ export function getCommandReceiptSnapshot(
     throw new Error("Command ID is already bound to a different run");
   }
   if (!row?.result_json) return undefined;
-  return JSON.parse(row.result_json) as RunSnapshot;
+  return decodeReceipt(row.result_json, commandId, runId);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,10 +491,12 @@ function rowToEvent(row: EventRow): EventEnvelope<CanonicalEventType, unknown> {
     streamVersion: row.stream_version,
     type: row.type as CanonicalEventType,
     runId: row.run_id as never,
+    turnId: (row.turn_id ?? undefined) as never,
+    providerInstanceId: (row.provider_instance_id ?? undefined) as never,
     correlationId: row.correlation_id as never,
     causationId: (row.causation_id ?? undefined) as never,
     occurredAt: row.occurred_at,
-    payload: JSON.parse(row.payload_json),
+    payload: decodeEventPayload(row.type as CanonicalEventType, row.payload_json),
   };
 }
 
@@ -337,50 +520,52 @@ type EventRow = {
   stream_version: number;
   type: string;
   payload_json: string;
+  turn_id: string | null;
+  provider_instance_id: string | null;
   correlation_id: string;
   causation_id: string | null;
   occurred_at: number;
 };
 
 function rowToSnapshot(row: RunSnapshotRow): RunSnapshot {
-  if (!isRunStatus(row.status)) {
-    throw new Error(`Invalid run status in local store: ${row.status}`);
+  const snapshot = decodeSnapshot(row.payload_json);
+  if (
+    snapshot.runId !== row.run_id ||
+    snapshot.status !== row.status ||
+    snapshot.sequence !== row.sequence ||
+    snapshot.streamVersion !== row.stream_version ||
+    snapshot.updatedAt !== row.updated_at
+  ) {
+    throw new PersistedRecordError(
+      `Run snapshot columns do not match payload for ${row.run_id}`,
+    );
   }
+  return snapshot;
+}
 
-  const payload = parseSnapshotPayload(row.payload_json);
-  const activeTurnId =
-    typeof payload.activeTurnId === "string"
-      ? { activeTurnId: payload.activeTurnId }
-      : {};
-
+function createReceipt(
+  commandId: CommandId,
+  runId: RunId,
+  snapshot: RunSnapshot,
+  draft: CommandReceiptDraft,
+): CommandReceipt {
+  if (draft.kind === "turn") {
+    return {
+      schemaVersion: 1,
+      kind: "turn",
+      commandId,
+      runId,
+      turnId: draft.turnId,
+      snapshot,
+    };
+  }
   return {
-    runId: row.run_id as never,
-    status: row.status,
-    sequence: row.sequence,
-    streamVersion: row.stream_version,
-    restartCount:
-      typeof payload.restartCount === "number" ? payload.restartCount : 0,
-    createdAt:
-      typeof payload.createdAt === "number" ? payload.createdAt : row.updated_at,
-    updatedAt: row.updated_at,
-    ...activeTurnId,
+    schemaVersion: 1,
+    kind: "snapshot",
+    commandId,
+    runId,
+    snapshot,
   };
-}
-
-function isRunStatus(value: string): value is RunStatus {
-  return RUN_STATUSES.some((status) => status === value);
-}
-
-function parseSnapshotPayload(value: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(value);
-  if (!isRecord(parsed)) {
-    throw new Error("Invalid run snapshot payload in local store");
-  }
-  return parsed;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const EVENT_COMMIT_POLL_MS = 50;

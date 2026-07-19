@@ -16,8 +16,12 @@ const baseSnapshot = (overrides?: Partial<RunSnapshot>): RunSnapshot => ({
 
 describe("run.created", () => {
   test("created → ready", () => {
-    const result = reduceRun(baseSnapshot(), { type: "run.created" } as never);
+    const result = reduceRun(baseSnapshot(), {
+      type: "run.created",
+      payload: { projectId: "project-1" },
+    } as never);
     expect(result?.status).toBe("ready");
+    expect(result?.projectId).toBe("project-1" as never);
   });
 
   test("no-op when already ready", () => {
@@ -138,13 +142,7 @@ describe("approval", () => {
 
 describe("non-status events", () => {
   const noStatusChange: Array<{ type: string }> = [
-    { type: "turn.started" },
     { type: "turn.steered" },
-    { type: "turn.completed" },
-    { type: "turn.failed" },
-    { type: "turn.interrupted" },
-    { type: "provider.session.started" },
-    { type: "provider.session.resumed" },
     { type: "provider.session.stopped" },
     { type: "assistant.delta" },
     { type: "assistant.completed" },
@@ -153,7 +151,6 @@ describe("non-status events", () => {
     { type: "activity.completed" },
     { type: "activity.failed" },
     { type: "usage.recorded" },
-    { type: "checkpoint.captured" },
     { type: "checkpoint.restored" },
     { type: "projection.published" },
   ];
@@ -164,4 +161,63 @@ describe("non-status events", () => {
       expect(reduceRun(baseSnapshot({ status: "ready" }), { type } as never)).toBeNull();
     });
   }
+});
+
+describe("run metadata", () => {
+  test("turn lifecycle owns activeTurnId", () => {
+    const started = reduceRun(baseSnapshot({ status: "running" }), {
+      type: "turn.started",
+      turnId: "turn-1",
+      occurredAt: 2,
+      payload: { prompt: "hello" },
+    } as never);
+    expect(started?.activeTurnId).toBe("turn-1" as never);
+
+    const completed = reduceRun(
+      baseSnapshot({ status: "running", activeTurnId: "turn-1" as never }),
+      {
+        type: "turn.completed",
+        turnId: "turn-1",
+        occurredAt: 3,
+        payload: {},
+      } as never,
+    );
+    expect(completed).toMatchObject({ activeTurnId: undefined });
+  });
+
+  test("provider session metadata is reduced into the snapshot", () => {
+    const result = reduceRun(baseSnapshot({ status: "running" }), {
+      type: "provider.session.started",
+      occurredAt: 2,
+      payload: {
+        providerInstanceId: "provider-1",
+        providerThreadId: "thread-1",
+      },
+    } as never);
+    expect(result).toMatchObject({
+      providerInstanceId: "provider-1",
+      providerSession: {
+        providerInstanceId: "provider-1",
+        providerThreadId: "thread-1",
+      },
+    });
+  });
+
+  test("checkpoint metadata is reduced into the snapshot", () => {
+    const result = reduceRun(baseSnapshot({ status: "running" }), {
+      type: "checkpoint.captured",
+      turnId: "turn-1",
+      occurredAt: 2,
+      payload: {
+        checkpointId: "checkpoint-1",
+        commit: "abc123",
+        ref: "refs/relay/checkpoint-1",
+      },
+    } as never);
+    expect(result?.checkpoint).toMatchObject({
+      checkpointId: "checkpoint-1",
+      turnId: "turn-1",
+      commit: "abc123",
+    });
+  });
 });

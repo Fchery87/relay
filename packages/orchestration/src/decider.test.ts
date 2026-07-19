@@ -42,9 +42,23 @@ describe("decider", () => {
   });
 
   test("turn.send emits turn.started and provider effect", () => {
-    const result = decide(snap({ status: "running" }), cmd("turn.send", { prompt: "hello" }));
+    const result = decide(
+      snap({ status: "running" }),
+      cmd("turn.send", { prompt: "hello", turnId: "turn-1" }),
+    );
     expect(result.events[0]!.type).toBe("turn.started");
+    expect(result.events[0]).toMatchObject({ turnId: "turn-1" });
+    expect(result.snapshot?.activeTurnId).toBe("turn-1" as never);
     expect(result.effects.some((e) => e.kind === "provider.send_turn")).toBe(true);
+  });
+
+  test("turn.send rejects a second turn while one is active", () => {
+    expect(() =>
+      decide(
+        snap({ status: "running", activeTurnId: "turn-active" as never }),
+        cmd("turn.send", { prompt: "overlap", turnId: "turn-second" }),
+      ),
+    ).toThrow("turn turn-active is still active");
   });
 
   test("turn.steer emits turn.steered", () => {
@@ -53,8 +67,17 @@ describe("decider", () => {
   });
 
   test("turn.interrupt emits turn.interrupted", () => {
-    const result = decide(snap(), cmd("turn.interrupt", { reason: "cancel" }));
+    const result = decide(
+      snap({ activeTurnId: "turn-1" as never }),
+      cmd("turn.interrupt", { reason: "cancel" }),
+    );
     expect(result.events[0]!.type).toBe("turn.interrupted");
+    expect(result.events[0]).toMatchObject({ turnId: "turn-1" });
+    const duplicate = decide(
+      result.snapshot!,
+      cmd("turn.interrupt", { reason: "cancel again" }),
+    );
+    expect(duplicate.events).toHaveLength(0);
   });
 
   test("approval.resolve emits approval.resolved", () => {
@@ -81,6 +104,55 @@ describe("decider", () => {
 
     expect(result.events).toEqual([normalizedEvent]);
     expect(result.snapshot?.status).toBe("running");
+  });
+
+  test("rejects a second terminal event for the same turn", () => {
+    const active = snap({
+      status: "running",
+      activeTurnId: "turn-1" as never,
+    });
+    const completed = decide(
+      active,
+      cmd("provider.event", {
+        providerInstanceId: "provider-1",
+        normalizedEvent: {
+          eventId: "ev-completed",
+          type: "turn.completed",
+          turnId: "turn-1",
+          payload: {},
+          correlationId: "corr-completed",
+        },
+      }),
+    );
+    const duplicate = decide(
+      completed.snapshot!,
+      cmd("provider.event", {
+        providerInstanceId: "provider-1",
+        normalizedEvent: {
+          eventId: "ev-failed",
+          type: "turn.failed",
+          turnId: "turn-1",
+          payload: { error: "late failure" },
+          correlationId: "corr-failed",
+        },
+      }),
+    );
+
+    expect(completed.events).toHaveLength(1);
+    expect(duplicate.events).toHaveLength(0);
+  });
+
+  test("does not create a turn failure without an active matching turn", () => {
+    const result = decide(
+      snap({ status: "running" }),
+      cmd("effect.result", {
+        effectId: "effect-1",
+        effectKind: "provider.send_turn",
+        status: "failed",
+        error: "provider unavailable",
+      }),
+    );
+    expect(result.events).toHaveLength(0);
   });
 
   test("duplicate run.resume on running is idempotent", () => {

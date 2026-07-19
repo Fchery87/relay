@@ -22,6 +22,9 @@ export type ResumeRunInput = {
 export type SendTurnInput = {
   readonly runId: RunId;
   readonly prompt: string;
+  /** Stable identities may be supplied when retrying delivery. */
+  readonly commandId?: CommandId;
+  readonly turnId?: TurnId;
 };
 
 export type SteerTurnInput = {

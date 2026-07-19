@@ -1,4 +1,12 @@
-import type { CausationId, CommandId, CorrelationId, ProviderInstanceId, RunId } from "./ids";
+import type {
+  CausationId,
+  CommandId,
+  CorrelationId,
+  EffectId,
+  ProviderInstanceId,
+  RunId,
+  TurnId,
+} from "./ids";
 import type { CanonicalEventDraft } from "./events";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +22,8 @@ export type CommandActor =
 
 /** The stable envelope for every harness command. */
 export type CommandEnvelope<TType extends string, TPayload> = {
+  /** Version 1 is emitted by current producers; absence is accepted for legacy callers. */
+  readonly schemaVersion?: 1;
   readonly commandId: CommandId;
   readonly type: TType;
   readonly runId: RunId;
@@ -59,7 +69,10 @@ export type ResumeRunCommand = CommandEnvelope<"run.resume", ResumeRunPayload>;
 
 // --- send ---
 
-export type SendTurnPayload = { readonly prompt: string };
+export type SendTurnPayload = {
+  readonly prompt: string;
+  readonly turnId: TurnId;
+};
 export type SendTurnCommand = CommandEnvelope<"turn.send", SendTurnPayload>;
 
 // --- steer ---
@@ -108,6 +121,7 @@ export type InternalCommand =
   | ProviderEventCommand
   | WorkspaceResultCommand
   | CheckpointResultCommand
+  | EffectResultCommand
   | ProjectionAckCommand;
 
 export type ProviderEventPayload = {
@@ -140,6 +154,19 @@ export type CheckpointResultPayload = {
 export type CheckpointResultCommand = CommandEnvelope<
   "checkpoint.result",
   CheckpointResultPayload
+>;
+
+export type EffectResultPayload = {
+  readonly effectId: EffectId;
+  readonly effectKind: string;
+  readonly status: "failed";
+  readonly error: string;
+  readonly turnId?: TurnId;
+};
+
+export type EffectResultCommand = CommandEnvelope<
+  "effect.result",
+  EffectResultPayload
 >;
 
 export type ProjectionAckPayload = { readonly cursor: number };

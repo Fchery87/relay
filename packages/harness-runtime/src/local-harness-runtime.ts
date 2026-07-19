@@ -3,6 +3,7 @@ import type {
   RunSnapshot,
   EventEnvelope,
   CanonicalEventType,
+  ReactorRegistry,
 } from "@relay/contracts";
 import {
   openMemoryStore,
@@ -30,26 +31,38 @@ import {
   type AppendEventResult,
 } from "./harness-runtime";
 
+export type LocalHarnessRuntimeConfig = {
+  readonly maxConcurrentRuns?: number;
+  readonly reactors?: ReactorRegistry;
+  readonly reactorLeaseMs?: number;
+  readonly reactorBatchSize?: number;
+  readonly reactorMaxAttempts?: number;
+};
+
 export class LocalHarnessRuntime implements HarnessRuntime {
   private readonly engine: OrchestrationEngine;
   private readonly closeController = new AbortController();
 
   constructor(
     private readonly db: StoreDatabase,
-    config?: { maxConcurrentRuns?: number },
+    config?: LocalHarnessRuntimeConfig,
   ) {
     this.engine = new OrchestrationEngine(db, {
       maxConcurrentRuns: config?.maxConcurrentRuns ?? 4,
+      reactors: config?.reactors,
+      reactorLeaseMs: config?.reactorLeaseMs,
+      reactorBatchSize: config?.reactorBatchSize,
+      reactorMaxAttempts: config?.reactorMaxAttempts,
     });
   }
 
   /** Open a persistent file-backed runtime. */
-  static open(path: string, config?: { maxConcurrentRuns?: number }): LocalHarnessRuntime {
+  static open(path: string, config?: LocalHarnessRuntimeConfig): LocalHarnessRuntime {
     return new LocalHarnessRuntime(openStore(path), config);
   }
 
   /** Open an in-memory runtime (for tests). */
-  static memory(config?: { maxConcurrentRuns?: number }): LocalHarnessRuntime {
+  static memory(config?: LocalHarnessRuntimeConfig): LocalHarnessRuntime {
     return new LocalHarnessRuntime(openMemoryStore(), config);
   }
 
@@ -61,6 +74,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   async resumeRun(input: ResumeRunInput): Promise<RunSnapshot> {
     return this.engine.submit({
+      schemaVersion: 1,
       commandId: `cmd-resume-${input.runId}` as never,
       type: "run.resume",
       runId: input.runId,
@@ -72,23 +86,31 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   }
 
   async sendTurn(input: SendTurnInput): Promise<TurnReceipt> {
-    const commandId = `cmd-send-${crypto.randomUUID()}`;
+    const commandId =
+      input.commandId ?? (`cmd-send-${crypto.randomUUID()}` as never);
+    const turnId =
+      input.turnId ?? (`turn-${commandId}` as never);
 
-    await this.engine.submit({
-      commandId: commandId as never,
+    const receipt = await this.engine.submitReceipt({
+      schemaVersion: 1,
+      commandId,
       type: "turn.send",
       runId: input.runId,
       correlationId: `corr-send` as never,
       actor: { kind: "user", id: "user" },
       issuedAt: Date.now(),
-      payload: { prompt: input.prompt },
+      payload: { prompt: input.prompt, turnId },
     });
 
-    return { turnId: `turn-${commandId}` as never, commandId: commandId as never };
+    if (receipt.kind !== "turn") {
+      throw new Error(`Expected a turn receipt for command ${commandId}`);
+    }
+    return { turnId: receipt.turnId, commandId: receipt.commandId };
   }
 
   async steerTurn(input: SteerTurnInput): Promise<void> {
     await this.engine.submit({
+      schemaVersion: 1,
       commandId: `cmd-steer-${crypto.randomUUID()}` as never,
       type: "turn.steer",
       runId: input.runId,
@@ -101,6 +123,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   async interruptTurn(input: InterruptTurnInput): Promise<void> {
     await this.engine.submit({
+      schemaVersion: 1,
       commandId: `cmd-interrupt-${crypto.randomUUID()}` as never,
       type: "turn.interrupt",
       runId: input.runId,
@@ -113,6 +136,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   async resolveApproval(input: ResolveApprovalInput): Promise<void> {
     await this.engine.submit({
+      schemaVersion: 1,
       commandId: `cmd-approve-${crypto.randomUUID()}` as never,
       type: "approval.resolve",
       runId: input.runId,
@@ -125,6 +149,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   async stopRun(input: StopRunInput): Promise<void> {
     await this.engine.submit({
+      schemaVersion: 1,
       commandId: `cmd-stop-${crypto.randomUUID()}` as never,
       type: "run.stop",
       runId: input.runId,
@@ -193,6 +218,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
     try {
       const snapshot = await this.engine.submit({
+        schemaVersion: 1,
         commandId,
         type: "provider.event",
         runId: runId as never,
@@ -226,6 +252,11 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   getSnapshotByRunId(runId: string): RunSnapshot | undefined {
     return getSnapshot(this.db, runId) ?? undefined;
+  }
+
+  /** Execute one bounded batch of reclaimable durable effects. */
+  drainEffects(): Promise<number> {
+    return this.engine.drainEffects();
   }
 }
 

@@ -128,6 +128,61 @@ const MIGRATIONS: readonly Migration[] = [
       db.run(`ALTER TABLE workspaces ADD COLUMN cleaned_up INTEGER DEFAULT NULL;`);
     },
   },
+  {
+    version: 4,
+    up: (db) => {
+      db.run(`ALTER TABLE run_events ADD COLUMN turn_id TEXT;`);
+      db.run(`ALTER TABLE run_events ADD COLUMN provider_instance_id TEXT;`);
+    },
+  },
+  {
+    version: 5,
+    up: (db) => {
+      db.run(`
+        CREATE TABLE effect_outbox (
+          effect_id         TEXT PRIMARY KEY,
+          run_id            TEXT NOT NULL,
+          command_id        TEXT NOT NULL,
+          effect_index      INTEGER NOT NULL,
+          kind              TEXT NOT NULL,
+          payload_json      TEXT NOT NULL,
+          status            TEXT NOT NULL DEFAULT 'pending',
+          attempts          INTEGER NOT NULL DEFAULT 0,
+          retry_class       TEXT NOT NULL,
+          lease_owner       TEXT,
+          lease_expires_at  INTEGER,
+          last_error        TEXT,
+          created_at        INTEGER NOT NULL,
+          updated_at        INTEGER NOT NULL,
+          UNIQUE(command_id, effect_index)
+        );
+      `);
+      db.run(`
+        CREATE INDEX idx_effect_outbox_claim
+        ON effect_outbox(status, lease_expires_at, created_at);
+      `);
+    },
+  },
+  {
+    version: 6,
+    up: (db) => {
+      db.run(`
+        CREATE TABLE run_turns (
+          run_id     TEXT NOT NULL,
+          turn_id    TEXT NOT NULL,
+          started_at INTEGER NOT NULL,
+          PRIMARY KEY (run_id, turn_id)
+        );
+      `);
+      db.run(`
+        INSERT OR IGNORE INTO run_turns (run_id, turn_id, started_at)
+        SELECT run_id, turn_id, MIN(occurred_at)
+        FROM run_events
+        WHERE type = 'turn.started' AND turn_id IS NOT NULL
+        GROUP BY run_id, turn_id;
+      `);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

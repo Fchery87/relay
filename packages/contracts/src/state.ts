@@ -1,5 +1,13 @@
-import type { RunId } from "./ids";
+import type {
+  CheckpointId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  TurnId,
+} from "./ids";
 import type { CanonicalEvent } from "./events";
+import type { PermissionProfile } from "./permissions";
+import type { WorkspaceRecord } from "./workspace";
 
 // ---------------------------------------------------------------------------
 // Run status — the state machine's states.
@@ -24,16 +32,42 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 
 export type RunSnapshot = {
   readonly runId: RunId;
+  readonly projectId?: ProjectId;
   readonly status: RunStatus;
   readonly sequence: number;
   readonly streamVersion: number;
   /** The turn currently active, if any. */
-  readonly activeTurnId?: string;
+  readonly activeTurnId?: TurnId;
+  /** The provider currently serving this run, if one has been selected. */
+  readonly providerInstanceId?: ProviderInstanceId;
+  readonly permissionProfile?: PermissionProfile;
+  readonly workspace?: WorkspaceRecord;
+  readonly providerSession?: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly providerThreadId?: string;
+  };
+  readonly checkpoint?: {
+    readonly checkpointId: CheckpointId;
+    readonly turnId: TurnId;
+    readonly commit: string;
+    readonly ref: string;
+    readonly capturedAt: number;
+  };
+  /** Provider-independent reducer state not promoted to a first-class field. */
+  readonly reducerPayload?: Readonly<Record<string, JsonValue>>;
   /** The number of times this run has been restarted. */
   readonly restartCount: number;
   readonly createdAt: number;
   readonly updatedAt: number;
 };
+
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | ReadonlyArray<JsonValue>
+  | { readonly [key: string]: JsonValue };
 
 // ---------------------------------------------------------------------------
 // Allowed transitions — which status changes are valid.
@@ -72,7 +106,14 @@ export function reduceRun(
     case "run.created": {
       if (current === "ready") return null;
       assertTransition(current, "ready");
-      return { status: "ready", updatedAt: now };
+      return {
+        status: "ready",
+        projectId: event.payload.projectId,
+        updatedAt: now,
+        ...(event.payload.providerInstanceId === undefined
+          ? {}
+          : { providerInstanceId: event.payload.providerInstanceId }),
+      };
     }
 
     case "run.started": {
@@ -91,28 +132,48 @@ export function reduceRun(
     case "run.stopped": {
       if (current === "stopped") return null;
       assertTransition(current, "stopped");
-      return { status: "stopped", updatedAt: now };
+      return { status: "stopped", activeTurnId: undefined, updatedAt: now };
     }
 
     case "run.failed": {
       if (current === "failed") return null;
       assertTransition(current, "failed");
-      return { status: "failed", updatedAt: now };
+      return { status: "failed", activeTurnId: undefined, updatedAt: now };
     }
 
     // --- turn events may gate status transitions ---
     // These do NOT directly change run status — the orchestration engine
     // processes them and may emit follow-up internal commands.
     case "turn.started":
+      if (!event.turnId) {
+        throw new Error("turn.started requires a turnId");
+      }
+      return { activeTurnId: event.turnId, updatedAt: now };
+
     case "turn.steered":
+      return null;
+
     case "turn.completed":
     case "turn.failed":
-    case "turn.interrupted":
-      return null;
+    case "turn.interrupted": {
+      if (event.turnId && event.turnId !== snapshot.activeTurnId) return null;
+      return { activeTurnId: undefined, updatedAt: now };
+    }
 
     // --- provider session events ---
     case "provider.session.started":
     case "provider.session.resumed":
+      return {
+        providerInstanceId: event.payload.providerInstanceId,
+        providerSession: {
+          providerInstanceId: event.payload.providerInstanceId,
+          ...(event.payload.providerThreadId === undefined
+            ? {}
+            : { providerThreadId: event.payload.providerThreadId }),
+        },
+        updatedAt: now,
+      };
+
     case "provider.session.stopped":
       return null;
 
@@ -144,7 +205,23 @@ export function reduceRun(
 
     // --- usage, checkpoint, projection events ---
     case "usage.recorded":
+      return null;
+
     case "checkpoint.captured":
+      if (!event.turnId) {
+        throw new Error("checkpoint.captured requires a turnId");
+      }
+      return {
+        checkpoint: {
+          checkpointId: event.payload.checkpointId,
+          turnId: event.turnId,
+          commit: event.payload.commit,
+          ref: event.payload.ref,
+          capturedAt: now,
+        },
+        updatedAt: now,
+      };
+
     case "checkpoint.restored":
     case "projection.published":
       return null;

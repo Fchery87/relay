@@ -5,8 +5,14 @@ import {
   insertSnapshot,
   getSnapshot,
   getEventsAfter,
+  transactCommand,
 } from "./event-store";
 import { claimOutboxBatch, acknowledgeOutboxBatch } from "./outbox";
+import {
+  claimEffectBatch,
+  getEffectsForCommand,
+  releaseEffect,
+} from "./effect-store";
 import type { RunSnapshot } from "@relay/contracts";
 
 function makeSnapshot(overrides?: Partial<RunSnapshot>): RunSnapshot {
@@ -29,6 +35,33 @@ function setup(db: StoreDatabase): RunSnapshot {
 }
 
 describe("event store", () => {
+  test("loads and decides within the same SQLite transaction as persistence", () => {
+    const db = openMemoryStore();
+    setup(db);
+    let decidedInsideTransaction = false;
+
+    const result = transactCommand(db, {
+      runId: "run-1" as never,
+      commandId: "cmd-transaction-boundary" as never,
+      decide: (snapshot) => {
+        decidedInsideTransaction = db.inTransaction;
+        return {
+          nextSnapshot: snapshot,
+          events: [{
+            eventId: "ev-transaction-boundary" as never,
+            type: "assistant.delta",
+            payload: { text: "atomic" },
+            correlationId: "corr-transaction-boundary" as never,
+          }],
+        };
+      },
+    });
+
+    expect(decidedInsideTransaction).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(getEventsAfter(db, "run-1", -1)).toHaveLength(1);
+  });
+
   test("appends events atomically and bumps sequence", () => {
     const db = openMemoryStore();
     setup(db);
@@ -47,6 +80,7 @@ describe("event store", () => {
         {
           eventId: "ev-2" as never,
           type: "turn.started",
+          turnId: "turn-1" as never,
           payload: { prompt: "hi" },
           correlationId: "corr-1" as never,
         },
@@ -170,6 +204,113 @@ describe("event store", () => {
     expect(result.ok).toBe(true);
     expect(getSnapshot(db, "run-1")?.status).toBe("ready");
   });
+
+  test("round-trips complete snapshot and event metadata through versioned records", () => {
+    const db = openMemoryStore();
+    const snapshot = makeSnapshot({
+      projectId: "project-1" as never,
+      activeTurnId: "turn-1" as never,
+      providerInstanceId: "provider-1" as never,
+      permissionProfile: "workspace-write",
+      providerSession: {
+        providerInstanceId: "provider-1" as never,
+        providerThreadId: "thread-1",
+      },
+      workspace: {
+        runId: "run-1" as never,
+        repoPath: "/repo",
+        worktreePath: "/repo/.relay/run-1",
+        baseCommit: "abc123",
+        permissionProfile: "workspace-write",
+        createdAt: 1,
+      },
+      checkpoint: {
+        checkpointId: "checkpoint-1" as never,
+        turnId: "turn-1" as never,
+        commit: "def456",
+        ref: "refs/relay/checkpoint-1",
+        capturedAt: 2,
+      },
+      reducerPayload: { nested: { attempt: 2 }, values: ["a", true] },
+    });
+    insertSnapshot(db, snapshot);
+
+    const result = appendEvents(db, {
+      runId: snapshot.runId,
+      commandId: "cmd-metadata" as never,
+      nextSnapshot: snapshot,
+      events: [{
+        eventId: "ev-metadata" as never,
+        type: "assistant.delta",
+        payload: { text: "hello" },
+        turnId: "turn-1" as never,
+        providerInstanceId: "provider-1" as never,
+        correlationId: "corr-metadata" as never,
+      }],
+    });
+    expect(result.ok).toBe(true);
+
+    expect(getSnapshot(db, "run-1")).toMatchObject({
+      projectId: "project-1",
+      activeTurnId: "turn-1",
+      providerInstanceId: "provider-1",
+      permissionProfile: "workspace-write",
+      reducerPayload: { nested: { attempt: 2 }, values: ["a", true] },
+    });
+    expect(getEventsAfter(db, "run-1", -1)).toEqual([
+      expect.objectContaining({
+        turnId: "turn-1",
+        providerInstanceId: "provider-1",
+        payload: { text: "hello" },
+      }),
+    ]);
+
+    const persisted = db
+      .query("SELECT payload_json FROM run_snapshots WHERE run_id = ?")
+      .get("run-1") as { payload_json: string };
+    expect(JSON.parse(persisted.payload_json)).toMatchObject({
+      schemaVersion: 1,
+      kind: "run_snapshot",
+    });
+  });
+
+  test("rejects corrupt persisted records instead of casting them", () => {
+    const db = openMemoryStore();
+    setup(db);
+    db.run(
+      "UPDATE run_snapshots SET payload_json = ? WHERE run_id = ?",
+      [JSON.stringify({ schemaVersion: 99, kind: "run_snapshot", data: {} }), "run-1"],
+    );
+
+    expect(() => getSnapshot(db, "run-1")).toThrow(
+      "Unsupported persisted schema version",
+    );
+  });
+
+  test("fails closed when a duplicate command receipt is corrupt", () => {
+    const db = openMemoryStore();
+    setup(db);
+    const input = {
+      runId: "run-1" as never,
+      commandId: "cmd-corrupt-receipt" as never,
+      nextSnapshot: makeSnapshot({ status: "running" }),
+      events: [{
+        eventId: "ev-corrupt-receipt" as never,
+        type: "run.started" as const,
+        payload: {},
+        correlationId: "corr-corrupt-receipt" as never,
+      }],
+    };
+    expect(appendEvents(db, input).ok).toBe(true);
+    db.run(
+      "UPDATE command_receipts SET result_json = ? WHERE command_id = ?",
+      [JSON.stringify({ schemaVersion: 99 }), input.commandId],
+    );
+
+    expect(() => appendEvents(db, input)).toThrow(
+      "Unsupported persisted schema version",
+    );
+  });
 });
 
 describe("outbox", () => {
@@ -184,8 +325,8 @@ describe("outbox", () => {
       nextSnapshot: makeSnapshot({ status: "running" }),
       events: [
         { eventId: "ev-1" as never, type: "run.started", payload: {}, correlationId: "c-1" as never },
-        { eventId: "ev-2" as never, type: "turn.started", payload: { prompt: "hi" }, correlationId: "c-1" as never },
-        { eventId: "ev-3" as never, type: "turn.completed", payload: {}, correlationId: "c-1" as never },
+        { eventId: "ev-2" as never, type: "turn.started", turnId: "turn-1" as never, payload: { prompt: "hi" }, correlationId: "c-1" as never },
+        { eventId: "ev-3" as never, type: "turn.completed", turnId: "turn-1" as never, payload: {}, correlationId: "c-1" as never },
       ],
     });
 
@@ -199,5 +340,98 @@ describe("outbox", () => {
     // Claim remaining — lease of 0ms is already expired, acknowledged skipped
     const batch2 = claimOutboxBatch(db, "daemon-2", 10_000, 10);
     expect(batch2).toHaveLength(1); // only the unacked one
+  });
+});
+
+describe("effect outbox", () => {
+  test("claims effects in durable insertion order when timestamps tie", () => {
+    const db = openMemoryStore();
+    setup(db);
+    appendEvents(db, {
+      runId: "run-1" as never,
+      commandId: "cmd-effects-1" as never,
+      nextSnapshot: makeSnapshot({ status: "ready" }),
+      events: [],
+      effects: [
+        {
+          effectId: "effect-1-0" as never,
+          runId: "run-1" as never,
+          commandId: "cmd-effects-1" as never,
+          effectIndex: 0,
+          intent: { kind: "provider.stop_session" },
+          retryClass: "transient",
+        },
+        {
+          effectId: "effect-1-1" as never,
+          runId: "run-1" as never,
+          commandId: "cmd-effects-1" as never,
+          effectIndex: 1,
+          intent: { kind: "provider.stop_session" },
+          retryClass: "transient",
+        },
+      ],
+    });
+    appendEvents(db, {
+      runId: "run-1" as never,
+      commandId: "cmd-effects-2" as never,
+      nextSnapshot: makeSnapshot({ status: "ready" }),
+      events: [],
+      effects: [{
+        effectId: "effect-2-0" as never,
+        runId: "run-1" as never,
+        commandId: "cmd-effects-2" as never,
+        effectIndex: 0,
+        intent: { kind: "provider.stop_session" },
+        retryClass: "transient",
+      }],
+    });
+    db.run("UPDATE effect_outbox SET created_at = 1");
+
+    expect(
+      claimEffectBatch(db, "worker", 100, 10, 10).map(
+        (effect) => effect.effectId as string,
+      ),
+    ).toEqual(["effect-1-0", "effect-1-1", "effect-2-0"]);
+  });
+
+  test("an expired non-retryable effect fails instead of executing twice", () => {
+    const db = openMemoryStore();
+    setup(db);
+    appendEvents(db, {
+      runId: "run-1" as never,
+      commandId: "cmd-never-retry" as never,
+      nextSnapshot: makeSnapshot({ status: "ready" }),
+      events: [],
+      effects: [{
+        effectId: "effect-never-retry" as never,
+        runId: "run-1" as never,
+        commandId: "cmd-never-retry" as never,
+        effectIndex: 0,
+        intent: { kind: "tool.execute", toolName: "test", input: {} },
+        retryClass: "never",
+      }],
+    });
+    expect(claimEffectBatch(db, "worker-1", 10, 1, 100)).toHaveLength(1);
+
+    const [recovery] = claimEffectBatch(db, "worker-2", 10, 1, 111);
+    expect(recovery).toMatchObject({
+      attempts: 1,
+      recoveryFailure: "Non-retryable effect lease expired",
+    });
+    releaseEffect(
+      db,
+      recovery!.effectId,
+      "worker-2",
+      recovery!.recoveryFailure!,
+      true,
+      112,
+    );
+    expect(
+      getEffectsForCommand(db, "cmd-never-retry" as never)[0],
+    ).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      lastError: "Non-retryable effect lease expired",
+    });
   });
 });

@@ -36,6 +36,9 @@ export type CommandId = BrandedId<"CommandId">;
 /** Globally unique event identifier. */
 export type EventId = BrandedId<"EventId">;
 
+/** Identifies one durable reactor effect derived from a command. */
+export type EffectId = BrandedId<"EffectId">;
+
 /** Links a group of related events/commands across tiers. */
 export type CorrelationId = BrandedId<"CorrelationId">;
 

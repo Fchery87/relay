@@ -85,7 +85,13 @@ export type CanonicalEventDraft =
     ? TEvent extends CanonicalEvent
       ? Pick<
           TEvent,
-          "eventId" | "type" | "payload" | "correlationId" | "causationId"
+          | "eventId"
+          | "type"
+          | "payload"
+          | "turnId"
+          | "providerInstanceId"
+          | "correlationId"
+          | "causationId"
         >
       : never
     : never;
