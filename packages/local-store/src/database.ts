@@ -183,6 +183,72 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 7,
+    up: (db) => {
+      db.run(`
+        ALTER TABLE effect_outbox
+        ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0;
+      `);
+      db.run(`
+        ALTER TABLE effect_outbox
+        ADD COLUMN last_error_kind TEXT;
+      `);
+      db.run(`
+        ALTER TABLE effect_outbox
+        ADD COLUMN failed_at INTEGER;
+      `);
+      db.run(`
+        CREATE INDEX idx_effect_outbox_retry
+        ON effect_outbox(status, next_attempt_at, lease_expires_at);
+      `);
+    },
+  },
+  {
+    version: 8,
+    up: (db) => {
+      db.run(`
+        CREATE TABLE run_diagnostics (
+          diagnostic_id TEXT PRIMARY KEY,
+          run_id         TEXT NOT NULL,
+          kind           TEXT NOT NULL,
+          message        TEXT NOT NULL,
+          created_at     INTEGER NOT NULL,
+          UNIQUE(run_id, kind)
+        );
+      `);
+      db.run(`
+        CREATE INDEX idx_run_diagnostics_run
+        ON run_diagnostics(run_id, created_at);
+      `);
+    },
+  },
+  {
+    version: 9,
+    up: (db) => {
+      db.run(`
+        CREATE TABLE quarantined_run_events (
+          event_id             TEXT PRIMARY KEY,
+          run_id               TEXT NOT NULL,
+          sequence             INTEGER NOT NULL,
+          stream_version       INTEGER NOT NULL,
+          type                 TEXT NOT NULL,
+          payload_json         TEXT NOT NULL,
+          turn_id              TEXT,
+          provider_instance_id TEXT,
+          correlation_id       TEXT NOT NULL,
+          causation_id         TEXT,
+          occurred_at          INTEGER NOT NULL,
+          diagnostic_id        TEXT NOT NULL,
+          quarantined_at       INTEGER NOT NULL
+        );
+      `);
+      db.run(`
+        CREATE INDEX idx_quarantined_run_events_run
+        ON quarantined_run_events(run_id, sequence);
+      `);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

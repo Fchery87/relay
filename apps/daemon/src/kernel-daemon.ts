@@ -18,6 +18,10 @@ import {
   type AppendEventInput,
   type AppendEventResult,
 } from "@relay/harness-runtime";
+import {
+  canonicalEventPayloadError,
+  canonicalEventRequiresTurn,
+} from "@relay/contracts";
 import { DEFAULT_MODEL_ID, type Capability } from "@relay/shared";
 import {
   createConvexCommandSource,
@@ -90,83 +94,245 @@ export type KernelDaemonConfig = {
 // Activated when codexTransport.enabled is true and RELAY_CODEX_ENABLED=1.
 // ---------------------------------------------------------------------------
 
-async function executeTurnViaCodex({
-  runId,
-  prompt,
-  codexAdapter,
-  runtime,
-  threadId,
-  onFirstToken,
-}: {
+type CodexTurnExecution = {
   runId: string;
+  turnId: string;
   prompt: string;
   codexAdapter: CodexSessionAdapter;
   runtime: LocalHarnessRuntime;
   threadId?: string;
   onFirstToken?: (latencyMs: number) => void;
-}): Promise<boolean> {
+};
+
+const codexTurnTails = new WeakMap<CodexSessionAdapter, Promise<void>>();
+
+export function executeTurnViaCodex(
+  input: CodexTurnExecution,
+): Promise<boolean> {
+  const previous =
+    codexTurnTails.get(input.codexAdapter) ?? Promise.resolve();
+  const execution = previous.then(
+    () => executeTurnViaCodexExclusive(input),
+    () => executeTurnViaCodexExclusive(input),
+  );
+  codexTurnTails.set(
+    input.codexAdapter,
+    execution.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return execution;
+}
+
+async function executeTurnViaCodexExclusive({
+  runId,
+  turnId,
+  prompt,
+  codexAdapter,
+  runtime,
+  threadId,
+  onFirstToken,
+}: CodexTurnExecution): Promise<boolean> {
   const turnStart = Date.now();
   let firstTokenEmitted = false;
-  let succeeded = true;
-
-  const unsub = codexAdapter.onEvent(async (ev: NormalizedEvent) => {
-    // Normalize & append each canonical event from the Codex session
-    const result = await runtime.appendEvent(runId, {
-      eventId: `ev-codex-${runId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      ...ev,
-    } as AppendEventInput);
-    if (!result.ok) {
-      console.error("Kernel daemon: failed to append Codex event", result.reason);
+  let settleTerminal!: (succeeded: boolean) => void;
+  let rejectTerminal!: (error: unknown) => void;
+  let terminalSettled = false;
+  let expectedProviderThreadId: string | undefined;
+  let expectedProviderTurnId: string | undefined;
+  const pendingEvents: NormalizedEvent[] = [];
+  const terminalNotification = new Promise<boolean>((resolve, reject) => {
+    settleTerminal = resolve;
+    rejectTerminal = reject;
+  });
+  let appendChain = Promise.resolve();
+  const appendProviderEvent = (ev: NormalizedEvent) => {
+    if (
+      expectedProviderThreadId === undefined ||
+      expectedProviderTurnId === undefined ||
+      !isExpectedCodexEvent(
+        ev,
+        expectedProviderThreadId,
+        expectedProviderTurnId,
+      )
+    ) {
+      return;
     }
-
-    // SLO: track first text delta
-    if (!firstTokenEmitted && ev.type === "assistant.delta" && onFirstToken) {
-      firstTokenEmitted = true;
-      onFirstToken(Date.now() - turnStart);
+    appendChain = appendChain
+      .then(async () => {
+        const input = codexEventInput(
+          `ev-codex-${runId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          turnId,
+          ev,
+        );
+        if (!input) return;
+        const result = await runtime.appendEvent(runId, input);
+        if (!result.ok) {
+          throw new Error(
+            `Failed to append Codex ${ev.type}: ${result.reason}`,
+          );
+        }
+        if (
+          !firstTokenEmitted &&
+          ev.type === "assistant.delta" &&
+          onFirstToken
+        ) {
+          firstTokenEmitted = true;
+          onFirstToken(Date.now() - turnStart);
+        }
+        if (
+          ev.type === "turn.completed" ||
+          ev.type === "turn.failed" ||
+          ev.type === "turn.interrupted"
+        ) {
+          terminalSettled = true;
+          settleTerminal(ev.type === "turn.completed");
+        }
+        incrementMetric("eventsProcessed");
+      })
+      .catch((error) => {
+        if (!terminalSettled) {
+          terminalSettled = true;
+          rejectTerminal(error);
+        }
+      });
+  };
+  const unsub = codexAdapter.onEvent((ev: NormalizedEvent) => {
+    if (
+      expectedProviderThreadId === undefined ||
+      expectedProviderTurnId === undefined
+    ) {
+      pendingEvents.push(ev);
+      return;
     }
-
-    // Detect terminal states
-    if (ev.type === "turn.failed") succeeded = false;
-
-    incrementMetric("eventsProcessed");
+    appendProviderEvent(ev);
   });
 
+  let succeeded = false;
+  let terminalTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     if (threadId) {
       await codexAdapter.resumeThread(threadId);
     } else {
       await codexAdapter.startThread();
     }
+    expectedProviderThreadId = codexAdapter.activeThreadId ?? undefined;
+    if (!expectedProviderThreadId) {
+      throw new Error("Codex did not provide a native thread ID");
+    }
     // Start the turn — Codex notifications stream back via onEvent
-    await codexAdapter.startTurn(codexAdapter.activeThreadId ?? "", prompt);
+    const startResult = await codexAdapter.startTurn(
+      expectedProviderThreadId,
+      prompt,
+    );
+    expectedProviderTurnId = codexTurnIdFromStartResult(startResult);
+    if (!expectedProviderTurnId) {
+      throw new Error("Codex did not provide a native turn ID");
+    }
+    for (const event of pendingEvents.splice(0)) {
+      appendProviderEvent(event);
+    }
+    terminalTimeout = setTimeout(() => {
+      if (!terminalSettled) {
+        terminalSettled = true;
+        rejectTerminal(new Error("Timed out waiting for Codex terminal event"));
+      }
+    }, 10 * 60 * 1000);
+    terminalTimeout.unref?.();
+    succeeded = await terminalNotification;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await runtime.appendEvent(runId, {
       eventId: `ev-codex-failed-${runId}-${Date.now()}`,
       type: "turn.failed",
+      turnId: turnId as never,
       payload: { error: message },
     });
     console.error("Kernel daemon: Codex turn failed", message);
-    succeeded = false;
-  }
-
-  unsub();
-
-  if (succeeded) {
-    await runtime.appendEvent(runId, {
-      eventId: `ev-codex-completed-${runId}-${Date.now()}`,
-      type: "turn.completed",
-      payload: {},
-    });
-  } else {
-    await runtime.appendEvent(runId, {
-      eventId: `ev-codex-failed-terminal-${runId}-${Date.now()}`,
-      type: "turn.failed",
-      payload: { error: "Codex turn failed" },
-    });
+  } finally {
+    if (terminalTimeout) clearTimeout(terminalTimeout);
+    unsub();
+    await appendChain;
   }
 
   return succeeded;
+}
+
+function codexTurnIdFromStartResult(result: unknown): string | undefined {
+  if (result === null || typeof result !== "object") return undefined;
+  const turn = (result as { turn?: unknown }).turn;
+  if (turn === null || typeof turn !== "object") return undefined;
+  const id = (turn as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+function isExpectedCodexEvent(
+  event: NormalizedEvent,
+  providerThreadId: string,
+  providerTurnId: string,
+): boolean {
+  if (event.providerThreadId !== providerThreadId) return false;
+  if (canonicalEventRequiresTurn(event.type)) {
+    return event.providerTurnId === providerTurnId;
+  }
+  return (
+    event.providerTurnId === undefined ||
+    event.providerTurnId === providerTurnId
+  );
+}
+
+function codexEventInput(
+  eventId: string,
+  turnId: string,
+  event: NormalizedEvent,
+): AppendEventInput | undefined {
+  switch (event.type) {
+    case "turn.started":
+      // Relay already opened this turn before invoking the provider.
+      return undefined;
+    case "turn.steered":
+    case "turn.completed":
+    case "turn.failed":
+    case "turn.interrupted":
+    case "assistant.delta":
+    case "assistant.completed":
+    case "activity.started":
+    case "activity.delta":
+    case "activity.completed":
+    case "activity.failed":
+      {
+        const canonicalEvent = withoutCodexScope(event);
+        return {
+          eventId,
+          ...canonicalEvent,
+          turnId: turnId as never,
+        };
+      }
+    default: {
+      const canonicalEvent = withoutCodexScope(event);
+      return {
+        eventId,
+        ...canonicalEvent,
+      };
+    }
+  }
+}
+
+type CanonicalNormalizedEvent<TEvent extends NormalizedEvent> =
+  TEvent extends NormalizedEvent
+    ? Omit<TEvent, "providerThreadId" | "providerTurnId">
+    : never;
+
+function withoutCodexScope<TEvent extends NormalizedEvent>(
+  event: TEvent,
+): CanonicalNormalizedEvent<TEvent> {
+  const {
+    providerThreadId: _providerThreadId,
+    providerTurnId: _providerTurnId,
+    ...canonicalEvent
+  } = event;
+  return canonicalEvent as CanonicalNormalizedEvent<TEvent>;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,12 +341,14 @@ async function executeTurnViaCodex({
 
 async function executeTurn({
   runId,
+  turnId,
   prompt,
   provider,
   runtime,
   onFirstToken,
 }: {
   runId: string;
+  turnId: string;
   prompt: string;
   provider: ModelProvider;
   runtime: LocalHarnessRuntime;
@@ -204,6 +372,7 @@ async function executeTurn({
         const result = await runtime.appendEvent(runId, {
           eventId: `ev-delta-${runId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           type: "assistant.delta",
+          turnId: turnId as never,
           payload: { text: sanitizedText },
         });
         if (!result.ok) {
@@ -232,6 +401,7 @@ async function executeTurn({
     await runtime.appendEvent(runId, {
       eventId: `ev-failed-${runId}-${Date.now()}`,
       type: "turn.failed",
+      turnId: turnId as never,
       payload: { error: message },
     });
     console.error("Kernel daemon: turn failed", message);
@@ -241,12 +411,14 @@ async function executeTurn({
     await runtime.appendEvent(runId, {
       eventId: `ev-completed-${runId}-${Date.now()}`,
       type: "turn.completed",
+      turnId: turnId as never,
       payload: {},
     });
   } else {
     await runtime.appendEvent(runId, {
       eventId: `ev-failed-terminal-${runId}-${Date.now()}`,
       type: "turn.failed",
+      turnId: turnId as never,
       payload: { error: "Provider turn failed" },
     });
   }
@@ -267,7 +439,20 @@ function appendAdapterEvent(
     readonly payload: Record<string, unknown>;
   },
 ): Promise<AppendEventResult> {
-  return runtime.appendEvent(runId, input as AppendEventInput);
+  const payloadError = canonicalEventPayloadError(input.type, input.payload);
+  if (payloadError) return Promise.resolve({ ok: false, reason: payloadError });
+  const activeTurnId = runtime.getSnapshotByRunId(runId)?.activeTurnId;
+  if (canonicalEventRequiresTurn(input.type) && !activeTurnId) {
+    return Promise.resolve({
+      ok: false,
+      reason: `${input.type} requires an active Relay turn`,
+    });
+  }
+  const validated = {
+    ...input,
+    ...(activeTurnId === undefined ? {} : { turnId: activeTurnId }),
+  } as AppendEventInput;
+  return runtime.appendEvent(runId, validated);
 }
 
 // ---------------------------------------------------------------------------
@@ -396,7 +581,7 @@ export class KernelDaemon {
       clearInterval(pollInterval);
       this.codexAdapter?.close();
       await this.flush();
-      this.runtime.close();
+      await this.runtime.shutdown();
       this.tracer.endSpan(startSpan);
       const spans = this.tracer.getSpans();
       console.info(
@@ -504,7 +689,10 @@ export class KernelDaemon {
           // Sanitize prompt before logging/projection
           const prompt = sanitizeForProjection(rawPrompt);
 
-          await this.runtime.sendTurn({ runId: rId as never, prompt });
+          const turn = await this.runtime.sendTurn({
+            runId: rId as never,
+            prompt,
+          });
 
           let succeeded: boolean;
           const turnStart = Date.now();
@@ -513,6 +701,7 @@ export class KernelDaemon {
             // Real Codex app-server path
             succeeded = await executeTurnViaCodex({
               runId: rId,
+              turnId: turn.turnId as string,
               prompt,
               codexAdapter: this.codexAdapter,
               runtime: this.runtime,
@@ -532,6 +721,7 @@ export class KernelDaemon {
 
             succeeded = await executeTurn({
               runId: rId,
+              turnId: turn.turnId as string,
               prompt,
               provider: turnProvider,
               runtime: this.runtime,

@@ -35,7 +35,7 @@ export type CodexNotification = {
   readonly params?: Record<string, any>;
 };
 
-export type NormalizedEvent =
+type NormalizedCanonicalEvent =
   CanonicalEvent extends infer TEvent
     ? TEvent extends CanonicalEvent
       ? Pick<TEvent, "type" | "payload">
@@ -43,14 +43,52 @@ export type NormalizedEvent =
     : never;
 
 /**
+ * A canonical event plus the native scope that produced it.
+ *
+ * The native identifiers are deliberately kept outside the canonical payload:
+ * the daemon uses them as an ingress fence before assigning Relay run/turn
+ * identity, and they are never persisted as canonical event data.
+ */
+export type NormalizedEvent = NormalizedCanonicalEvent & {
+  readonly providerThreadId?: string;
+  readonly providerTurnId?: string;
+};
+
+/**
  * Normalize a Codex app-server notification into zero or more canonical events.
  * Unknown notifications produce a diagnostic record — they never crash.
  */
 export function normalizeCodexNotification(
   notification: CodexNotification,
-  runId: string,
+  _runId: string,
   providerInstanceId: ProviderInstanceId,
 ): NormalizedEvent[] {
+  const params = notification.params;
+  const nestedTurn =
+    params?.turn !== null && typeof params?.turn === "object"
+      ? (params.turn as Record<string, unknown>)
+      : undefined;
+  const providerThreadId =
+    typeof params?.threadId === "string" ? params.threadId : undefined;
+  const providerTurnId =
+    typeof params?.turnId === "string"
+      ? params.turnId
+      : typeof nestedTurn?.id === "string"
+        ? nestedTurn.id
+        : undefined;
+  return normalizeCanonicalNotification(notification, providerInstanceId).map(
+    (event) => ({
+      ...event,
+      ...(providerThreadId === undefined ? {} : { providerThreadId }),
+      ...(providerTurnId === undefined ? {} : { providerTurnId }),
+    }),
+  );
+}
+
+function normalizeCanonicalNotification(
+  notification: CodexNotification,
+  providerInstanceId: ProviderInstanceId,
+): NormalizedCanonicalEvent[] {
   switch (notification.method) {
     case "thread/created":
       return [

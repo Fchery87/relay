@@ -1,6 +1,7 @@
 import type {
   CommandId,
   DurableEffect,
+  EffectFailureKind,
   EffectId,
   EffectIntent,
   EffectRetryClass,
@@ -33,8 +34,8 @@ export function insertEffect(
   db.run(
     `INSERT INTO effect_outbox (
       effect_id, run_id, command_id, effect_index, kind, payload_json,
-      status, attempts, retry_class, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+      status, attempts, retry_class, next_attempt_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, 0, ?, ?)`,
     [
       effect.effectId,
       effect.runId,
@@ -67,16 +68,27 @@ export function claimEffectBatch(
   return db.transaction(() => {
     const candidates = db
       .query(
-        `SELECT effect_id FROM effect_outbox
-         WHERE status = 'pending'
+        `SELECT candidate.effect_id FROM effect_outbox AS candidate
+         WHERE (
+              (
+                candidate.status = 'pending'
+                AND candidate.next_attempt_at <= ?
+              )
             OR (
-              status = 'running'
-              AND lease_expires_at <= ?
+              candidate.status = 'running'
+              AND candidate.lease_expires_at <= ?
             )
-         ORDER BY rowid ASC
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM effect_outbox AS earlier
+             WHERE earlier.run_id = candidate.run_id
+               AND earlier.rowid < candidate.rowid
+               AND earlier.status IN ('pending', 'running')
+           )
+         ORDER BY candidate.rowid ASC
          LIMIT ?`,
       )
-      .all(now, limit) as Array<{ effect_id: string }>;
+      .all(now, now, limit) as Array<{ effect_id: string }>;
     if (candidates.length === 0) return [];
 
     const leaseExpiresAt = now + leaseMs;
@@ -94,6 +106,12 @@ export function claimEffectBatch(
                  THEN ?
                ELSE last_error
              END,
+             last_error_kind = CASE
+               WHEN status = 'running' AND retry_class = 'never'
+                 THEN 'terminal'
+               ELSE last_error_kind
+             END,
+             next_attempt_at = 0,
              lease_owner = ?, lease_expires_at = ?, updated_at = ?
          WHERE effect_id = ?
            AND (status = 'pending'
@@ -127,7 +145,8 @@ export function completeEffect(
   const result = db.run(
     `UPDATE effect_outbox
      SET status = 'completed', lease_owner = NULL, lease_expires_at = NULL,
-         last_error = NULL, updated_at = ?
+         last_error = NULL, last_error_kind = NULL, next_attempt_at = 0,
+         failed_at = NULL, updated_at = ?
      WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
     [now, effectId, owner],
   );
@@ -152,23 +171,41 @@ export function renewEffectLease(
   return result.changes === 1;
 }
 
+export type ReleaseEffectInput = {
+  readonly effectId: EffectId;
+  readonly owner: string;
+  readonly error: string;
+  readonly errorKind: EffectFailureKind;
+  readonly terminal: boolean;
+  readonly nextAttemptAt?: number;
+  readonly now?: number;
+};
+
 export function releaseEffect(
   db: StoreDatabase,
-  effectId: EffectId,
-  owner: string,
-  error: string,
-  terminal: boolean,
-  now = Date.now(),
+  input: ReleaseEffectInput,
 ): void {
+  const now = input.now ?? Date.now();
+  const nextAttemptAt = input.terminal ? 0 : (input.nextAttemptAt ?? now);
   const result = db.run(
     `UPDATE effect_outbox
      SET status = ?, lease_owner = NULL, lease_expires_at = NULL,
-         last_error = ?, updated_at = ?
+         last_error = ?, last_error_kind = ?, next_attempt_at = ?,
+         failed_at = ?, updated_at = ?
      WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
-    [terminal ? "failed" : "pending", error, now, effectId, owner],
+    [
+      input.terminal ? "failed" : "pending",
+      input.error,
+      input.errorKind,
+      nextAttemptAt,
+      input.terminal ? now : null,
+      now,
+      input.effectId,
+      input.owner,
+    ],
   );
   if (result.changes !== 1) {
-    throw new EffectLeaseLostError(effectId, "release");
+    throw new EffectLeaseLostError(input.effectId, "release");
   }
 }
 
@@ -200,6 +237,30 @@ export function getEffectsForCommand(
     )
     .all(commandId) as EffectRow[];
   return rows.map(rowToEffect);
+}
+
+export function getNextEffectClaimAt(
+  db: StoreDatabase,
+): number | undefined {
+  const row = db
+    .query(
+      `SELECT MIN(
+         CASE
+           WHEN candidate.status = 'pending' THEN candidate.next_attempt_at
+           ELSE candidate.lease_expires_at
+         END
+       ) AS claim_at
+       FROM effect_outbox AS candidate
+       WHERE candidate.status IN ('pending', 'running')
+         AND NOT EXISTS (
+           SELECT 1 FROM effect_outbox AS earlier
+           WHERE earlier.run_id = candidate.run_id
+             AND earlier.rowid < candidate.rowid
+             AND earlier.status IN ('pending', 'running')
+         )`,
+    )
+    .get() as { claim_at: number | null };
+  return row.claim_at ?? undefined;
 }
 
 function encodeIntent(intent: EffectIntent): string {
@@ -247,6 +308,20 @@ function rowToEffect(row: EffectRow): DurableEffect {
       `Invalid effect retry class: ${row.retry_class}`,
     );
   }
+  if (
+    row.last_error_kind !== null &&
+    row.last_error_kind !== "retryable" &&
+    row.last_error_kind !== "rate_limited" &&
+    row.last_error_kind !== "approval_required" &&
+    row.last_error_kind !== "terminal"
+  ) {
+    throw new PersistedRecordError(
+      `Invalid effect failure kind: ${row.last_error_kind}`,
+    );
+  }
+  if (!Number.isSafeInteger(row.next_attempt_at) || row.next_attempt_at < 0) {
+    throw new PersistedRecordError("Invalid effect next attempt time");
+  }
   return {
     effectId: row.effect_id as never,
     idempotencyKey: row.effect_id as never,
@@ -257,11 +332,16 @@ function rowToEffect(row: EffectRow): DurableEffect {
     status: row.status,
     attempts: row.attempts,
     retryClass: row.retry_class,
+    nextAttemptAt: row.next_attempt_at,
     ...(row.lease_owner === null ? {} : { leaseOwner: row.lease_owner }),
     ...(row.lease_expires_at === null
       ? {}
       : { leaseExpiresAt: row.lease_expires_at }),
     ...(row.last_error === null ? {} : { lastError: row.last_error }),
+    ...(row.last_error_kind === null
+      ? {}
+      : { lastErrorKind: row.last_error_kind }),
+    ...(row.failed_at === null ? {} : { failedAt: row.failed_at }),
     ...(row.retry_class === "never" &&
     row.last_error === NON_RETRYABLE_LEASE_FAILURE
       ? { recoveryFailure: NON_RETRYABLE_LEASE_FAILURE }
@@ -279,9 +359,12 @@ type EffectRow = {
   status: string;
   attempts: number;
   retry_class: string;
+  next_attempt_at: number;
   lease_owner: string | null;
   lease_expires_at: number | null;
   last_error: string | null;
+  last_error_kind: EffectFailureKind | null;
+  failed_at: number | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

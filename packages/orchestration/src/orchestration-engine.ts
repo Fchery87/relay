@@ -3,6 +3,7 @@ import type {
   CommandReceiptDraft,
   CreateRunCommand,
   DurableEffect,
+  EffectFailureKind,
   EffectIntent,
   EffectRetryClass,
   InternalCommand,
@@ -18,6 +19,7 @@ import {
   completeEffect,
   EffectLeaseLostError,
   fenceEffectForFailureRecovery,
+  getNextEffectClaimAt,
   releaseEffect,
   renewEffectLease,
   transactCommand,
@@ -35,7 +37,30 @@ export type EngineConfig = {
   readonly reactorLeaseMs?: number;
   readonly reactorBatchSize?: number;
   readonly reactorMaxAttempts?: number;
+  readonly reactorRetryBaseMs?: number;
+  readonly reactorRetryMaxMs?: number;
+  readonly reactorRetryJitterRatio?: number;
+  /** Injectable wall clock for deterministic retry/recovery tests. */
+  readonly reactorNow?: () => number;
 };
+
+export type ReactorFailureOptions = {
+  readonly kind: EffectFailureKind;
+  readonly message: string;
+  readonly retryAfterMs?: number;
+};
+
+export class ReactorFailure extends Error {
+  readonly kind: EffectFailureKind;
+  readonly retryAfterMs?: number;
+
+  constructor(options: ReactorFailureOptions) {
+    super(options.message);
+    this.name = "ReactorFailure";
+    this.kind = options.kind;
+    this.retryAfterMs = options.retryAfterMs;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Engine — serializes transitions per run, bounds global concurrency.
@@ -47,7 +72,12 @@ export class OrchestrationEngine {
   private readonly readyRuns: string[] = [];
   private readonly runQueues = new Map<string, ScheduledTask[]>();
   private readonly reactorOwner = `reactor-${crypto.randomUUID()}`;
+  private readonly activeReactorControllers = new Set<AbortController>();
+  private readonly activeTasks = new Set<Promise<void>>();
   private activeDrain?: Promise<number>;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private closed = false;
+  private closePromise?: Promise<void>;
 
   constructor(
     private readonly db: StoreDatabase,
@@ -56,6 +86,17 @@ export class OrchestrationEngine {
     if (!Number.isInteger(config.maxConcurrentRuns) || config.maxConcurrentRuns < 1) {
       throw new Error("maxConcurrentRuns must be a positive integer");
     }
+    assertNonNegativeFinite(config.reactorRetryBaseMs, "reactorRetryBaseMs");
+    assertNonNegativeFinite(config.reactorRetryMaxMs, "reactorRetryMaxMs");
+    if (
+      config.reactorRetryJitterRatio !== undefined &&
+      (!Number.isFinite(config.reactorRetryJitterRatio) ||
+        config.reactorRetryJitterRatio < 0 ||
+        config.reactorRetryJitterRatio > 1)
+    ) {
+      throw new Error("reactorRetryJitterRatio must be between 0 and 1");
+    }
+    this.armNextRetry();
   }
 
   /**
@@ -80,6 +121,9 @@ export class OrchestrationEngine {
    * Result commands are idempotent and re-enter the normal command path.
    */
   drainEffects(): Promise<number> {
+    if (this.closed) {
+      return Promise.reject(new Error("Orchestration engine is closed"));
+    }
     const previous = this.activeDrain;
     const pass = previous
       ? previous.then(
@@ -89,145 +133,195 @@ export class OrchestrationEngine {
       : this.performDrain();
     const drain = pass.finally(() => {
       if (this.activeDrain === drain) this.activeDrain = undefined;
+      this.armNextRetry();
     });
     this.activeDrain = drain;
     return drain;
   }
 
   private async performDrain(): Promise<number> {
-    let completed = 0;
     const batchSize = this.config.reactorBatchSize ?? 32;
+    const workerCount = Math.min(this.config.maxConcurrentRuns, batchSize);
+    let claimed = 0;
+    let completed = 0;
 
-    for (let claimed = 0; claimed < batchSize; claimed++) {
-      // Claim immediately before execution so later effects never spend this
-      // effect's runtime burning down their own leases.
-      const [effect] = claimEffectBatch(
-        this.db,
-        this.reactorOwner,
-        this.config.reactorLeaseMs ?? 30_000,
-        1,
+    const work = async (): Promise<void> => {
+      while (!this.closed && claimed < batchSize) {
+        // Claim immediately before execution so queued effects do not burn
+        // leases while waiting for a worker slot.
+        const [effect] = claimEffectBatch(
+          this.db,
+          this.reactorOwner,
+          this.config.reactorLeaseMs ?? 30_000,
+          1,
+          this.reactorNow(),
+        );
+        if (!effect) return;
+        claimed++;
+        if (await this.executeEffect(effect)) completed++;
+      }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => work()));
+    return completed;
+  }
+
+  private async executeEffect(effect: DurableEffect): Promise<boolean> {
+    if (effect.recoveryFailure) {
+      await this.submitEffectCommand(
+        effect,
+        toEffectFailureCommand(effect, effect.recoveryFailure),
       );
-      if (!effect) break;
-      if (effect.recoveryFailure) {
-        await this.submitEffectCommand(
-          effect,
-          toEffectFailureCommand(effect, effect.recoveryFailure),
-        );
-        releaseEffect(
-          this.db,
-          effect.effectId,
-          this.reactorOwner,
-          effect.recoveryFailure,
-          true,
-        );
-        continue;
-      }
-      const reactor = this.config.reactors?.[effect.intent.kind];
-      if (!reactor) {
-        const message = `No reactor registered for ${effect.intent.kind}`;
-        await this.submitEffectCommand(
-          effect,
-          toEffectFailureCommand(effect, message),
-        );
-        releaseEffect(
-          this.db,
-          effect.effectId,
-          this.reactorOwner,
-          message,
-          true,
-        );
-        continue;
-      }
+      releaseEffect(
+        this.db,
+        {
+          effectId: effect.effectId,
+          owner: this.reactorOwner,
+          error: effect.recoveryFailure,
+          errorKind: "terminal",
+          terminal: true,
+          now: this.reactorNow(),
+        },
+      );
+      return false;
+    }
+    const reactor = this.config.reactors?.[effect.intent.kind];
+    if (!reactor) {
+      const message = `No reactor registered for ${effect.intent.kind}`;
+      await this.submitEffectCommand(
+        effect,
+        toEffectFailureCommand(effect, message),
+      );
+      releaseEffect(
+        this.db,
+        {
+          effectId: effect.effectId,
+          owner: this.reactorOwner,
+          error: message,
+          errorKind: "terminal",
+          terminal: true,
+          now: this.reactorNow(),
+        },
+      );
+      return false;
+    }
 
-      const leaseMs = this.config.reactorLeaseMs ?? 30_000;
-      const controller = new AbortController();
-      let leaseFailure: Error | undefined;
-      const renewal = setInterval(() => {
-        try {
-          if (
-            !renewEffectLease(
-              this.db,
-              effect.effectId,
-              this.reactorOwner,
-              leaseMs,
-            )
-          ) {
-            leaseFailure = new Error(
-              `Effect lease ownership was lost: ${effect.effectId}`,
-            );
-            controller.abort(leaseFailure);
-          }
-        } catch (error) {
-          leaseFailure =
-            error instanceof Error ? error : new Error(String(error));
-          controller.abort(leaseFailure);
-        }
-      }, Math.max(1, Math.floor(leaseMs / 3)));
-
+    const leaseMs = this.config.reactorLeaseMs ?? 30_000;
+    const controller = new AbortController();
+    this.activeReactorControllers.add(controller);
+    let leaseFailure: Error | undefined;
+    const renewal = setInterval(() => {
       try {
-        const operation =
-          effect.attempts === 1 ? reactor.execute : reactor.recover;
-        const commands = await operation(effect, {
-          idempotencyKey: effect.idempotencyKey,
-          signal: controller.signal,
-        });
-        if (leaseFailure) throw leaseFailure;
         if (
           !renewEffectLease(
             this.db,
             effect.effectId,
             this.reactorOwner,
             leaseMs,
+            this.reactorNow(),
           )
         ) {
-          throw new EffectLeaseLostError(effect.effectId, "result persistence");
-        }
-        assertTerminalReactorResult(effect, commands);
-        let resultSnapshot: RunSnapshot | undefined;
-        for (const command of commands) {
-          resultSnapshot = await this.submitEffectCommand(
-            effect,
-            toInternalCommand(effect, command),
+          leaseFailure = new Error(
+            `Effect lease ownership was lost: ${effect.effectId}`,
           );
+          controller.abort(leaseFailure);
         }
-        assertEffectPostcondition(effect, resultSnapshot);
-        completeEffect(this.db, effect.effectId, this.reactorOwner);
-        completed++;
       } catch (error) {
-        if (leaseFailure || error instanceof EffectLeaseLostError) continue;
-        const message = error instanceof Error ? error.message : String(error);
-        const terminal =
-          effect.retryClass === "never" ||
-          effect.attempts >= (this.config.reactorMaxAttempts ?? 5);
-        if (terminal) {
-          try {
-            await this.submitEffectCommand(
-              effect,
-              toEffectFailureCommand(effect, message),
-            );
-          } catch (resultError) {
-            fenceEffectForFailureRecovery(
-              this.db,
-              effect.effectId,
-              this.reactorOwner,
-              message,
-            );
-            throw resultError;
-          }
-        }
-        releaseEffect(
+        leaseFailure =
+          error instanceof Error ? error : new Error(String(error));
+        controller.abort(leaseFailure);
+      }
+    }, Math.max(1, Math.floor(leaseMs / 3)));
+
+    try {
+      const operation =
+        effect.attempts === 1 ? reactor.execute : reactor.recover;
+      const commands = await operation(effect, {
+        idempotencyKey: effect.idempotencyKey,
+        signal: controller.signal,
+      });
+      if (leaseFailure) throw leaseFailure;
+      if (
+        !renewEffectLease(
           this.db,
           effect.effectId,
           this.reactorOwner,
-          message,
-          terminal,
-        );
-      } finally {
-        clearInterval(renewal);
+          leaseMs,
+          this.reactorNow(),
+        )
+      ) {
+        throw new EffectLeaseLostError(effect.effectId, "result persistence");
       }
+      assertReactorResult(effect, commands);
+      let resultSnapshot: RunSnapshot | undefined;
+      for (const command of commands) {
+        resultSnapshot = await this.submitEffectCommand(
+          effect,
+          toInternalCommand(effect, command),
+        );
+      }
+      assertEffectPostcondition(effect, resultSnapshot);
+      await this.submitEffectCommand(
+        effect,
+        toEffectSuccessCommand(effect),
+      );
+      completeEffect(
+        this.db,
+        effect.effectId,
+        this.reactorOwner,
+        this.reactorNow(),
+      );
+      return true;
+    } catch (error) {
+      if (leaseFailure || error instanceof EffectLeaseLostError) return false;
+      const failure = classifyReactorFailure(effect, error);
+      const terminal =
+        failure.kind === "terminal" ||
+        failure.kind === "approval_required" ||
+        effect.attempts >= (this.config.reactorMaxAttempts ?? 5);
+      if (terminal) {
+        try {
+          await this.submitEffectCommand(
+            effect,
+            toEffectFailureCommand(
+              effect,
+              formatEffectFailure(effect, failure),
+            ),
+          );
+        } catch (resultError) {
+          fenceEffectForFailureRecovery(
+            this.db,
+            effect.effectId,
+            this.reactorOwner,
+            failure.message,
+            this.reactorNow(),
+          );
+          throw resultError;
+        }
+      }
+      const now = this.reactorNow();
+      releaseEffect(
+        this.db,
+        {
+          effectId: effect.effectId,
+          owner: this.reactorOwner,
+          error: failure.message,
+          errorKind: failure.kind,
+          terminal,
+          ...(terminal
+            ? {}
+            : {
+                nextAttemptAt:
+                  now + retryDelayMs(effect, failure, this.config),
+              }),
+          now,
+        },
+      );
+      return false;
+    } finally {
+      clearInterval(renewal);
+      this.activeReactorControllers.delete(controller);
     }
-
-    return completed;
   }
 
   // -- creation helpers -------------------------------------------------------
@@ -279,6 +373,7 @@ export class OrchestrationEngine {
     const appendResult = transactCommand(this.db, {
       runId: command.runId,
       commandId: command.commandId,
+      occurredAt: command.issuedAt,
       expectedStreamVersion: initialSnapshot.streamVersion,
       initialSnapshot,
       receipt: { kind: "snapshot" },
@@ -288,6 +383,7 @@ export class OrchestrationEngine {
           nextSnapshot: result.snapshot ?? snapshot,
           events: result.events,
           effects: createEffectDrafts(command, result.effects),
+          effectCancellations: result.effectCancellations,
         };
       },
     });
@@ -316,6 +412,7 @@ export class OrchestrationEngine {
       this.processCommandWithFence(command, {
         effectId: effect.effectId,
         leaseOwner: this.reactorOwner,
+        now: this.reactorNow(),
       }),
     ).then((receipt) => receipt.snapshot);
   }
@@ -325,11 +422,13 @@ export class OrchestrationEngine {
     effectFence?: {
       readonly effectId: string;
       readonly leaseOwner: string;
+      readonly now?: number;
     },
   ): Promise<CommandReceipt> {
     const appendResult = transactCommand(this.db, {
       runId: command.runId,
       commandId: command.commandId,
+      occurredAt: command.issuedAt,
       expectedStreamVersion: command.expectedStreamVersion,
       receipt: receiptDraftFor(command),
       effectFence,
@@ -339,6 +438,7 @@ export class OrchestrationEngine {
           nextSnapshot: result.snapshot ?? snapshot,
           events: result.events,
           effects: createEffectDrafts(command, result.effects),
+          effectCancellations: result.effectCancellations,
         };
       },
     });
@@ -368,6 +468,9 @@ export class OrchestrationEngine {
     runId: string,
     execute: () => Promise<CommandReceipt>,
   ): Promise<CommandReceipt> {
+    if (this.closed) {
+      return Promise.reject(new Error("Orchestration engine is closed"));
+    }
     return new Promise<CommandReceipt>((resolve, reject) => {
       const queue = this.runQueues.get(runId) ?? [];
       queue.push({ execute, resolve, reject });
@@ -397,7 +500,11 @@ export class OrchestrationEngine {
       }
 
       this.activeRuns.add(runId);
-      void this.runScheduledTask(runId, task);
+      const running = this.runScheduledTask(runId, task);
+      this.activeTasks.add(running);
+      void running.finally(() => {
+        this.activeTasks.delete(running);
+      });
     }
   }
 
@@ -412,7 +519,7 @@ export class OrchestrationEngine {
     } finally {
       this.activeRuns.delete(runId);
       const queue = this.runQueues.get(runId);
-      if (queue && queue.length > 0) {
+      if (!this.closed && queue && queue.length > 0) {
         this.queuedRuns.add(runId);
         this.readyRuns.push(runId);
       } else {
@@ -420,6 +527,54 @@ export class OrchestrationEngine {
       }
       queueMicrotask(() => this.pump());
     }
+  }
+
+  private reactorNow(): number {
+    return this.config.reactorNow?.() ?? Date.now();
+  }
+
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+    const closedError = new Error("Orchestration engine is closed");
+    for (const controller of this.activeReactorControllers) {
+      controller.abort(closedError);
+    }
+    for (const queue of this.runQueues.values()) {
+      for (const task of queue) task.reject(closedError);
+    }
+    this.runQueues.clear();
+    this.readyRuns.length = 0;
+    this.queuedRuns.clear();
+
+    const activeDrain = this.activeDrain;
+    this.closePromise = Promise.allSettled([
+      ...this.activeTasks,
+      ...(activeDrain ? [activeDrain] : []),
+    ]).then(() => undefined);
+    return this.closePromise;
+  }
+
+  private armNextRetry(): void {
+    if (this.closed || this.config.reactorNow !== undefined) return;
+    const nextAttemptAt = getNextEffectClaimAt(this.db);
+    if (nextAttemptAt === undefined) return;
+    if (this.retryTimer !== undefined) clearTimeout(this.retryTimer);
+    const delay = Math.max(0, nextAttemptAt - Date.now());
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.drainEffects().catch(() => {
+        this.armNextRetry();
+      });
+    }, delay);
+    const timer = this.retryTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
+    timer.unref?.();
   }
 
 }
@@ -479,6 +634,7 @@ function retryClassFor(intent: EffectIntent): EffectRetryClass {
     case "provider.send_turn":
     case "provider.steer_turn":
     case "provider.interrupt_turn":
+    case "provider.resolve_approval":
     case "provider.stop_session":
     case "workspace.create":
     case "workspace.reconcile":
@@ -553,14 +709,60 @@ function toEffectFailureCommand(
   };
 }
 
-function assertTerminalReactorResult(
+function toEffectSuccessCommand(effect: DurableEffect): InternalCommand {
+  return {
+    schemaVersion: 1,
+    commandId: `cmd-result-${effect.effectId}-success` as never,
+    type: "effect.result",
+    runId: effect.runId,
+    correlationId: `corr-${effect.effectId}` as never,
+    causationId: effect.commandId as never,
+    actor: { kind: "system", id: "reactor" },
+    issuedAt: Date.now(),
+    payload: {
+      effectId: effect.effectId,
+      effectKind: effect.intent.kind,
+      status: "completed",
+      ...(effect.intent.kind === "provider.send_turn"
+        ? { turnId: effect.intent.turnId }
+        : effect.intent.kind === "provider.resolve_approval"
+          ? {
+              approvalId: effect.intent.approvalId,
+              resolution: effect.intent.resolution,
+            }
+          : {}),
+    },
+  };
+}
+
+function assertReactorResult(
   effect: DurableEffect,
   commands: ReadonlyArray<ReactorCommandDraft>,
 ): void {
-  if (commands.length === 0) {
-    throw new Error(
-      `Reactor ${effect.intent.kind} returned no terminal result command`,
-    );
+  if (effect.intent.kind === "checkpoint.restore") {
+    const [result] = commands;
+    if (
+      commands.length !== 1 ||
+      result?.type !== "checkpoint.result" ||
+      result.payload.checkpointId !== effect.intent.checkpointId
+    ) {
+      throw new Error(
+        `checkpoint.restore reactor must return exactly one matching checkpoint.result for ${effect.intent.checkpointId}`,
+      );
+    }
+    return;
+  }
+
+  if (
+    effect.intent.kind === "workspace.create" ||
+    effect.intent.kind === "workspace.reconcile"
+  ) {
+    if (commands.length !== 1 || commands[0]?.type !== "workspace.result") {
+      throw new Error(
+        `${effect.intent.kind} reactor must return exactly one workspace.result`,
+      );
+    }
+    return;
   }
 
   if (effect.intent.kind !== "provider.send_turn") return;
@@ -584,31 +786,98 @@ function assertTerminalReactorResult(
       ? [index]
       : [],
   );
-  const terminalIndex = terminalIndexes[0];
-  const terminal =
-    terminalIndex === undefined ? undefined : commands[terminalIndex];
   if (
-    terminalIndexes.length !== 1 ||
-    terminalIndex !== commands.length - 1 ||
-    terminal?.type !== "provider.event" ||
-    terminal.payload.normalizedEvent.turnId !== turnId
+    terminalIndexes.length > 1 ||
+    (terminalIndexes.length === 1 &&
+      terminalIndexes[0] !== commands.length - 1)
   ) {
     throw new Error(
-      "provider.send_turn reactor must end with exactly one matching terminal turn event",
+      "provider.send_turn reactor may include at most one matching terminal turn event, and it must be last",
     );
   }
 }
 
 function assertEffectPostcondition(
-  effect: DurableEffect,
-  snapshot: RunSnapshot | undefined,
+  _effect: DurableEffect,
+  _snapshot: RunSnapshot | undefined,
 ): void {
+  // Successful execution means the adapter durably accepted the operation.
+  // Provider notifications can arrive later through provider.event.
+}
+
+function classifyReactorFailure(
+  effect: DurableEffect,
+  error: unknown,
+): ReactorFailureOptions {
+  if (error instanceof ReactorFailure) {
+    return {
+      kind: error.kind,
+      message: error.message,
+      ...(error.retryAfterMs === undefined
+        ? {}
+        : { retryAfterMs: error.retryAfterMs }),
+    };
+  }
+  return {
+    kind:
+      effect.retryClass === "never"
+        ? "terminal"
+        : effect.retryClass === "rate_limited"
+          ? "rate_limited"
+          : "retryable",
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function retryDelayMs(
+  effect: DurableEffect,
+  failure: ReactorFailureOptions,
+  config: EngineConfig,
+): number {
   if (
-    effect.intent.kind === "provider.send_turn" &&
-    snapshot?.activeTurnId !== undefined
+    failure.kind === "rate_limited" &&
+    failure.retryAfterMs !== undefined
   ) {
-    throw new Error(
-      `provider.send_turn result did not terminate turn ${effect.intent.turnId}`,
-    );
+    return Math.max(0, failure.retryAfterMs);
+  }
+  const base = config.reactorRetryBaseMs ?? 1_000;
+  const maximum = config.reactorRetryMaxMs ?? 30_000;
+  const exponential = Math.min(
+    maximum,
+    base * 2 ** Math.max(0, effect.attempts - 1),
+  );
+  const jitterRatio = config.reactorRetryJitterRatio ?? 0.2;
+  return Math.min(
+    maximum,
+    Math.round(
+      exponential +
+        exponential *
+          jitterRatio *
+          stableJitter(effect.effectId, effect.attempts),
+    ),
+  );
+}
+
+function stableJitter(effectId: string, attempts: number): number {
+  let hash = attempts;
+  for (let index = 0; index < effectId.length; index++) {
+    hash = Math.imul(hash ^ effectId.charCodeAt(index), 16_777_619);
+  }
+  return (hash >>> 0) / 0xffff_ffff;
+}
+
+function formatEffectFailure(
+  effect: DurableEffect,
+  failure: ReactorFailureOptions,
+): string {
+  return `${effect.intent.kind} ${failure.kind} failure after ${effect.attempts} attempt(s): ${failure.message}`;
+}
+
+function assertNonNegativeFinite(
+  value: number | undefined,
+  name: string,
+): void {
+  if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+    throw new Error(`${name} must be a non-negative finite number`);
   }
 }

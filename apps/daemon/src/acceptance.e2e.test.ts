@@ -45,6 +45,10 @@ describe("Production acceptance — all 25 canonical event types", () => {
       turnId: turn.turnId,
       payload: {},
     });
+
+    // Steering is valid only while the target turn is active.
+    await runtime.steerTurn({ runId: snap.runId, steering: "go faster" });
+
     await runtime.appendEvent(snap.runId as string, {
       eventId: "ev-turn-completed",
       type: "turn.completed",
@@ -58,8 +62,6 @@ describe("Production acceptance — all 25 canonical event types", () => {
     expect(types(events)).toContain("assistant.delta");
     expect(types(events)).toContain("assistant.completed");
 
-    // Steer a turn
-    await runtime.steerTurn({ runId: snap.runId, steering: "go faster" });
     const postSteer = await collectEvents(runtime, snap.runId as string);
     expect(types(postSteer)).toContain("turn.steered");
 
@@ -74,25 +76,33 @@ describe("Production acceptance — all 25 canonical event types", () => {
     const runtime = LocalHarnessRuntime.memory();
     const snap = await runtime.createRun({ projectId: "proj-3" });
     await runtime.resumeRun({ runId: snap.runId });
+    const turn = await runtime.sendTurn({
+      runId: snap.runId,
+      prompt: "exercise activity lifecycle",
+    });
 
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-start`,
       type: "activity.started",
+      turnId: turn.turnId,
       payload: { activityId: "act-1" as never, kind: "bash", toolName: "bash" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-delta`,
       type: "activity.delta",
+      turnId: turn.turnId,
       payload: { activityId: "act-1" as never, content: "npm install" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-done`,
       type: "activity.completed",
+      turnId: turn.turnId,
       payload: { activityId: "act-1" as never, summary: "installed" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-fail`,
       type: "activity.failed",
+      turnId: turn.turnId,
       payload: { activityId: "act-1" as never, error: "permission denied" },
     });
 
@@ -113,10 +123,13 @@ describe("Production acceptance — all 25 canonical event types", () => {
       type: "approval.requested",
       payload: { approvalId: "apr-1" as never, capability: "exec", risk: "high", details: "rm -rf" },
     });
-    await runtime.resolveApproval({
-      runId: snap.runId,
-      approvalId: "apr-1" as never,
-      resolution: "deny",
+    await runtime.appendEvent(snap.runId as string, {
+      eventId: "ev-apr-resolved",
+      type: "approval.resolved",
+      payload: {
+        approvalId: "apr-1" as never,
+        resolution: "deny",
+      },
     });
 
     const events = await collectEvents(runtime, snap.runId as string);
@@ -170,11 +183,16 @@ describe("Production acceptance — all 25 canonical event types", () => {
     const runtime = LocalHarnessRuntime.memory();
     const snap = await runtime.createRun({ projectId: "proj-7" });
     await runtime.resumeRun({ runId: snap.runId });
+    const turn = await runtime.sendTurn({
+      runId: snap.runId,
+      prompt: "capture checkpoint",
+      turnId: "turn-checkpoint" as never,
+    });
 
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-ckpt-cap`,
       type: "checkpoint.captured",
-      turnId: "turn-checkpoint" as never,
+      turnId: turn.turnId,
       payload: { checkpointId: "ckpt-1" as never, commit: "abc123", ref: "refs/relay/ckpt-1" },
     });
     await runtime.appendEvent(snap.runId as string, {
@@ -199,6 +217,11 @@ describe("Production acceptance — all 25 canonical event types", () => {
     const snap = await runtime.createRun({ projectId: "proj-all" });
     const runId = snap.runId as string;
     await runtime.resumeRun({ runId: snap.runId });
+    await runtime.sendTurn({
+      runId: snap.runId,
+      prompt: "all canonical event types",
+      turnId: "turn-all" as never,
+    });
 
     // Emit all 25 types
     const allTypes: Array<{
@@ -216,19 +239,19 @@ describe("Production acceptance — all 25 canonical event types", () => {
       { type: "provider.session.stopped", payload: { providerInstanceId: "pi", reason: "completed" } },
       { type: "turn.started", payload: { prompt: "hello" }, turnId: "turn-all" },
       { type: "turn.steered", payload: { steering: "faster" }, turnId: "turn-all" },
+      { type: "assistant.delta", payload: { text: "hi" }, turnId: "turn-all" },
+      { type: "assistant.completed", payload: {}, turnId: "turn-all" },
+      { type: "activity.started", payload: { activityId: "a1" as never, kind: "bash", toolName: "bash" }, turnId: "turn-all" },
+      { type: "activity.delta", payload: { activityId: "a1" as never, content: "npm i" }, turnId: "turn-all" },
+      { type: "activity.completed", payload: { activityId: "a1" as never, summary: "ok" }, turnId: "turn-all" },
+      { type: "activity.failed", payload: { activityId: "a1" as never, error: "no" }, turnId: "turn-all" },
+      { type: "checkpoint.captured", payload: { checkpointId: "ckpt-all" as never, commit: "abc", ref: "refs/relay/ckpt-all" }, turnId: "turn-all" },
       { type: "turn.completed", payload: { summary: "done" }, turnId: "turn-all" },
       { type: "turn.failed", payload: { error: "boom" }, turnId: "turn-all-failed" },
       { type: "turn.interrupted", payload: { reason: "user" }, turnId: "turn-all-interrupted" },
-      { type: "assistant.delta", payload: { text: "hi" }, turnId: "turn-all" },
-      { type: "assistant.completed", payload: {}, turnId: "turn-all" },
-      { type: "activity.started", payload: { activityId: "a1" as never, kind: "bash", toolName: "bash" } },
-      { type: "activity.delta", payload: { activityId: "a1" as never, content: "npm i" } },
-      { type: "activity.completed", payload: { activityId: "a1" as never, summary: "ok" } },
-      { type: "activity.failed", payload: { activityId: "a1" as never, error: "no" } },
       { type: "approval.requested", payload: { approvalId: "ap1" as never, capability: "exec", risk: "high", details: "rm" } },
       { type: "approval.resolved", payload: { approvalId: "ap1" as never, resolution: "deny" } },
       { type: "usage.recorded", payload: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0, modelId: "t" } },
-      { type: "checkpoint.captured", payload: { checkpointId: "ckpt-all" as never, commit: "abc", ref: "refs/relay/ckpt-all" }, turnId: "turn-all" },
       { type: "checkpoint.restored", payload: { checkpointId: "ckpt-all" as never, commit: "abc" } },
       { type: "projection.published", payload: { cursor: 1 } },
     ];
@@ -239,15 +262,15 @@ describe("Production acceptance — all 25 canonical event types", () => {
       "run.failed",
       "run.stopping",
       "run.stopped",
+      "turn.started",
     ]);
     for (const ev of allTypes) {
       if (initialOrAlternateTerminal.has(ev.type)) continue;
       if (ev.type === "turn.failed" || ev.type === "turn.interrupted") {
-        await runtime.appendEvent(runId, {
-          eventId: `ev-start-${ev.turnId}`,
-          type: "turn.started",
+        await runtime.sendTurn({
+          runId: snap.runId,
+          prompt: "terminal fixture",
           turnId: ev.turnId as never,
-          payload: { prompt: "terminal fixture" },
         });
       }
       await runtime.appendEvent(runId, {

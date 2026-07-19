@@ -18,6 +18,274 @@ import {
   parseVersion,
 } from "@relay/local-store";
 import { SLO_DEFINITIONS } from "@relay/local-store";
+import { LocalHarnessRuntime } from "@relay/harness-runtime";
+import type {
+  CodexSessionAdapter,
+  NormalizedEvent,
+} from "@relay/codex-app-server";
+import { executeTurnViaCodex } from "./kernel-daemon";
+
+describe("Codex kernel bridge", () => {
+  test("waits for notifications that arrive after turn/start acceptance", async () => {
+    const runtime = LocalHarnessRuntime.memory();
+    const created = await runtime.createRun({ projectId: "codex-bridge" });
+    await runtime.resumeRun({ runId: created.runId });
+    const turn = await runtime.sendTurn({
+      runId: created.runId,
+      prompt: "hello",
+    });
+    let handler: ((event: NormalizedEvent) => void) | undefined;
+    const adapter = {
+      activeThreadId: "thread-1",
+      onEvent(next: (event: NormalizedEvent) => void) {
+        handler = next;
+        return () => {
+          handler = undefined;
+        };
+      },
+      async resumeThread() {},
+      async startTurn() {
+        setTimeout(() => {
+          handler?.({
+            type: "assistant.delta",
+            payload: { text: "after acceptance" },
+            providerThreadId: "thread-1",
+            providerTurnId: "provider-turn-1",
+          });
+          handler?.({
+            type: "turn.completed",
+            payload: { summary: "done" },
+            providerThreadId: "thread-1",
+            providerTurnId: "provider-turn-1",
+          });
+        }, 0);
+        return { turn: { id: "provider-turn-1" } };
+      },
+      close() {},
+    } as unknown as CodexSessionAdapter;
+
+    expect(
+      await executeTurnViaCodex({
+        runId: created.runId,
+        turnId: turn.turnId,
+        prompt: "hello",
+        codexAdapter: adapter,
+        runtime,
+        threadId: "thread-1",
+      }),
+    ).toBe(true);
+
+    const snapshot = await runtime.snapshot({ runId: created.runId });
+    const types: string[] = [];
+    for await (const event of runtime.observe({
+      runId: created.runId,
+      afterSequence: -1,
+    })) {
+      types.push(event.type);
+      if (event.sequence >= snapshot.sequence) break;
+    }
+    expect(types).toContain("assistant.delta");
+    expect(types).toContain("turn.completed");
+    expect(snapshot.activeTurnId).toBeUndefined();
+    await runtime.shutdown();
+  });
+
+  test("serializes two runs sharing one Codex adapter", async () => {
+    const runtime = LocalHarnessRuntime.memory();
+    const first = await runtime.createRun({ projectId: "codex-first" });
+    const second = await runtime.createRun({ projectId: "codex-second" });
+    await runtime.resumeRun({ runId: first.runId });
+    await runtime.resumeRun({ runId: second.runId });
+    const firstTurn = await runtime.sendTurn({
+      runId: first.runId,
+      prompt: "first",
+    });
+    const secondTurn = await runtime.sendTurn({
+      runId: second.runId,
+      prompt: "second",
+    });
+    const handlers = new Set<(event: NormalizedEvent) => void>();
+    const adapter = {
+      activeThreadId: "thread-shared",
+      onEvent(handler: (event: NormalizedEvent) => void) {
+        handlers.add(handler);
+        return () => handlers.delete(handler);
+      },
+      async resumeThread() {},
+      async startTurn(_threadId: string, prompt: string) {
+        const providerTurnId = `provider-${prompt}`;
+        setTimeout(() => {
+          for (const handler of handlers) {
+            handler({
+              type: "assistant.delta",
+              payload: { text: prompt },
+              providerThreadId: "thread-shared",
+              providerTurnId,
+            });
+            handler({
+              type: "turn.completed",
+              payload: { summary: prompt },
+              providerThreadId: "thread-shared",
+              providerTurnId,
+            });
+          }
+        }, 0);
+        return { turn: { id: providerTurnId } };
+      },
+      close() {},
+    } as unknown as CodexSessionAdapter;
+
+    await Promise.all([
+      executeTurnViaCodex({
+        runId: first.runId,
+        turnId: firstTurn.turnId,
+        prompt: "first",
+        codexAdapter: adapter,
+        runtime,
+        threadId: "thread-shared",
+      }),
+      executeTurnViaCodex({
+        runId: second.runId,
+        turnId: secondTurn.turnId,
+        prompt: "second",
+        codexAdapter: adapter,
+        runtime,
+        threadId: "thread-shared",
+      }),
+    ]);
+
+    const deltas = async (runId: typeof first.runId) => {
+      const snapshot = await runtime.snapshot({ runId });
+      const texts: string[] = [];
+      for await (const event of runtime.observe({
+        runId,
+        afterSequence: -1,
+      })) {
+        if (event.type === "assistant.delta") {
+          texts.push((event.payload as { text: string }).text);
+        }
+        if (event.sequence >= snapshot.sequence) break;
+      }
+      return texts;
+    };
+    expect(await deltas(first.runId)).toEqual(["first"]);
+    expect(await deltas(second.runId)).toEqual(["second"]);
+    await runtime.shutdown();
+  });
+
+  test("rejects a late event from the prior native Codex turn", async () => {
+    const runtime = LocalHarnessRuntime.memory();
+    const first = await runtime.createRun({ projectId: "codex-late-first" });
+    const second = await runtime.createRun({ projectId: "codex-late-second" });
+    await runtime.resumeRun({ runId: first.runId });
+    await runtime.resumeRun({ runId: second.runId });
+    const firstTurn = await runtime.sendTurn({
+      runId: first.runId,
+      prompt: "first",
+    });
+    const secondTurn = await runtime.sendTurn({
+      runId: second.runId,
+      prompt: "second",
+    });
+    const handlers = new Set<(event: NormalizedEvent) => void>();
+    let invocation = 0;
+    const adapter = {
+      activeThreadId: "thread-shared",
+      onEvent(handler: (event: NormalizedEvent) => void) {
+        handlers.add(handler);
+        return () => handlers.delete(handler);
+      },
+      async resumeThread() {},
+      async startTurn() {
+        invocation += 1;
+        const providerTurnId = `provider-turn-${invocation}`;
+        if (invocation === 1) {
+          setTimeout(() => {
+            for (const handler of handlers) {
+              handler({
+                type: "turn.completed",
+                payload: { summary: "first complete" },
+                providerThreadId: "thread-shared",
+                providerTurnId,
+              });
+            }
+          }, 0);
+        } else {
+          setTimeout(() => {
+            for (const handler of handlers) {
+              handler({
+                type: "assistant.delta",
+                payload: { text: "late from first" },
+                providerThreadId: "thread-shared",
+                providerTurnId: "provider-turn-1",
+              });
+              handler({
+                type: "turn.completed",
+                payload: { summary: "late first terminal" },
+                providerThreadId: "thread-shared",
+                providerTurnId: "provider-turn-1",
+              });
+              handler({
+                type: "assistant.delta",
+                payload: { text: "second only" },
+                providerThreadId: "thread-shared",
+                providerTurnId,
+              });
+              handler({
+                type: "turn.completed",
+                payload: { summary: "second complete" },
+                providerThreadId: "thread-shared",
+                providerTurnId,
+              });
+            }
+          }, 0);
+        }
+        return { turn: { id: providerTurnId } };
+      },
+      close() {},
+    } as unknown as CodexSessionAdapter;
+
+    await Promise.all([
+      executeTurnViaCodex({
+        runId: first.runId,
+        turnId: firstTurn.turnId,
+        prompt: "first",
+        codexAdapter: adapter,
+        runtime,
+        threadId: "thread-shared",
+      }),
+      executeTurnViaCodex({
+        runId: second.runId,
+        turnId: secondTurn.turnId,
+        prompt: "second",
+        codexAdapter: adapter,
+        runtime,
+        threadId: "thread-shared",
+      }),
+    ]);
+
+    const snapshot = await runtime.snapshot({ runId: second.runId });
+    const secondTexts: string[] = [];
+    const secondTerminals: string[] = [];
+    for await (const event of runtime.observe({
+      runId: second.runId,
+      afterSequence: -1,
+    })) {
+      if (event.type === "assistant.delta") {
+        secondTexts.push((event.payload as { text: string }).text);
+      }
+      if (event.type === "turn.completed") {
+        secondTerminals.push(
+          (event.payload as { summary?: string }).summary ?? "",
+        );
+      }
+      if (event.sequence >= snapshot.sequence) break;
+    }
+    expect(secondTexts).toEqual(["second only"]);
+    expect(secondTerminals).toEqual(["second complete"]);
+    await runtime.shutdown();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Security wiring

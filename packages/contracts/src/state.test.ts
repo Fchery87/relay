@@ -1,5 +1,10 @@
 import { expect, test, describe } from "bun:test";
-import { reduceRun, RunTransitionError, type RunSnapshot } from "./state";
+import {
+  reduceRun,
+  replayRun,
+  RunTransitionError,
+  type RunSnapshot,
+} from "./state";
 
 const baseSnapshot = (overrides?: Partial<RunSnapshot>): RunSnapshot => ({
   runId: "run-1" as never,
@@ -122,19 +127,47 @@ describe("approval", () => {
   test("running → awaiting_approval", () => {
     const result = reduceRun(baseSnapshot({ status: "running" }), {
       type: "approval.requested",
+      payload: { approvalId: "approval-1" },
     } as never);
     expect(result?.status).toBe("awaiting_approval");
+    expect(result?.pendingApprovalId).toBe("approval-1");
   });
 
   test("awaiting_approval → running on resolved", () => {
-    const result = reduceRun(baseSnapshot({ status: "awaiting_approval" }), {
-      type: "approval.resolved",
-    } as never);
+    const result = reduceRun(
+      baseSnapshot({
+        status: "awaiting_approval",
+        pendingApprovalId: "approval-1",
+      }),
+      {
+        type: "approval.resolved",
+        payload: { approvalId: "approval-1", resolution: "allow" },
+      } as never,
+    );
     expect(result?.status).toBe("running");
+    expect(result?.pendingApprovalId).toBeUndefined();
   });
 
   test("resolved when already running is no-op", () => {
     expect(reduceRun(baseSnapshot({ status: "running" }), { type: "approval.resolved" } as never)).toBeNull();
+  });
+
+  test("terminal turn clears a pending approval and returns to running", () => {
+    const result = reduceRun(
+      baseSnapshot({
+        status: "awaiting_approval",
+        activeTurnId: "turn-1" as never,
+        pendingApprovalId: "approval-1",
+      }),
+      {
+        type: "turn.interrupted",
+        turnId: "turn-1",
+        payload: { reason: "user" },
+      } as never,
+    );
+    expect(result).toMatchObject({ status: "running" });
+    expect(result?.activeTurnId).toBeUndefined();
+    expect(result?.pendingApprovalId).toBeUndefined();
   });
 });
 
@@ -219,5 +252,83 @@ describe("run metadata", () => {
       turnId: "turn-1",
       commit: "abc123",
     });
+  });
+});
+
+describe("deterministic replay", () => {
+  test("rebuilds the same reducer-owned snapshot from an ordered event stream", () => {
+    const initial = baseSnapshot({ createdAt: 1, updatedAt: 1 });
+    const events = [
+      {
+        eventId: "ev-1",
+        sequence: 1,
+        streamVersion: 1,
+        type: "run.created",
+        runId: "run-1",
+        correlationId: "corr-1",
+        occurredAt: 2,
+        payload: {
+          environmentId: "local",
+          projectId: "project-1",
+          providerInstanceId: "provider-1",
+        },
+      },
+      {
+        eventId: "ev-2",
+        sequence: 2,
+        streamVersion: 2,
+        type: "run.started",
+        runId: "run-1",
+        correlationId: "corr-1",
+        occurredAt: 3,
+        payload: {},
+      },
+      {
+        eventId: "ev-3",
+        sequence: 3,
+        streamVersion: 3,
+        type: "turn.started",
+        runId: "run-1",
+        turnId: "turn-1",
+        correlationId: "corr-1",
+        occurredAt: 4,
+        payload: { prompt: "hello" },
+      },
+      {
+        eventId: "ev-4",
+        sequence: 4,
+        streamVersion: 4,
+        type: "turn.completed",
+        runId: "run-1",
+        turnId: "turn-1",
+        correlationId: "corr-1",
+        occurredAt: 5,
+        payload: {},
+      },
+    ] as never;
+
+    expect(replayRun(initial, events)).toMatchObject({
+      status: "running",
+      projectId: "project-1",
+      providerInstanceId: "provider-1",
+      sequence: 4,
+      streamVersion: 4,
+      updatedAt: 5,
+    });
+  });
+
+  test("rejects an event gap instead of producing a plausible snapshot", () => {
+    expect(() =>
+      replayRun(baseSnapshot(), [{
+        eventId: "ev-gap",
+        sequence: 2,
+        streamVersion: 2,
+        type: "run.created",
+        runId: "run-1",
+        correlationId: "corr-1",
+        occurredAt: 2,
+        payload: { environmentId: "local", projectId: "project-1" },
+      }] as never),
+    ).toThrow("expected sequence 1");
   });
 });

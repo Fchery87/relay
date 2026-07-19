@@ -37,6 +37,11 @@ export type EffectIntent =
       readonly reason: string;
       readonly turnId: TurnId;
     }
+  | {
+      readonly kind: "provider.resolve_approval";
+      readonly approvalId: string;
+      readonly resolution: "allow" | "deny";
+    }
   | { readonly kind: "provider.stop_session" }
   | { readonly kind: "workspace.create"; readonly repoPath: string }
   | { readonly kind: "workspace.reconcile"; readonly repoPath: string }
@@ -64,6 +69,16 @@ export type EffectIntent =
 
 export type EffectRetryClass = "never" | "transient" | "rate_limited";
 export type EffectStatus = "pending" | "running" | "completed" | "failed";
+export type EffectFailureKind =
+  | "retryable"
+  | "rate_limited"
+  | "approval_required"
+  | "terminal";
+
+export type EffectCancellation = {
+  readonly kind: EffectIntent["kind"];
+  readonly reason: string;
+};
 
 export type DurableEffect = {
   readonly effectId: EffectId;
@@ -76,9 +91,13 @@ export type DurableEffect = {
   readonly status: EffectStatus;
   readonly attempts: number;
   readonly retryClass: EffectRetryClass;
+  /** Durable eligibility timestamp; pending effects are not claimed before it. */
+  readonly nextAttemptAt: number;
   readonly leaseOwner?: string;
   readonly leaseExpiresAt?: number;
   readonly lastError?: string;
+  readonly lastErrorKind?: EffectFailureKind;
+  readonly failedAt?: number;
   /** Recovery must emit failure without invoking this non-retryable effect. */
   readonly recoveryFailure?: string;
 };

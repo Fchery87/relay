@@ -11,9 +11,10 @@ import {
   getSnapshot,
   getEventsAfter,
   getEventCommitVersion,
+  listRunDiagnostics,
   waitForEventCommit,
 } from "@relay/local-store";
-import type { StoreDatabase } from "@relay/local-store";
+import type { RunDiagnostic, StoreDatabase } from "@relay/local-store";
 import { OrchestrationEngine } from "@relay/orchestration";
 import {
   type HarnessRuntime,
@@ -37,11 +38,16 @@ export type LocalHarnessRuntimeConfig = {
   readonly reactorLeaseMs?: number;
   readonly reactorBatchSize?: number;
   readonly reactorMaxAttempts?: number;
+  readonly reactorRetryBaseMs?: number;
+  readonly reactorRetryMaxMs?: number;
+  readonly reactorRetryJitterRatio?: number;
+  readonly reactorNow?: () => number;
 };
 
 export class LocalHarnessRuntime implements HarnessRuntime {
   private readonly engine: OrchestrationEngine;
   private readonly closeController = new AbortController();
+  private closePromise?: Promise<void>;
 
   constructor(
     private readonly db: StoreDatabase,
@@ -53,6 +59,10 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       reactorLeaseMs: config?.reactorLeaseMs,
       reactorBatchSize: config?.reactorBatchSize,
       reactorMaxAttempts: config?.reactorMaxAttempts,
+      reactorRetryBaseMs: config?.reactorRetryBaseMs,
+      reactorRetryMaxMs: config?.reactorRetryMaxMs,
+      reactorRetryJitterRatio: config?.reactorRetryJitterRatio,
+      reactorNow: config?.reactorNow,
     });
   }
 
@@ -205,9 +215,17 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   /** Close the underlying database connection (if file-backed). */
   close(): void {
-    if (this.closeController.signal.aborted) return;
+    void this.shutdown();
+  }
+
+  /** Fence new work, abort reactors, and close storage after in-flight work settles. */
+  shutdown(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closeController.abort();
-    this.db.close();
+    this.closePromise = this.engine.close().finally(() => {
+      this.db.close();
+    });
+    return this.closePromise;
   }
 
   // -- Extended methods (not in HarnessRuntime, used by kernel daemon) -----
@@ -252,6 +270,10 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   getSnapshotByRunId(runId: string): RunSnapshot | undefined {
     return getSnapshot(this.db, runId) ?? undefined;
+  }
+
+  listRunDiagnostics(runId: string): ReadonlyArray<RunDiagnostic> {
+    return listRunDiagnostics(this.db, runId);
   }
 
   /** Execute one bounded batch of reclaimable durable effects. */

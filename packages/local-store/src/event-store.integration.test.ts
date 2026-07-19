@@ -5,15 +5,17 @@ import {
   insertSnapshot,
   getSnapshot,
   getEventsAfter,
+  listRunDiagnostics,
   transactCommand,
 } from "./event-store";
 import { claimOutboxBatch, acknowledgeOutboxBatch } from "./outbox";
 import {
   claimEffectBatch,
+  completeEffect,
   getEffectsForCommand,
   releaseEffect,
 } from "./effect-store";
-import type { RunSnapshot } from "@relay/contracts";
+import { replayRunFromEvents, type RunSnapshot } from "@relay/contracts";
 
 function makeSnapshot(overrides?: Partial<RunSnapshot>): RunSnapshot {
   return {
@@ -274,7 +276,7 @@ describe("event store", () => {
     });
   });
 
-  test("rejects corrupt persisted records instead of casting them", () => {
+  test("quarantines a corrupt snapshot exactly once", () => {
     const db = openMemoryStore();
     setup(db);
     db.run(
@@ -282,9 +284,18 @@ describe("event store", () => {
       [JSON.stringify({ schemaVersion: 99, kind: "run_snapshot", data: {} }), "run-1"],
     );
 
-    expect(() => getSnapshot(db, "run-1")).toThrow(
-      "Unsupported persisted schema version",
-    );
+    expect(getSnapshot(db, "run-1")).toMatchObject({
+      runId: "run-1",
+      status: "failed",
+    });
+    expect(listRunDiagnostics(db, "run-1")).toEqual([
+      expect.objectContaining({
+        kind: "persisted_record_corrupt",
+        message: expect.stringContaining("Unsupported persisted schema version"),
+      }),
+    ]);
+    expect(getSnapshot(db, "run-1")?.status).toBe("failed");
+    expect(listRunDiagnostics(db, "run-1")).toHaveLength(1);
   });
 
   test("fails closed when a duplicate command receipt is corrupt", () => {
@@ -310,6 +321,59 @@ describe("event store", () => {
     expect(() => appendEvents(db, input)).toThrow(
       "Unsupported persisted schema version",
     );
+    expect(getSnapshot(db, "run-1")?.status).toBe("failed");
+    expect(listRunDiagnostics(db, "run-1")).toEqual([
+      expect.objectContaining({
+        kind: "persisted_record_corrupt",
+        message: expect.stringContaining("schema version"),
+      }),
+    ]);
+  });
+
+  test("quarantines a run when an event payload is corrupt", () => {
+    const db = openMemoryStore();
+    setup(db);
+    expect(appendEvents(db, {
+      runId: "run-1" as never,
+      commandId: "cmd-created-before-corrupt-event" as never,
+      nextSnapshot: makeSnapshot({ status: "ready" }),
+      events: [{
+        eventId: "ev-created-before-corrupt-event" as never,
+        type: "run.created",
+        payload: {
+          environmentId: "local" as never,
+          projectId: "project-1" as never,
+        },
+        correlationId: "corr-created-before-corrupt-event" as never,
+      }],
+    }).ok).toBe(true);
+    expect(appendEvents(db, {
+      runId: "run-1" as never,
+      commandId: "cmd-before-corrupt-event" as never,
+      nextSnapshot: makeSnapshot({ status: "running" }),
+      events: [{
+        eventId: "ev-before-corrupt-event" as never,
+        type: "run.started",
+        payload: {},
+        correlationId: "corr-before-corrupt-event" as never,
+      }],
+    }).ok).toBe(true);
+    db.run(
+      "UPDATE run_events SET payload_json = ? WHERE event_id = ?",
+      ["{not-json", "ev-before-corrupt-event"],
+    );
+
+    const repairedEvents = getEventsAfter(db, "run-1", -1);
+    expect(repairedEvents.map((event) => event.type)).toEqual([
+      "run.created",
+      "run.failed",
+    ]);
+    expect(replayRunFromEvents(repairedEvents as never).status).toBe("failed");
+    expect(getSnapshot(db, "run-1")?.status).toBe("failed");
+    expect(listRunDiagnostics(db, "run-1")).toHaveLength(1);
+
+    expect(getEventsAfter(db, "run-1", -1)).toEqual(repairedEvents);
+    expect(listRunDiagnostics(db, "run-1")).toHaveLength(1);
   });
 });
 
@@ -344,7 +408,7 @@ describe("outbox", () => {
 });
 
 describe("effect outbox", () => {
-  test("claims effects in durable insertion order when timestamps tie", () => {
+  test("claims only the durable FIFO head for one run", () => {
     const db = openMemoryStore();
     setup(db);
     appendEvents(db, {
@@ -387,11 +451,23 @@ describe("effect outbox", () => {
     });
     db.run("UPDATE effect_outbox SET created_at = 1");
 
+    const first = claimEffectBatch(db, "worker", 100, 10, 10);
+    expect(first.map((effect) => effect.effectId as string)).toEqual([
+      "effect-1-0",
+    ]);
+    completeEffect(db, first[0]!.effectId, "worker", 11);
+
+    const second = claimEffectBatch(db, "worker", 100, 10, 12);
+    expect(second.map((effect) => effect.effectId as string)).toEqual([
+      "effect-1-1",
+    ]);
+    completeEffect(db, second[0]!.effectId, "worker", 13);
+
     expect(
-      claimEffectBatch(db, "worker", 100, 10, 10).map(
+      claimEffectBatch(db, "worker", 100, 10, 14).map(
         (effect) => effect.effectId as string,
       ),
-    ).toEqual(["effect-1-0", "effect-1-1", "effect-2-0"]);
+    ).toEqual(["effect-2-0"]);
   });
 
   test("an expired non-retryable effect fails instead of executing twice", () => {
@@ -420,11 +496,14 @@ describe("effect outbox", () => {
     });
     releaseEffect(
       db,
-      recovery!.effectId,
-      "worker-2",
-      recovery!.recoveryFailure!,
-      true,
-      112,
+      {
+        effectId: recovery!.effectId,
+        owner: "worker-2",
+        error: recovery!.recoveryFailure!,
+        errorKind: "terminal",
+        terminal: true,
+        now: 112,
+      },
     );
     expect(
       getEffectsForCommand(db, "cmd-never-retry" as never)[0],

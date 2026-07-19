@@ -1,12 +1,20 @@
-import type { RunSnapshot } from "@relay/contracts";
-import type { Command, ExternalCommand, InternalCommand } from "@relay/contracts";
+import {
+  canonicalEventRequiresTurn,
+  RUN_STATUSES,
+  type ExternalCommandType,
+  type InternalCommandType,
+  type RunSnapshot,
+  type RunStatus,
+} from "@relay/contracts";
+import type { Command } from "@relay/contracts";
 import type {
   CanonicalEvent,
   CanonicalEventDraft,
   CanonicalEventType,
+  EffectCancellation,
   EffectIntent,
 } from "@relay/contracts";
-import { reduceRun, applySnapshot } from "@relay/contracts";
+import { replayRun } from "@relay/contracts";
 
 // ---------------------------------------------------------------------------
 // Effect intents — returned by the decider, dispatched by reactors.
@@ -19,8 +27,48 @@ import { reduceRun, applySnapshot } from "@relay/contracts";
 export type DeciderResult = {
   readonly events: Array<CanonicalEventDraft>;
   readonly effects: ReadonlyArray<EffectIntent>;
+  readonly effectCancellations?: ReadonlyArray<EffectCancellation>;
   readonly snapshot: RunSnapshot | null;
 };
+
+const EXTERNAL_COMMAND_STATES: Readonly<
+  Record<ExternalCommandType, ReadonlySet<RunStatus>>
+> = {
+  "run.create": new Set(["created"]),
+  "run.resume": new Set(["ready", "running"]),
+  "turn.send": new Set(["running"]),
+  "turn.steer": new Set(["running"]),
+  "turn.interrupt": new Set(["running", "awaiting_approval"]),
+  "approval.resolve": new Set(["awaiting_approval"]),
+  "run.stop": new Set(["running", "awaiting_approval"]),
+  "checkpoint.restore": new Set(["ready", "running", "awaiting_approval"]),
+};
+
+const INTERNAL_COMMAND_STATES: Readonly<
+  Record<InternalCommandType, ReadonlySet<RunStatus>>
+> = {
+  "provider.event": new Set([
+    "created",
+    "ready",
+    "running",
+    "awaiting_approval",
+    "stopping",
+  ]),
+  "workspace.result": new Set(RUN_STATUSES),
+  "checkpoint.result": new Set(RUN_STATUSES),
+  "effect.result": new Set(RUN_STATUSES),
+  "projection.ack": new Set(RUN_STATUSES),
+};
+
+export class CommandStateError extends Error {
+  constructor(
+    public readonly commandType: ExternalCommandType,
+    public readonly status: RunStatus,
+  ) {
+    super(`Command ${commandType} is not allowed while run is ${status}`);
+    this.name = "CommandStateError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pure decider — the ONLY function that translates commands into events/effects.
@@ -31,6 +79,9 @@ export function decide(
   snapshot: RunSnapshot,
   command: Command,
 ): DeciderResult {
+  if (!acceptCommandState(snapshot.status, command)) {
+    return { events: [], effects: [], snapshot: null };
+  }
   const events: DeciderResult["events"] = [];
   const effects: EffectIntent[] = [];
   const corrId = `corr-${command.commandId}`;
@@ -64,6 +115,7 @@ export function decide(
         environmentId: "local" as never,
         projectId: command.payload.projectId as never,
         providerInstanceId: command.payload.providerInstanceId,
+        permissionProfile: command.payload.permissionProfile,
       });
       const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
@@ -112,7 +164,19 @@ export function decide(
     }
 
     case "turn.steer": {
-      appendEvent("turn.steered", { steering: command.payload.steering });
+      if (!snapshot.activeTurnId) {
+        throw new Error("Cannot steer a run without an active turn");
+      }
+      appendEvent(
+        "turn.steered",
+        { steering: command.payload.steering },
+        { turnId: snapshot.activeTurnId },
+      );
+      effects.push({
+        kind: "provider.steer_turn",
+        steering: command.payload.steering,
+        turnId: snapshot.activeTurnId,
+      });
       const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
@@ -126,28 +190,51 @@ export function decide(
         { reason: command.payload.reason ?? "user" },
         { turnId: snapshot.activeTurnId },
       );
+      effects.push({
+        kind: "provider.interrupt_turn",
+        reason: command.payload.reason ?? "user",
+        turnId: snapshot.activeTurnId,
+      });
       const updated = reduceAndApply(current, events, command.issuedAt);
-      return { events, effects, snapshot: updated };
+      return {
+        events,
+        effects,
+        effectCancellations: [
+          {
+            kind: "provider.send_turn",
+            reason: `Turn ${snapshot.activeTurnId} was interrupted`,
+          },
+          {
+            kind: "provider.steer_turn",
+            reason: `Turn ${snapshot.activeTurnId} was interrupted`,
+          },
+        ],
+        snapshot: updated,
+      };
     }
 
     // --- approval ---
     case "approval.resolve": {
-      appendEvent("approval.resolved", {
-        approvalId: command.payload.approvalId as never,
+      if (snapshot.pendingApprovalId !== command.payload.approvalId) {
+        throw new Error(
+          `Approval ${command.payload.approvalId} does not match pending approval ${snapshot.pendingApprovalId ?? "none"}`,
+        );
+      }
+      effects.push({
+        kind: "provider.resolve_approval",
+        approvalId: command.payload.approvalId,
         resolution: command.payload.resolution,
       });
-      const updated = reduceAndApply(current, events, command.issuedAt);
-      return { events, effects, snapshot: updated };
+      return { events, effects, snapshot: null };
     }
 
     // --- checkpoint ---
     case "checkpoint.restore": {
-      appendEvent("checkpoint.restored", {
+      effects.push({
+        kind: "checkpoint.restore",
         checkpointId: command.payload.checkpointId as never,
-        commit: "",
       });
-      const updated = reduceAndApply(current, events, command.issuedAt);
-      return { events, effects, snapshot: updated };
+      return { events, effects, snapshot: null };
     }
 
     // --- internal commands from reactors ---
@@ -155,25 +242,79 @@ export function decide(
       // The provider adapter already normalised this event. Routing it through
       // an internal command keeps the decider as the sole transition owner.
       if (
-        isTerminalTurnEvent(command.payload.normalizedEvent.type) &&
-        (!command.payload.normalizedEvent.turnId ||
-          command.payload.normalizedEvent.turnId !== snapshot.activeTurnId)
+        command.payload.normalizedEvent.type === "approval.resolved" &&
+        command.payload.normalizedEvent.payload.approvalId !==
+          snapshot.pendingApprovalId
+      ) {
+        return { events: [], effects: [], snapshot: null };
+      }
+      if (
+        canonicalEventRequiresTurn(command.payload.normalizedEvent.type) &&
+        command.payload.normalizedEvent.turnId !== snapshot.activeTurnId
       ) {
         return { events: [], effects: [], snapshot: null };
       }
       events.push(command.payload.normalizedEvent);
       const updated = reduceAndApply(current, events, command.issuedAt);
-      return { events, effects, snapshot: updated };
+      const terminalTurnEvent =
+        command.payload.normalizedEvent.type === "turn.completed" ||
+        command.payload.normalizedEvent.type === "turn.failed" ||
+        command.payload.normalizedEvent.type === "turn.interrupted";
+      return {
+        events,
+        effects,
+        ...(terminalTurnEvent
+          ? {
+              effectCancellations: [
+                {
+                  kind: "provider.send_turn" as const,
+                  reason: "The provider turn reached a terminal state",
+                },
+                {
+                  kind: "provider.steer_turn" as const,
+                  reason: "The provider turn reached a terminal state",
+                },
+                {
+                  kind: "provider.interrupt_turn" as const,
+                  reason: "The provider turn reached a terminal state",
+                },
+              ],
+            }
+          : {}),
+        snapshot: updated,
+      };
     }
 
     case "workspace.result":
-    case "checkpoint.result":
     case "projection.ack": {
       // Internal commands carry reactor results — no new events by default.
       return { events: [], effects: [], snapshot: null };
     }
 
+    case "checkpoint.result": {
+      appendEvent("checkpoint.restored", {
+        checkpointId: command.payload.checkpointId as never,
+        commit: command.payload.commit,
+      });
+      const updated = reduceAndApply(current, events, command.issuedAt);
+      return { events, effects, snapshot: updated };
+    }
+
     case "effect.result": {
+      if (
+        command.payload.status === "completed" &&
+        command.payload.effectKind === "provider.resolve_approval" &&
+        command.payload.approvalId !== undefined &&
+        command.payload.resolution !== undefined &&
+        command.payload.approvalId === snapshot.pendingApprovalId
+      ) {
+        appendEvent("approval.resolved", {
+          approvalId: command.payload.approvalId as never,
+          resolution: command.payload.resolution,
+        });
+        const updated = reduceAndApply(current, events, command.issuedAt);
+        return { events, effects, snapshot: updated };
+      }
       if (
         command.payload.status === "failed" &&
         command.payload.effectKind === "provider.send_turn" &&
@@ -200,12 +341,21 @@ export function decide(
   }
 }
 
-function isTerminalTurnEvent(type: CanonicalEventType): boolean {
-  return (
-    type === "turn.completed" ||
-    type === "turn.failed" ||
-    type === "turn.interrupted"
-  );
+function acceptCommandState(
+  status: RunStatus,
+  command: Command,
+): boolean {
+  if (isExternalCommandType(command.type)) {
+    if (EXTERNAL_COMMAND_STATES[command.type].has(status)) return true;
+    throw new CommandStateError(command.type, status);
+  }
+  return INTERNAL_COMMAND_STATES[command.type].has(status);
+}
+
+function isExternalCommandType(
+  type: Command["type"],
+): type is ExternalCommandType {
+  return Object.prototype.hasOwnProperty.call(EXTERNAL_COMMAND_STATES, type);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,13 +376,7 @@ function reduceAndApply(
       runId: current.runId,
       occurredAt,
     } as CanonicalEvent;
-    const update = reduceRun(current, event);
-    current = applySnapshot(current, {
-      ...(update ?? {}),
-      sequence: event.sequence,
-      streamVersion: event.streamVersion,
-      updatedAt: event.occurredAt,
-    });
+    current = replayRun(current, [event]);
   }
   return current;
 }

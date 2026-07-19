@@ -11,6 +11,7 @@ import type {
   RunId,
   TurnId,
 } from "./ids";
+import type { PermissionProfile } from "./permissions";
 
 // ---------------------------------------------------------------------------
 // Event envelope — every canonical event in the system uses this shape.
@@ -102,6 +103,7 @@ export type RunCreatedPayload = {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly providerInstanceId?: ProviderInstanceId;
+  readonly permissionProfile?: PermissionProfile;
 };
 
 export type RunCreatedEvent = EventEnvelope<"run.created", RunCreatedPayload>;

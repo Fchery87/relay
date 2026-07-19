@@ -12,6 +12,60 @@ import { OrchestrationEngine } from "./orchestration-engine";
 import { createDeterministicProviderReactor } from "./fake-provider-reactor";
 
 describe("OrchestrationEngine durability", () => {
+  test("executes twenty run effects with at most four active reactors", async () => {
+    const db = openMemoryStore();
+    let active = 0;
+    let maximumActive = 0;
+    const deterministic = createDeterministicProviderReactor({ text: "done" });
+    const engine = new OrchestrationEngine(db, {
+      maxConcurrentRuns: 4,
+      reactorBatchSize: 20,
+      reactors: {
+        "provider.send_turn": {
+          execute: async (effect, context) => {
+            active++;
+            maximumActive = Math.max(maximumActive, active);
+            await Promise.resolve();
+            try {
+              return await deterministic.execute(effect, context);
+            } finally {
+              active--;
+            }
+          },
+          recover: deterministic.recover,
+        },
+      },
+    });
+
+    for (let index = 0; index < 20; index++) {
+      const created = await engine.createRun({ projectId: `project-${index}` });
+      await engine.submit({
+        commandId: `cmd-resume-concurrency-${index}` as never,
+        type: "run.resume",
+        runId: created.runId,
+        correlationId: `corr-resume-concurrency-${index}` as never,
+        actor: { kind: "system", id: "test" },
+        issuedAt: index * 2,
+        payload: {},
+      });
+      await engine.submit({
+        commandId: `cmd-turn-concurrency-${index}` as never,
+        type: "turn.send",
+        runId: created.runId,
+        correlationId: `corr-turn-concurrency-${index}` as never,
+        actor: { kind: "user", id: "test" },
+        issuedAt: index * 2 + 1,
+        payload: {
+          prompt: `turn ${index}`,
+          turnId: `turn-concurrency-${index}` as never,
+        },
+      });
+    }
+
+    expect(await engine.drainEffects()).toBe(20);
+    expect(maximumActive).toBe(4);
+  });
+
   test("serializes concurrent drain calls on one engine", async () => {
     const db = openMemoryStore();
     let started!: () => void;
@@ -393,34 +447,25 @@ describe("OrchestrationEngine durability", () => {
     ).toEqual(["turn.started", "assistant.delta", "turn.completed"]);
   });
 
-  test("does not complete a provider turn effect without its terminal event", async () => {
+  test("completes provider acceptance before a queued live steering effect", async () => {
     const db = openMemoryStore();
-    const incompleteResult = async (effect: Parameters<
+    const acceptedKinds: string[] = [];
+    const accept = async (effect: Parameters<
       ReturnType<typeof createDeterministicProviderReactor>["execute"]
     >[0]) => {
-      if (effect.intent.kind !== "provider.send_turn") return [];
-      return [{
-        type: "provider.event" as const,
-        payload: {
-          providerInstanceId: "provider-incomplete" as never,
-          normalizedEvent: {
-            eventId: "ev-incomplete-delta" as never,
-            type: "assistant.delta" as const,
-            turnId: effect.intent.turnId,
-            providerInstanceId: "provider-incomplete" as never,
-            correlationId: "corr-incomplete" as never,
-            causationId: effect.commandId as never,
-            payload: { text: "partial" },
-          },
-        },
-      }];
+      acceptedKinds.push(effect.intent.kind);
+      return [];
     };
     const engine = new OrchestrationEngine(db, {
       maxConcurrentRuns: 1,
       reactors: {
         "provider.send_turn": {
-          execute: incompleteResult,
-          recover: incompleteResult,
+          execute: accept,
+          recover: accept,
+        },
+        "provider.steer_turn": {
+          execute: accept,
+          recover: accept,
         },
       },
     });
@@ -443,22 +488,136 @@ describe("OrchestrationEngine durability", () => {
       issuedAt: 2,
       payload: { prompt: "hello", turnId: "turn-incomplete" as never },
     });
+    await engine.submit({
+      commandId: "cmd-steer-incomplete" as never,
+      type: "turn.steer",
+      runId: created.runId,
+      correlationId: "corr-steer-incomplete" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 3,
+      payload: { steering: "focus" },
+    });
+
+    expect(await engine.drainEffects()).toBe(2);
+    expect(acceptedKinds).toEqual([
+      "provider.send_turn",
+      "provider.steer_turn",
+    ]);
+    expect(
+      getEffectsForCommand(db, "cmd-turn-incomplete" as never)[0],
+    ).toMatchObject({ status: "completed", attempts: 1 });
+    expect(getSnapshot(db, created.runId)?.activeTurnId).toBe(
+      "turn-incomplete" as never,
+    );
+  });
+
+  test("does not report checkpoint restore success without a matching result", async () => {
+    const db = openMemoryStore();
+    const emptyResult = async () => [];
+    const engine = new OrchestrationEngine(db, {
+      maxConcurrentRuns: 1,
+      reactorMaxAttempts: 1,
+      reactors: {
+        "checkpoint.restore": {
+          execute: emptyResult,
+          recover: emptyResult,
+        },
+      },
+    });
+    const created = await engine.createRun({ projectId: "project-1" });
+    await engine.submit({
+      commandId: "cmd-checkpoint-without-result" as never,
+      type: "checkpoint.restore",
+      runId: created.runId,
+      correlationId: "corr-checkpoint-without-result" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 2,
+      payload: { checkpointId: "checkpoint-1" },
+    });
 
     expect(await engine.drainEffects()).toBe(0);
     expect(
-      getEffectsForCommand(db, "cmd-turn-incomplete" as never)[0],
+      getEventsAfter(db, created.runId, -1).map((event) => event.type),
+    ).not.toContain("checkpoint.restored");
+    expect(
+      getEffectsForCommand(
+        db,
+        "cmd-checkpoint-without-result" as never,
+      )[0],
     ).toMatchObject({
       status: "failed",
-      attempts: 5,
-      lastError:
-        "provider.send_turn reactor must end with exactly one matching terminal turn event",
+      lastError: expect.stringContaining(
+        "checkpoint.restore reactor must return exactly one matching checkpoint.result",
+      ),
     });
+  });
+
+  test("resolves an approval only after the provider accepts the decision", async () => {
+    const db = openMemoryStore();
+    const accept = async () => [];
+    const engine = new OrchestrationEngine(db, {
+      maxConcurrentRuns: 1,
+      reactors: {
+        "provider.resolve_approval": {
+          execute: accept,
+          recover: accept,
+        },
+      },
+    });
+    const created = await engine.createRun({ projectId: "project-1" });
+    await engine.submit({
+      commandId: "cmd-resume-approval" as never,
+      type: "run.resume",
+      runId: created.runId,
+      correlationId: "corr-resume-approval" as never,
+      actor: { kind: "system", id: "test" },
+      issuedAt: 1,
+      payload: {},
+    });
+    await engine.submit({
+      commandId: "cmd-request-approval" as never,
+      type: "provider.event",
+      runId: created.runId,
+      correlationId: "corr-request-approval" as never,
+      actor: { kind: "provider", id: "test" },
+      issuedAt: 2,
+      payload: {
+        providerInstanceId: "provider-test" as never,
+        normalizedEvent: {
+          eventId: "ev-request-approval" as never,
+          type: "approval.requested",
+          correlationId: "corr-event-request-approval" as never,
+          payload: {
+            approvalId: "approval-1" as never,
+            capability: "exec",
+            risk: "high",
+            details: "run command",
+          },
+        },
+      },
+    });
+    await engine.submit({
+      commandId: "cmd-resolve-approval" as never,
+      type: "approval.resolve",
+      runId: created.runId,
+      correlationId: "corr-resolve-approval" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 3,
+      payload: { approvalId: "approval-1", resolution: "allow" },
+    });
+    expect(getSnapshot(db, created.runId)).toMatchObject({
+      status: "awaiting_approval",
+      pendingApprovalId: "approval-1",
+    });
+
+    expect(await engine.drainEffects()).toBe(1);
+    expect(getSnapshot(db, created.runId)).toMatchObject({
+      status: "running",
+    });
+    expect(getSnapshot(db, created.runId)?.pendingApprovalId).toBeUndefined();
     expect(
-      getEventsAfter(db, created.runId, -1).at(-1),
-    ).toMatchObject({
-      type: "turn.failed",
-      turnId: "turn-incomplete",
-    });
+      getEventsAfter(db, created.runId, -1).map((event) => event.type),
+    ).toContain("approval.resolved");
   });
 
   test("rejects reactor commands after a terminal turn event", async () => {
@@ -860,6 +1019,166 @@ describe("OrchestrationEngine durability", () => {
       "run.stopping",
       "run.stopped",
     ]);
+  });
+
+  test("stopping atomically fences queued provider work before stop cleanup", async () => {
+    const db = openMemoryStore();
+    let sends = 0;
+    let stops = 0;
+    const engine = new OrchestrationEngine(db, {
+      maxConcurrentRuns: 1,
+      reactors: {
+        "provider.send_turn": {
+          execute: async () => {
+            sends++;
+            return [];
+          },
+          recover: async () => {
+            sends++;
+            return [];
+          },
+        },
+        "provider.stop_session": {
+          execute: async (effect) => {
+            stops++;
+            return [{
+              type: "provider.event",
+              payload: {
+                providerInstanceId: "provider-1" as never,
+                normalizedEvent: {
+                  eventId: `ev-${effect.effectId}-stopped` as never,
+                  type: "provider.session.stopped",
+                  payload: {
+                    providerInstanceId: "provider-1" as never,
+                    reason: "user",
+                  },
+                  correlationId: `corr-${effect.effectId}` as never,
+                },
+              },
+            }];
+          },
+          recover: async () => [],
+        },
+      },
+    });
+    const created = await engine.createRun({ projectId: "project-stop-fence" });
+    await engine.submit({
+      commandId: "cmd-resume-stop-fence" as never,
+      type: "run.resume",
+      runId: created.runId,
+      correlationId: "corr-resume-stop-fence" as never,
+      actor: { kind: "system", id: "test" },
+      issuedAt: 1,
+      payload: {},
+    });
+    await engine.submit({
+      commandId: "cmd-turn-stop-fence" as never,
+      type: "turn.send",
+      runId: created.runId,
+      correlationId: "corr-turn-stop-fence" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 2,
+      payload: { prompt: "wait", turnId: "turn-stop-fence" as never },
+    });
+    await engine.submit({
+      commandId: "cmd-stop-fence" as never,
+      type: "run.stop",
+      runId: created.runId,
+      correlationId: "corr-stop-fence" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 3,
+      payload: { reason: "user" },
+    });
+
+    expect(getEffectsForCommand(db, "cmd-turn-stop-fence" as never)[0]).toMatchObject({
+      status: "failed",
+      lastErrorKind: "terminal",
+    });
+    expect(await engine.drainEffects()).toBe(1);
+    expect(sends).toBe(0);
+    expect(stops).toBe(1);
+  });
+
+  test("randomized cross-run submission preserves each run's FIFO order", async () => {
+    const db = openMemoryStore();
+    const engine = new OrchestrationEngine(db, { maxConcurrentRuns: 4 });
+    const runs = [];
+    for (let index = 0; index < 8; index++) {
+      const created = await engine.createRun({ projectId: `project-${index}` });
+      await engine.submit({
+        commandId: `cmd-resume-random-${index}` as never,
+        type: "run.resume",
+        runId: created.runId,
+        correlationId: `corr-resume-random-${index}` as never,
+        actor: { kind: "system", id: "test" },
+        issuedAt: index,
+        payload: {},
+      });
+      runs.push(created.runId);
+    }
+
+    const shuffled = runs.flatMap((runId, runIndex) =>
+      Array.from({ length: 12 }, (_, eventIndex) => ({
+        runId,
+        runIndex,
+        eventIndex,
+      })),
+    );
+    let randomState = 0x5eed;
+    for (let index = shuffled.length - 1; index > 0; index--) {
+      randomState = (randomState * 1664525 + 1013904223) >>> 0;
+      const swapIndex = randomState % (index + 1);
+      [shuffled[index], shuffled[swapIndex]] = [
+        shuffled[swapIndex]!,
+        shuffled[index]!,
+      ];
+    }
+
+    const expected = new Map<string, string[]>();
+    const submissions = shuffled.map(({ runId, runIndex, eventIndex }, order) => {
+      const text = `${runIndex}:${eventIndex}`;
+      const values = expected.get(runId) ?? [];
+      values.push(text);
+      expected.set(runId, values);
+      return engine.submit({
+        commandId: `cmd-random-${runIndex}-${eventIndex}` as never,
+        type: "provider.event",
+        runId,
+        correlationId: `corr-random-${runIndex}-${eventIndex}` as never,
+        actor: { kind: "provider", id: "test" },
+        issuedAt: order,
+        payload: {
+          providerInstanceId: "provider-test" as never,
+          normalizedEvent: {
+            eventId: `ev-random-${runIndex}-${eventIndex}` as never,
+            type: "usage.recorded",
+            payload: {
+              inputTokens: eventIndex,
+              outputTokens: 1,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              thinkingTokens: 0,
+              modelId: text,
+            },
+            correlationId:
+              `corr-event-random-${runIndex}-${eventIndex}` as never,
+          },
+        },
+      });
+    });
+    await Promise.all(submissions);
+
+    for (const runId of runs) {
+      const events = getEventsAfter(db, runId, -1);
+      expect(events.map((event) => event.sequence)).toEqual(
+        events.map((_, index) => index + 1),
+      );
+      expect(
+        events
+          .filter((event) => event.type === "usage.recorded")
+          .map((event) => (event.payload as { modelId: string }).modelId),
+      ).toEqual(expected.get(runId)!);
+    }
   });
 
   test("rejects a command ID reused for a different run", async () => {

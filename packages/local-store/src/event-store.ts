@@ -1,10 +1,18 @@
 import {
+  applySnapshot,
+  reduceRun,
+  replayRunFromEvents,
+  RUN_STATUSES,
+  type CanonicalEvent,
   type CanonicalEventDraft,
   type CommandReceipt,
   type CommandReceiptDraft,
   type CommandId,
+  type EffectCancellation,
   type RunId,
+  type RunCreatedEvent,
   type RunSnapshot,
+  type RunStatus,
 } from "@relay/contracts";
 import type { CanonicalEventType, EventEnvelope } from "@relay/contracts";
 import type { StoreDatabase } from "./database";
@@ -28,6 +36,8 @@ export type AppendInput = {
   readonly commandId: CommandId;
   /** If provided, reject if the current stream version doesn't match. */
   readonly expectedStreamVersion?: number;
+  /** Canonical occurrence time chosen by the command owner. */
+  readonly occurredAt?: number;
   /** Snapshot already reduced by orchestration, the sole transition owner. */
   readonly nextSnapshot: RunSnapshot;
   /** Initial state to insert atomically when accepting a run.create command. */
@@ -37,6 +47,11 @@ export type AppendInput = {
   readonly receipt?: CommandReceiptDraft;
   /** Durable reactor work committed atomically with events and the receipt. */
   readonly effects?: ReadonlyArray<EffectDraft>;
+  readonly effectCancellations?: ReadonlyArray<EffectCancellation>;
+  /** Effect currently persisting its own result; terminal cancellation excludes it. */
+  readonly effectFence?: {
+    readonly effectId: string;
+  };
 };
 
 export type AppendResult =
@@ -78,6 +93,7 @@ export function appendEvents(
   input: AppendInput,
 ): AppendResult {
   const now = Date.now();
+  const occurredAt = input.occurredAt ?? now;
   const alreadyInTransaction = db.inTransaction;
 
   const execute = (): AppendResult => {
@@ -165,7 +181,7 @@ export function appendEvents(
         const inserted = db.run(
           `INSERT OR IGNORE INTO run_turns (run_id, turn_id, started_at)
            VALUES (?, ?, ?)`,
-          [input.runId, ev.turnId, now],
+          [input.runId, ev.turnId, occurredAt],
         );
         if (inserted.changes !== 1) {
           throw new Error(
@@ -183,7 +199,7 @@ export function appendEvents(
         providerInstanceId: ev.providerInstanceId,
         correlationId: ev.correlationId as never,
         causationId: ev.causationId as never,
-        occurredAt: now,
+        occurredAt,
         payload: ev.payload,
       };
       envelopes.push(envelope);
@@ -201,7 +217,7 @@ export function appendEvents(
           ev.providerInstanceId ?? null,
           ev.correlationId,
           ev.causationId ?? null,
-          now,
+          occurredAt,
         ],
       );
 
@@ -209,7 +225,15 @@ export function appendEvents(
       db.run(
         `INSERT INTO projection_outbox (event_id, run_id, sequence, type, payload_json, occurred_at, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [ev.eventId, input.runId, seq, ev.type, JSON.stringify(ev.payload), now, now],
+        [
+          ev.eventId,
+          input.runId,
+          seq,
+          ev.type,
+          JSON.stringify(ev.payload),
+          occurredAt,
+          now,
+        ],
       );
     }
 
@@ -220,7 +244,7 @@ export function appendEvents(
       ...input.nextSnapshot,
       sequence: seq,
       streamVersion: stream,
-      updatedAt: now,
+      updatedAt: occurredAt,
     };
 
     // Update snapshot
@@ -237,6 +261,27 @@ export function appendEvents(
         input.runId,
       ],
     );
+
+    for (const cancellation of input.effectCancellations ?? []) {
+      cancelLiveEffects(
+        db,
+        input.runId,
+        cancellation.kind,
+        cancellation.reason,
+        now,
+        input.effectFence?.effectId,
+      );
+    }
+    if (isTerminalStatus(snapshot.status)) {
+      cancelLiveEffects(
+        db,
+        input.runId,
+        undefined,
+        `Run entered terminal state: ${snapshot.status}`,
+        now,
+        input.effectFence?.effectId,
+      );
+    }
 
     const receipt = createReceipt(
       input.commandId,
@@ -265,9 +310,17 @@ export function appendEvents(
       events: envelopes,
     };
   };
-  const result = alreadyInTransaction
-    ? execute()
-    : db.transaction(execute)();
+  let result: AppendResult;
+  try {
+    result = alreadyInTransaction
+      ? execute()
+      : db.transaction(execute)();
+  } catch (error) {
+    if (!alreadyInTransaction && error instanceof PersistedRecordError) {
+      quarantineCorruptRunById(db, input.runId, error);
+    }
+    throw error;
+  }
 
   if (!alreadyInTransaction && result.ok && result.events.length > 0) {
     eventCommitNotifier(db).notify(input.runId);
@@ -280,17 +333,20 @@ export type TransactionalCommandInput = {
   readonly runId: RunId;
   readonly commandId: CommandId;
   readonly expectedStreamVersion?: number;
+  readonly occurredAt?: number;
   readonly initialSnapshot?: RunSnapshot;
   readonly receipt?: CommandReceiptDraft;
   /** Result commands must still own a live effect lease when persisted. */
   readonly effectFence?: {
     readonly effectId: string;
     readonly leaseOwner: string;
+    readonly now?: number;
   };
   readonly decide: (snapshot: RunSnapshot) => {
     readonly nextSnapshot: RunSnapshot;
     readonly events: ReadonlyArray<CanonicalEventDraft>;
     readonly effects?: ReadonlyArray<EffectDraft>;
+    readonly effectCancellations?: ReadonlyArray<EffectCancellation>;
   };
 };
 
@@ -302,88 +358,99 @@ export function transactCommand(
   db: StoreDatabase,
   input: TransactionalCommandInput,
 ): AppendResult {
-  const result = db.transaction((): AppendResult => {
-    const existing = db
-      .query("SELECT run_id, result_json FROM command_receipts WHERE command_id = ?")
-      .get(input.commandId) as {
-        run_id: string;
-        result_json: string | null;
-      } | undefined;
-    if (existing) {
-      if (existing.run_id !== input.runId) {
-        throw new Error("Command ID is already bound to a different run");
+  let result: AppendResult;
+  try {
+    result = db.transaction((): AppendResult => {
+      const existing = db
+        .query("SELECT run_id, result_json FROM command_receipts WHERE command_id = ?")
+        .get(input.commandId) as {
+          run_id: string;
+          result_json: string | null;
+        } | undefined;
+      if (existing) {
+        if (existing.run_id !== input.runId) {
+          throw new Error("Command ID is already bound to a different run");
+        }
+        const snapshotRow = db
+          .query("SELECT * FROM run_snapshots WHERE run_id = ?")
+          .get(input.runId) as RunSnapshotRow | undefined;
+        const duplicateReceipt = existing.result_json
+          ? decodeReceipt(existing.result_json, input.commandId, input.runId)
+          : snapshotRow
+            ? createReceipt(
+                input.commandId,
+                input.runId,
+                rowToSnapshot(snapshotRow),
+                input.receipt ?? { kind: "snapshot" },
+              )
+            : undefined;
+        return {
+          ok: false,
+          reason: "duplicate_command",
+          duplicateReceipt,
+        };
       }
-      const snapshotRow = db
+
+      if (input.effectFence) {
+        const fenced = db.run(
+          `UPDATE effect_outbox
+           SET updated_at = updated_at
+           WHERE effect_id = ?
+             AND status = 'running'
+             AND lease_owner = ?
+             AND lease_expires_at > ?`,
+          [
+            input.effectFence.effectId,
+            input.effectFence.leaseOwner,
+            input.effectFence.now ?? Date.now(),
+          ],
+        );
+        if (fenced.changes !== 1) {
+          return { ok: false, reason: "effect_lease_lost" };
+        }
+      }
+
+      const row = db
         .query("SELECT * FROM run_snapshots WHERE run_id = ?")
         .get(input.runId) as RunSnapshotRow | undefined;
-      const duplicateReceipt = existing.result_json
-        ? decodeReceipt(existing.result_json, input.commandId, input.runId)
-        : snapshotRow
-          ? createReceipt(
-              input.commandId,
-              input.runId,
-              rowToSnapshot(snapshotRow),
-              input.receipt ?? { kind: "snapshot" },
-            )
-          : undefined;
-      return {
-        ok: false,
-        reason: "duplicate_command",
-        duplicateReceipt,
-      };
-    }
-
-    if (input.effectFence) {
-      const fenced = db.run(
-        `UPDATE effect_outbox
-         SET updated_at = updated_at
-         WHERE effect_id = ?
-           AND status = 'running'
-           AND lease_owner = ?
-           AND lease_expires_at > ?`,
-        [
-          input.effectFence.effectId,
-          input.effectFence.leaseOwner,
-          Date.now(),
-        ],
-      );
-      if (fenced.changes !== 1) {
-        return { ok: false, reason: "effect_lease_lost" };
+      if (row && input.initialSnapshot) {
+        return { ok: false, reason: "version_conflict" };
       }
-    }
+      const snapshot = row
+        ? rowToSnapshot(row)
+        : input.initialSnapshot;
+      if (!snapshot) {
+        return { ok: false, reason: "run_not_found" };
+      }
+      if (
+        input.expectedStreamVersion !== undefined &&
+        input.expectedStreamVersion !== snapshot.streamVersion
+      ) {
+        return { ok: false, reason: "version_conflict" };
+      }
 
-    const row = db
-      .query("SELECT * FROM run_snapshots WHERE run_id = ?")
-      .get(input.runId) as RunSnapshotRow | undefined;
-    if (row && input.initialSnapshot) {
-      return { ok: false, reason: "version_conflict" };
+      const decision = input.decide(snapshot);
+      return appendEvents(db, {
+        runId: input.runId,
+        commandId: input.commandId,
+        expectedStreamVersion:
+          input.expectedStreamVersion ?? snapshot.streamVersion,
+        occurredAt: input.occurredAt,
+        initialSnapshot: input.initialSnapshot,
+        nextSnapshot: decision.nextSnapshot,
+        events: decision.events,
+        receipt: input.receipt,
+        effects: decision.effects,
+        effectCancellations: decision.effectCancellations,
+        effectFence: input.effectFence,
+      });
+    })();
+  } catch (error) {
+    if (error instanceof PersistedRecordError) {
+      quarantineCorruptRunById(db, input.runId, error);
     }
-    const snapshot = row
-      ? rowToSnapshot(row)
-      : input.initialSnapshot;
-    if (!snapshot) {
-      return { ok: false, reason: "run_not_found" };
-    }
-    if (
-      input.expectedStreamVersion !== undefined &&
-      input.expectedStreamVersion !== snapshot.streamVersion
-    ) {
-      return { ok: false, reason: "version_conflict" };
-    }
-
-    const decision = input.decide(snapshot);
-    return appendEvents(db, {
-      runId: input.runId,
-      commandId: input.commandId,
-      expectedStreamVersion:
-        input.expectedStreamVersion ?? snapshot.streamVersion,
-      initialSnapshot: input.initialSnapshot,
-      nextSnapshot: decision.nextSnapshot,
-      events: decision.events,
-      receipt: input.receipt,
-      effects: decision.effects,
-    });
-  })();
+    throw error;
+  }
 
   if (result.ok && result.events.length > 0) {
     eventCommitNotifier(db).notify(input.runId);
@@ -420,7 +487,42 @@ export function getSnapshot(
   const row = db
     .query("SELECT * FROM run_snapshots WHERE run_id = ?")
     .get(runId) as RunSnapshotRow | undefined;
-  return row ? rowToSnapshot(row) : undefined;
+  if (!row) return undefined;
+  try {
+    return rowToSnapshot(row);
+  } catch (error) {
+    if (!(error instanceof PersistedRecordError)) throw error;
+    return quarantineCorruptRun(db, row, error, false);
+  }
+}
+
+export type RunDiagnostic = {
+  readonly diagnosticId: string;
+  readonly runId: RunId;
+  readonly kind: "persisted_record_corrupt";
+  readonly message: string;
+  readonly createdAt: number;
+};
+
+export function listRunDiagnostics(
+  db: StoreDatabase,
+  runId: string,
+): ReadonlyArray<RunDiagnostic> {
+  const rows = db
+    .query(
+      `SELECT diagnostic_id, run_id, kind, message, created_at
+       FROM run_diagnostics
+       WHERE run_id = ?
+       ORDER BY created_at, diagnostic_id`,
+    )
+    .all(runId) as RunDiagnosticRow[];
+  return rows.map((row) => ({
+    diagnosticId: row.diagnostic_id,
+    runId: row.run_id as RunId,
+    kind: "persisted_record_corrupt",
+    message: row.message,
+    createdAt: row.created_at,
+  }));
 }
 
 export function getCommandReceipt(
@@ -438,7 +540,14 @@ export function getCommandReceipt(
     throw new Error("Command ID is already bound to a different run");
   }
   if (!row?.result_json) return undefined;
-  return decodeReceipt(row.result_json, commandId, runId);
+  try {
+    return decodeReceipt(row.result_json, commandId, runId);
+  } catch (error) {
+    if (error instanceof PersistedRecordError) {
+      quarantineCorruptRunById(db, runId, error);
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -456,7 +565,19 @@ export function getEventsAfter(
     )
     .all(runId, afterSequence) as EventRow[];
 
-  return rows.map(rowToEvent);
+  const events: Array<EventEnvelope<CanonicalEventType, unknown>> = [];
+  for (const row of rows) {
+    try {
+      events.push(rowToEvent(row));
+    } catch (error) {
+      if (error instanceof PersistedRecordError) {
+        quarantineCorruptEvent(db, row, error);
+        return getEventsAfter(db, runId, afterSequence);
+      }
+      throw error;
+    }
+  }
+  return events;
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +648,14 @@ type EventRow = {
   occurred_at: number;
 };
 
+type RunDiagnosticRow = {
+  diagnostic_id: string;
+  run_id: string;
+  kind: "persisted_record_corrupt";
+  message: string;
+  created_at: number;
+};
+
 function rowToSnapshot(row: RunSnapshotRow): RunSnapshot {
   const snapshot = decodeSnapshot(row.payload_json);
   if (
@@ -541,6 +670,415 @@ function rowToSnapshot(row: RunSnapshotRow): RunSnapshot {
     );
   }
   return snapshot;
+}
+
+const runStatusSet = new Set<string>(RUN_STATUSES);
+
+function quarantineCorruptRun(
+  db: StoreDatabase,
+  row: RunSnapshotRow,
+  error: PersistedRecordError,
+  force: boolean,
+): RunSnapshot {
+  const now = Date.now();
+  const runId = row.run_id as RunId;
+  const diagnosticId = `diag-persisted-record-corrupt-${row.run_id}`;
+  const eventId = `ev-persisted-record-corrupt-${row.run_id}`;
+  const message = error.message.slice(0, 512);
+
+  let repaired!: RunSnapshot;
+  let eventCommitted = false;
+  db.transaction(() => {
+    const currentRow = db
+      .query("SELECT * FROM run_snapshots WHERE run_id = ?")
+      .get(row.run_id) as RunSnapshotRow | undefined;
+    if (!currentRow) {
+      throw new PersistedRecordError(
+        `Corrupt run snapshot disappeared during quarantine: ${row.run_id}`,
+      );
+    }
+
+    let validSnapshot: RunSnapshot | undefined;
+    try {
+      validSnapshot = rowToSnapshot(currentRow);
+    } catch (currentError) {
+      if (!(currentError instanceof PersistedRecordError)) throw currentError;
+    }
+    const existingDiagnostic = db
+      .query(
+        `SELECT diagnostic_id
+         FROM run_diagnostics
+         WHERE run_id = ? AND kind = 'persisted_record_corrupt'`,
+      )
+      .get(row.run_id) as { diagnostic_id: string } | undefined;
+    if (validSnapshot && (existingDiagnostic || !force)) {
+      repaired = validSnapshot;
+      return;
+    }
+
+    db.run(
+      `INSERT OR IGNORE INTO run_diagnostics
+       (diagnostic_id, run_id, kind, message, created_at)
+       VALUES (?, ?, 'persisted_record_corrupt', ?, ?)`,
+      [diagnosticId, row.run_id, message, now],
+    );
+
+    const status: RunStatus = runStatusSet.has(currentRow.status)
+      ? currentRow.status as RunStatus
+      : "created";
+    const latest = db
+      .query(
+        `SELECT COALESCE(MAX(sequence), 0) AS sequence,
+                COALESCE(MAX(stream_version), 0) AS stream_version
+         FROM run_events
+         WHERE run_id = ?`,
+      )
+      .get(row.run_id) as { sequence: number; stream_version: number };
+    // Snapshot scalar columns are part of the corrupt record and cannot be
+    // trusted to choose canonical event coordinates.
+    const sequence = nonNegativeInteger(latest.sequence);
+    const streamVersion = nonNegativeInteger(latest.stream_version);
+    const base: RunSnapshot = {
+      ...(validSnapshot ?? {
+        runId,
+        status,
+        sequence,
+        streamVersion,
+        restartCount: 0,
+        createdAt: currentRow.updated_at,
+        updatedAt: currentRow.updated_at,
+      }),
+      sequence,
+      streamVersion,
+      reducerPayload: {
+        ...(validSnapshot?.reducerPayload ?? {}),
+        diagnosticId,
+        diagnosticKind: "persisted_record_corrupt",
+        diagnosticMessage: message,
+      },
+    };
+
+    if (isTerminalStatus(status)) {
+      repaired = base;
+    } else {
+      const event: CanonicalEvent = {
+        eventId: eventId as never,
+        sequence: sequence + 1,
+        streamVersion: streamVersion + 1,
+        type: "run.failed",
+        runId,
+        correlationId: diagnosticId as never,
+        occurredAt: now,
+        payload: { error: message },
+      };
+      repaired = {
+        ...applySnapshot(base, reduceRun(base, event)),
+        sequence: event.sequence,
+        streamVersion: event.streamVersion,
+      };
+      const inserted = db.run(
+        `INSERT OR IGNORE INTO run_events
+         (event_id, run_id, sequence, stream_version, type, payload_json,
+          turn_id, provider_instance_id, correlation_id, causation_id, occurred_at)
+         VALUES (?, ?, ?, ?, 'run.failed', ?, NULL, NULL, ?, NULL, ?)`,
+        [
+          eventId,
+          row.run_id,
+          event.sequence,
+          event.streamVersion,
+          encodeEventPayload("run.failed", event.payload),
+          diagnosticId,
+          now,
+        ],
+      );
+      if (inserted.changes === 1) {
+        db.run(
+          `INSERT INTO projection_outbox
+           (event_id, run_id, sequence, type, payload_json, occurred_at, created_at)
+           VALUES (?, ?, ?, 'run.failed', ?, ?, ?)`,
+          [
+            eventId,
+            row.run_id,
+            event.sequence,
+            JSON.stringify(event.payload),
+            now,
+            now,
+          ],
+        );
+        eventCommitted = true;
+      }
+    }
+
+    db.run(
+      `UPDATE run_snapshots
+       SET status = ?, sequence = ?, stream_version = ?, payload_json = ?, updated_at = ?
+       WHERE run_id = ?`,
+      [
+        repaired.status,
+        repaired.sequence,
+        repaired.streamVersion,
+        encodeSnapshot(repaired),
+        repaired.updatedAt,
+        row.run_id,
+      ],
+    );
+    cancelLiveEffects(
+      db,
+      runId,
+      undefined,
+      "Run quarantined after persisted-record corruption",
+      now,
+    );
+  })();
+
+  if (eventCommitted) {
+    eventCommitNotifier(db).notify(runId);
+  }
+  return repaired;
+}
+
+function quarantineCorruptEvent(
+  db: StoreDatabase,
+  corruptRow: EventRow,
+  error: PersistedRecordError,
+): void {
+  const now = Date.now();
+  const runId = corruptRow.run_id as RunId;
+  const diagnosticId = `diag-persisted-record-corrupt-${corruptRow.run_id}`;
+  const failureEventId = `ev-persisted-record-corrupt-${corruptRow.run_id}`;
+  const syntheticCreatedEventId =
+    `ev-persisted-record-recovery-created-${corruptRow.run_id}`;
+  const message = error.message.slice(0, 512);
+  let committed = false;
+
+  db.transaction(() => {
+    const snapshotRow = db
+      .query("SELECT * FROM run_snapshots WHERE run_id = ?")
+      .get(corruptRow.run_id) as RunSnapshotRow | undefined;
+    if (!snapshotRow) return;
+
+    let validSnapshot: RunSnapshot | undefined;
+    try {
+      validSnapshot = rowToSnapshot(snapshotRow);
+    } catch (snapshotError) {
+      if (!(snapshotError instanceof PersistedRecordError)) throw snapshotError;
+    }
+
+    const prefixRows = db
+      .query(
+        `SELECT * FROM run_events
+         WHERE run_id = ? AND sequence < ?
+         ORDER BY sequence ASC`,
+      )
+      .all(corruptRow.run_id, corruptRow.sequence) as EventRow[];
+    let prefix = prefixRows.map(rowToEvent) as CanonicalEvent[];
+    let base: RunSnapshot | undefined;
+    try {
+      base = replayRunFromEvents(prefix);
+    } catch {
+      // Legacy streams may predate run.created. Archive the whole stream and
+      // replace it with a minimal canonical genesis before failing closed.
+      prefix = [];
+    }
+
+    const archiveFromSequence =
+      prefix.length > 0 ? corruptRow.sequence : 0;
+    db.run(
+      `INSERT OR IGNORE INTO quarantined_run_events
+       (event_id, run_id, sequence, stream_version, type, payload_json,
+        turn_id, provider_instance_id, correlation_id, causation_id,
+        occurred_at, diagnostic_id, quarantined_at)
+       SELECT event_id, run_id, sequence, stream_version, type, payload_json,
+              turn_id, provider_instance_id, correlation_id, causation_id,
+              occurred_at, ?, ?
+       FROM run_events
+       WHERE run_id = ? AND sequence >= ?`,
+      [diagnosticId, now, corruptRow.run_id, archiveFromSequence],
+    );
+    db.run(
+      `DELETE FROM projection_outbox
+       WHERE event_id IN (
+         SELECT event_id FROM run_events
+         WHERE run_id = ? AND sequence >= ?
+       )`,
+      [corruptRow.run_id, archiveFromSequence],
+    );
+    db.run(
+      `DELETE FROM run_events WHERE run_id = ? AND sequence >= ?`,
+      [corruptRow.run_id, archiveFromSequence],
+    );
+
+    db.run(
+      `INSERT OR IGNORE INTO run_diagnostics
+       (diagnostic_id, run_id, kind, message, created_at)
+       VALUES (?, ?, 'persisted_record_corrupt', ?, ?)`,
+      [diagnosticId, corruptRow.run_id, message, now],
+    );
+
+    if (!base) {
+      const createdAt = validSnapshot?.createdAt ?? snapshotRow.updated_at;
+      const created: RunCreatedEvent = {
+        eventId: syntheticCreatedEventId as never,
+        sequence: 1,
+        streamVersion: 1,
+        type: "run.created",
+        runId,
+        correlationId: diagnosticId as never,
+        occurredAt: createdAt,
+        payload: {
+          environmentId: "quarantine" as never,
+          projectId:
+            validSnapshot?.projectId ?? (`quarantined-${runId}` as never),
+          ...(validSnapshot?.permissionProfile === undefined
+            ? {}
+            : { permissionProfile: validSnapshot.permissionProfile }),
+        },
+      };
+      insertCanonicalEvent(db, created, now);
+      prefix = [created];
+      base = replayRunFromEvents(prefix);
+    }
+
+    const failure: CanonicalEvent = {
+      eventId: failureEventId as never,
+      sequence: base.sequence + 1,
+      streamVersion: base.streamVersion + 1,
+      type: "run.failed",
+      runId,
+      correlationId: diagnosticId as never,
+      occurredAt: now,
+      payload: { error: message },
+    };
+    insertCanonicalEvent(db, failure, now);
+    const repaired = {
+      ...applySnapshot(base, reduceRun(base, failure)),
+      sequence: failure.sequence,
+      streamVersion: failure.streamVersion,
+      reducerPayload: {
+        ...(base.reducerPayload ?? {}),
+        diagnosticId,
+        diagnosticKind: "persisted_record_corrupt",
+        diagnosticMessage: message,
+      },
+    };
+    db.run(
+      `UPDATE run_snapshots
+       SET status = ?, sequence = ?, stream_version = ?, payload_json = ?, updated_at = ?
+       WHERE run_id = ?`,
+      [
+        repaired.status,
+        repaired.sequence,
+        repaired.streamVersion,
+        encodeSnapshot(repaired),
+        repaired.updatedAt,
+        corruptRow.run_id,
+      ],
+    );
+    cancelLiveEffects(
+      db,
+      runId,
+      undefined,
+      "Run quarantined after persisted-record corruption",
+      now,
+    );
+    committed = true;
+  })();
+
+  if (committed) eventCommitNotifier(db).notify(runId);
+}
+
+function insertCanonicalEvent(
+  db: StoreDatabase,
+  event: CanonicalEvent,
+  createdAt: number,
+): void {
+  db.run(
+    `INSERT INTO run_events
+     (event_id, run_id, sequence, stream_version, type, payload_json,
+      turn_id, provider_instance_id, correlation_id, causation_id, occurred_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.eventId,
+      event.runId,
+      event.sequence,
+      event.streamVersion,
+      event.type,
+      encodeEventPayload(event.type, event.payload),
+      event.turnId ?? null,
+      event.providerInstanceId ?? null,
+      event.correlationId,
+      event.causationId ?? null,
+      event.occurredAt,
+    ],
+  );
+  db.run(
+    `INSERT INTO projection_outbox
+     (event_id, run_id, sequence, type, payload_json, occurred_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.eventId,
+      event.runId,
+      event.sequence,
+      event.type,
+      JSON.stringify(event.payload),
+      event.occurredAt,
+      createdAt,
+    ],
+  );
+}
+
+function quarantineCorruptRunById(
+  db: StoreDatabase,
+  runId: RunId,
+  error: PersistedRecordError,
+): RunSnapshot | undefined {
+  const row = db
+    .query("SELECT * FROM run_snapshots WHERE run_id = ?")
+    .get(runId) as RunSnapshotRow | undefined;
+  return row ? quarantineCorruptRun(db, row, error, true) : undefined;
+}
+
+function nonNegativeInteger(value: number): number {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function isTerminalStatus(status: RunStatus): boolean {
+  return status === "stopped" || status === "completed" || status === "failed";
+}
+
+function cancelLiveEffects(
+  db: StoreDatabase,
+  runId: RunId,
+  kind: string | undefined,
+  reason: string,
+  now: number,
+  exceptEffectId?: string,
+): void {
+  db.run(
+    `UPDATE effect_outbox
+     SET status = 'failed',
+         lease_owner = NULL,
+         lease_expires_at = NULL,
+         last_error = ?,
+         last_error_kind = 'terminal',
+         next_attempt_at = 0,
+         failed_at = ?,
+         updated_at = ?
+     WHERE run_id = ?
+       AND status IN ('pending', 'running')
+       AND (? IS NULL OR kind = ?)
+       AND (? IS NULL OR effect_id != ?)`,
+    [
+      reason,
+      now,
+      now,
+      runId,
+      kind ?? null,
+      kind ?? null,
+      exceptEffectId ?? null,
+      exceptEffectId ?? null,
+    ],
+  );
 }
 
 function createReceipt(

@@ -1,7 +1,13 @@
 import { expect, test, describe } from "bun:test";
+import { Database } from "bun:sqlite";
 import { LocalHarnessRuntime } from "./local-harness-runtime";
-import type { RunSnapshot } from "@relay/contracts";
+import {
+  replayRunFromEvents,
+  type CanonicalEvent,
+  type RunSnapshot,
+} from "@relay/contracts";
 import { createDeterministicProviderReactor } from "@relay/orchestration";
+import { getEventsAfter, openStore } from "@relay/local-store";
 
 // ---------------------------------------------------------------------------
 // Conformance suite re-run against the LOCAL implementation.
@@ -69,6 +75,47 @@ describe("LocalHarnessRuntime conformance", () => {
     }
   });
 
+  test("shutdown aborts active reactors, waits for settlement, and fences admission", async () => {
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let reactorSettled = false;
+    const h = LocalHarnessRuntime.memory({
+      maxConcurrentRuns: 1,
+      reactors: {
+        "provider.send_turn": {
+          execute: async (_effect, context) => {
+            markStarted();
+            await new Promise<never>((_resolve, reject) => {
+              context.signal.addEventListener(
+                "abort",
+                () => reject(context.signal.reason),
+                { once: true },
+              );
+            });
+            return [];
+          },
+          recover: async () => [],
+        },
+      },
+    });
+    const created = await h.createRun({ projectId: "shutdown-test" });
+    await h.resumeRun({ runId: created.runId });
+    await h.sendTurn({ runId: created.runId, prompt: "wait" });
+    const drain = h.drainEffects().finally(() => {
+      reactorSettled = true;
+    });
+    await started;
+
+    const shutdown = h.shutdown();
+    await expect(
+      h.steerTurn({ runId: created.runId, steering: "too late" }),
+    ).rejects.toThrow("closed");
+    await Promise.all([drain, shutdown]);
+    expect(reactorSettled).toBe(true);
+  });
+
   test("steering injects a turn.steered event", async () => {
     const h = rt();
     const snap = await h.createRun({ projectId: "test" });
@@ -110,6 +157,36 @@ describe("LocalHarnessRuntime conformance", () => {
     expect((await h.snapshot({ runId: snap.runId })).status).toBe("running");
   });
 
+  test("rejects malformed provider events without quarantining a healthy run", async () => {
+    const h = rt();
+    const created = await h.createRun({ projectId: "ingress-test" });
+    await h.resumeRun({ runId: created.runId });
+    const before = await h.snapshot({ runId: created.runId });
+
+    const unknown = await h.appendEvent(created.runId, {
+      eventId: "ev-unknown-provider-type",
+      type: "provider.native.secret",
+      payload: {},
+    } as never);
+    const malformed = await h.appendEvent(created.runId, {
+      eventId: "ev-malformed-usage",
+      type: "usage.recorded",
+      payload: {
+        inputTokens: -1,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        thinkingTokens: 0,
+        modelId: "test",
+      },
+    });
+
+    expect(unknown.ok).toBe(false);
+    expect(malformed.ok).toBe(false);
+    expect(await h.snapshot({ runId: created.runId })).toEqual(before);
+    expect(h.listRunDiagnostics(created.runId)).toHaveLength(0);
+  });
+
   test("observation stays open and yields events appended after subscription", async () => {
     const h = rt();
     const snap = await h.createRun({ projectId: "test" });
@@ -121,17 +198,23 @@ describe("LocalHarnessRuntime conformance", () => {
     const nextEvent = iterator.next();
 
     await h.appendEvent(snap.runId, {
-      eventId: "ev-live-delta",
-      type: "assistant.delta",
-      payload: { text: "live" },
+      eventId: "ev-live-usage",
+      type: "usage.recorded",
+      payload: {
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        thinkingTokens: 0,
+        modelId: "live",
+      },
     });
 
     expect(await nextEvent).toMatchObject({
       done: false,
       value: {
-        eventId: "ev-live-delta",
-        type: "assistant.delta",
-        payload: { text: "live" },
+        eventId: "ev-live-usage",
+        type: "usage.recorded",
       },
     });
 
@@ -196,6 +279,165 @@ describe("LocalHarnessRuntime conformance", () => {
 // ---------------------------------------------------------------------------
 
 describe("restart recovery", () => {
+  test("durable canonical history replays to the persisted snapshot", async () => {
+    const tmpPath = `/tmp/relay-replay-${crypto.randomUUID()}.sqlite`;
+    const h = LocalHarnessRuntime.open(tmpPath);
+    const created = await h.createRun({
+      projectId: "replay-project",
+      permissionProfile: "read-only",
+    });
+    await h.resumeRun({ runId: created.runId });
+    const turn = await h.sendTurn({
+      runId: created.runId,
+      prompt: "replay this",
+    });
+    await h.appendEvent(created.runId, {
+      eventId: "ev-replay-delta",
+      type: "assistant.delta",
+      turnId: turn.turnId,
+      payload: { text: "durable" },
+    });
+    await h.appendEvent(created.runId, {
+      eventId: "ev-replay-complete",
+      type: "turn.completed",
+      turnId: turn.turnId,
+      payload: {},
+    });
+    const persistedSnapshot = await h.snapshot({ runId: created.runId });
+    h.close();
+
+    const db = openStore(tmpPath);
+    const events = getEventsAfter(db, created.runId, -1);
+    expect(replayRunFromEvents(events as CanonicalEvent[])).toEqual(
+      persistedSnapshot,
+    );
+    db.close();
+    try {
+      require("node:fs").unlinkSync(tmpPath);
+    } catch {
+      // Best-effort cleanup on platforms that retain SQLite sidecars.
+    }
+  });
+
+  test("a corrupt persisted snapshot is quarantined into one failed diagnostic", async () => {
+    const tmpPath = `/tmp/relay-corrupt-snapshot-${crypto.randomUUID()}.sqlite`;
+    const h1 = LocalHarnessRuntime.open(tmpPath);
+    const created = await h1.createRun({ projectId: "test" });
+    await h1.resumeRun({ runId: created.runId });
+    h1.close();
+
+    const raw = new Database(tmpPath);
+    raw.run(
+      "UPDATE run_snapshots SET payload_json = ? WHERE run_id = ?",
+      ["{not-json", created.runId],
+    );
+    raw.close();
+
+    const h2 = LocalHarnessRuntime.open(tmpPath);
+    const quarantined = await h2.snapshot({ runId: created.runId });
+    expect(quarantined.status).toBe("failed");
+    expect(quarantined.activeTurnId).toBeUndefined();
+    expect(h2.listRunDiagnostics(created.runId)).toEqual([
+      expect.objectContaining({
+        kind: "persisted_record_corrupt",
+        message: expect.stringContaining("Invalid JSON in persisted run snapshot"),
+      }),
+    ]);
+    h2.close();
+
+    const h3 = LocalHarnessRuntime.open(tmpPath);
+    expect((await h3.snapshot({ runId: created.runId })).status).toBe("failed");
+    expect(h3.listRunDiagnostics(created.runId)).toHaveLength(1);
+    h3.close();
+    try { require("node:fs").unlinkSync(tmpPath); } catch { /* ok */ }
+  });
+
+  test("a transient reactor failure waits for its durable retry time", async () => {
+    let now = Date.now();
+    let executions = 0;
+    let recoveries = 0;
+    const deterministic = createDeterministicProviderReactor({
+      text: "recovered after backoff",
+    });
+    const h = LocalHarnessRuntime.memory({
+      reactorNow: () => now,
+      reactorRetryBaseMs: 100,
+      reactorRetryJitterRatio: 0,
+      reactors: {
+        "provider.send_turn": {
+          execute: async () => {
+            executions++;
+            throw new Error("provider temporarily unavailable");
+          },
+          recover: async (effect, context) => {
+            recoveries++;
+            return deterministic.recover(effect, context);
+          },
+        },
+      },
+    });
+    const snap = await h.createRun({ projectId: "test" });
+    await h.resumeRun({ runId: snap.runId });
+    await h.sendTurn({ runId: snap.runId, prompt: "retry later" });
+
+    expect(await h.drainEffects()).toBe(0);
+    expect(executions).toBe(1);
+    expect(recoveries).toBe(0);
+    expect(await h.drainEffects()).toBe(0);
+    expect(executions).toBe(1);
+    expect(recoveries).toBe(0);
+
+    now += 99;
+    expect(await h.drainEffects()).toBe(0);
+    expect(recoveries).toBe(0);
+
+    now += 1;
+    expect(await h.drainEffects()).toBe(1);
+    expect(recoveries).toBe(1);
+    expect((await h.snapshot({ runId: snap.runId })).activeTurnId).toBeUndefined();
+    h.close();
+  });
+
+  test("a durable retry wakes without an external polling drain", async () => {
+    let recoverStarted!: () => void;
+    const recovered = new Promise<void>((resolve) => {
+      recoverStarted = resolve;
+    });
+    const deterministic = createDeterministicProviderReactor({
+      text: "automatic recovery",
+    });
+    const h = LocalHarnessRuntime.memory({
+      reactorRetryBaseMs: 5,
+      reactorRetryMaxMs: 5,
+      reactorRetryJitterRatio: 0,
+      reactors: {
+        "provider.send_turn": {
+          execute: async () => {
+            throw new Error("transient");
+          },
+          recover: async (effect, context) => {
+            recoverStarted();
+            return deterministic.recover(effect, context);
+          },
+        },
+      },
+    });
+    const snap = await h.createRun({ projectId: "test" });
+    await h.resumeRun({ runId: snap.runId });
+    await h.sendTurn({ runId: snap.runId, prompt: "wake automatically" });
+
+    expect(await h.drainEffects()).toBe(0);
+    await Promise.race([
+      recovered,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("retry scheduler did not wake")), 500);
+      }),
+    ]);
+    await h.drainEffects();
+    expect((await h.snapshot({ runId: snap.runId })).activeTurnId).toBeUndefined();
+    h.close();
+  });
+
   test("an exhausted provider reactor emits a terminal failure command", async () => {
     let executions = 0;
     const h = LocalHarnessRuntime.memory({
@@ -224,6 +466,18 @@ describe("restart recovery", () => {
     expect(await h.drainEffects()).toBe(0);
     expect(executions).toBe(1);
     expect((await h.snapshot({ runId: snap.runId })).activeTurnId).toBeUndefined();
+    const terminalSequence = (await h.snapshot({ runId: snap.runId })).sequence;
+    let failurePayload: unknown;
+    for await (const event of h.observe({ runId: snap.runId })) {
+      if (event.type === "turn.failed" && event.turnId === receipt.turnId) {
+        failurePayload = event.payload;
+      }
+      if (event.sequence >= terminalSequence) break;
+    }
+    expect(failurePayload).toEqual({
+      error:
+        "provider.send_turn retryable failure after 1 attempt(s): provider unavailable",
+    });
     const events = await collectEventsThroughCurrentSequence(h, snap.runId);
     expect(
       events.filter(
@@ -329,15 +583,22 @@ describe("restart recovery", () => {
 
     await h2.appendEvent(snap.runId, {
       eventId: "ev-cross-runtime",
-      type: "assistant.delta",
-      payload: { text: "from another connection" },
+      type: "usage.recorded",
+      payload: {
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        thinkingTokens: 0,
+        modelId: "cross-runtime",
+      },
     });
 
     expect(await nextEvent).toMatchObject({
       done: false,
       value: {
         eventId: "ev-cross-runtime",
-        type: "assistant.delta",
+        type: "usage.recorded",
       },
     });
 

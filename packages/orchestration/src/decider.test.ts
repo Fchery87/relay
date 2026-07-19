@@ -1,6 +1,13 @@
 import { expect, test, describe } from "bun:test";
-import { decide, type DeciderResult } from "./decider";
-import type { RunSnapshot, Command } from "@relay/contracts";
+import { CommandStateError, decide } from "./decider";
+import {
+  RUN_STATUSES,
+  type ExternalCommandType,
+  type InternalCommandType,
+  type RunSnapshot,
+  type Command,
+  type RunStatus,
+} from "@relay/contracts";
 
 function snap(overrides?: Partial<RunSnapshot>): RunSnapshot {
   return {
@@ -62,17 +69,41 @@ describe("decider", () => {
   });
 
   test("turn.steer emits turn.steered", () => {
-    const result = decide(snap(), cmd("turn.steer", { steering: "go left" }));
+    const result = decide(
+      snap({ status: "running", activeTurnId: "turn-1" as never }),
+      cmd("turn.steer", { steering: "go left" }),
+    );
     expect(result.events[0]!.type).toBe("turn.steered");
+    expect(result.events[0]).toMatchObject({ turnId: "turn-1" });
+    expect(result.effects).toEqual([{
+      kind: "provider.steer_turn",
+      steering: "go left",
+      turnId: "turn-1" as never,
+    }]);
   });
 
   test("turn.interrupt emits turn.interrupted", () => {
     const result = decide(
-      snap({ activeTurnId: "turn-1" as never }),
+      snap({ status: "running", activeTurnId: "turn-1" as never }),
       cmd("turn.interrupt", { reason: "cancel" }),
     );
     expect(result.events[0]!.type).toBe("turn.interrupted");
     expect(result.events[0]).toMatchObject({ turnId: "turn-1" });
+    expect(result.effects).toEqual([{
+      kind: "provider.interrupt_turn",
+      reason: "cancel",
+      turnId: "turn-1" as never,
+    }]);
+    expect(result.effectCancellations).toEqual([
+      {
+        kind: "provider.send_turn",
+        reason: "Turn turn-1 was interrupted",
+      },
+      {
+        kind: "provider.steer_turn",
+        reason: "Turn turn-1 was interrupted",
+      },
+    ]);
     const duplicate = decide(
       result.snapshot!,
       cmd("turn.interrupt", { reason: "cancel again" }),
@@ -80,22 +111,88 @@ describe("decider", () => {
     expect(duplicate.events).toHaveLength(0);
   });
 
-  test("approval.resolve emits approval.resolved", () => {
-    const result = decide(snap({ status: "awaiting_approval" }), cmd("approval.resolve", { approvalId: "a1", resolution: "allow" }));
-    expect(result.events[0]!.type).toBe("approval.resolved");
-    expect(result.snapshot?.status).toBe("running");
+  test("approval.resolve waits for provider acceptance before resolving", () => {
+    const result = decide(
+      snap({ status: "awaiting_approval", pendingApprovalId: "a1" }),
+      cmd("approval.resolve", { approvalId: "a1", resolution: "allow" }),
+    );
+    expect(result.events).toHaveLength(0);
+    expect(result.snapshot).toBeNull();
+    expect(result.effects).toEqual([{
+      kind: "provider.resolve_approval",
+      approvalId: "a1",
+      resolution: "allow",
+    }]);
+
+    const accepted = decide(
+      snap({
+        status: "awaiting_approval",
+        pendingApprovalId: "a1",
+      }),
+      cmd("effect.result", {
+        effectId: "effect-approval",
+        effectKind: "provider.resolve_approval",
+        status: "completed",
+        approvalId: "a1",
+        resolution: "allow",
+      }),
+    );
+    expect(accepted.events[0]?.type).toBe("approval.resolved");
+    expect(accepted.snapshot?.status).toBe("running");
+  });
+
+  test("approval.resolve rejects a stale approval identity", () => {
+    expect(() =>
+      decide(
+        snap({
+          status: "awaiting_approval",
+          pendingApprovalId: "approval-current",
+        }),
+        cmd("approval.resolve", {
+          approvalId: "approval-stale",
+          resolution: "allow",
+        }),
+      ),
+    ).toThrow("does not match pending approval");
+  });
+
+  test("provider approval resolution cannot bypass pending identity", () => {
+    const result = decide(
+      snap({
+        status: "awaiting_approval",
+        pendingApprovalId: "approval-current",
+      }),
+      cmd("provider.event", {
+        providerInstanceId: "provider-1",
+        normalizedEvent: {
+          eventId: "ev-provider-stale-approval",
+          type: "approval.resolved",
+          payload: {
+            approvalId: "approval-stale",
+            resolution: "allow",
+          },
+          correlationId: "corr-provider-stale-approval",
+        },
+      }),
+    );
+    expect(result.events).toHaveLength(0);
+    expect(result.snapshot).toBeNull();
   });
 
   test("provider.event preserves the adapter-normalised event", () => {
     const normalizedEvent = {
       eventId: "ev-provider-1" as never,
       type: "assistant.delta" as const,
+      turnId: "turn-provider" as never,
       payload: { text: "real provider output" },
       correlationId: "corr-provider-1" as never,
       causationId: "cause-provider-1" as never,
     };
     const result = decide(
-      snap({ status: "running" }),
+      snap({
+        status: "running",
+        activeTurnId: "turn-provider" as never,
+      }),
       cmd("provider.event", {
         providerInstanceId: "provider-1",
         normalizedEvent,
@@ -165,5 +262,249 @@ describe("decider", () => {
     const r = decide(snap(), cmd("workspace.result"));
     expect(r.events).toHaveLength(0);
     expect(r.effects).toHaveLength(0);
+  });
+
+  test("checkpoint restore emits success only after the reactor result", () => {
+    const requested = decide(
+      snap({ status: "running" }),
+      cmd("checkpoint.restore", { checkpointId: "checkpoint-1" }),
+    );
+    expect(requested.events).toHaveLength(0);
+    expect(requested.effects).toEqual([{
+      kind: "checkpoint.restore",
+      checkpointId: "checkpoint-1" as never,
+    }]);
+
+    const completed = decide(
+      snap({ status: "running" }),
+      cmd("checkpoint.result", {
+        checkpointId: "checkpoint-1",
+        commit: "abc123",
+        ref: "refs/relay/checkpoint-1",
+      }),
+    );
+    expect(completed.events).toEqual([
+      expect.objectContaining({
+        type: "checkpoint.restored",
+        payload: { checkpointId: "checkpoint-1", commit: "abc123" },
+      }),
+    ]);
+  });
+});
+
+describe("external command/state table", () => {
+  const commandCases: ReadonlyArray<{
+    type: ExternalCommandType;
+    payload: Record<string, unknown>;
+    allowed: ReadonlySet<RunStatus>;
+    needsActiveTurn?: boolean;
+  }> = [
+    {
+      type: "run.create",
+      payload: { projectId: "project-1" },
+      allowed: new Set(["created"]),
+    },
+    {
+      type: "run.resume",
+      payload: {},
+      allowed: new Set(["ready", "running"]),
+    },
+    {
+      type: "turn.send",
+      payload: { prompt: "hello", turnId: "turn-next" },
+      allowed: new Set(["running"]),
+    },
+    {
+      type: "turn.steer",
+      payload: { steering: "focus" },
+      allowed: new Set(["running"]),
+      needsActiveTurn: true,
+    },
+    {
+      type: "turn.interrupt",
+      payload: { reason: "user" },
+      allowed: new Set(["running", "awaiting_approval"]),
+      needsActiveTurn: true,
+    },
+    {
+      type: "approval.resolve",
+      payload: { approvalId: "approval-1", resolution: "allow" },
+      allowed: new Set(["awaiting_approval"]),
+    },
+    {
+      type: "run.stop",
+      payload: { reason: "user" },
+      allowed: new Set(["running", "awaiting_approval"]),
+    },
+    {
+      type: "checkpoint.restore",
+      payload: { checkpointId: "checkpoint-1" },
+      allowed: new Set(["ready", "running", "awaiting_approval"]),
+    },
+  ];
+
+  for (const commandCase of commandCases) {
+    for (const status of RUN_STATUSES) {
+      test(`${commandCase.type} ${status}`, () => {
+        const snapshot = snap({
+          status,
+          ...(commandCase.needsActiveTurn
+            ? { activeTurnId: "turn-active" as never }
+            : {}),
+          ...(commandCase.type === "approval.resolve" &&
+          status === "awaiting_approval"
+            ? { pendingApprovalId: "approval-1" }
+            : {}),
+        });
+        const execute = () =>
+          decide(snapshot, cmd(commandCase.type, commandCase.payload));
+
+        if (commandCase.allowed.has(status)) {
+          expect(execute).not.toThrow();
+        } else {
+          expect(execute).toThrow(CommandStateError);
+        }
+      });
+    }
+  }
+});
+
+describe("internal command/state table", () => {
+  const commandCases: ReadonlyArray<{
+    type: InternalCommandType;
+    payload: Record<string, unknown>;
+  }> = [
+    {
+      type: "provider.event",
+      payload: {
+        providerInstanceId: "provider-1",
+        normalizedEvent: {
+          eventId: "ev-internal-table",
+          type: "usage.recorded",
+          payload: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            thinkingTokens: 0,
+            modelId: "state-table",
+          },
+          correlationId: "corr-internal-table",
+        },
+      },
+    },
+    { type: "workspace.result", payload: { kind: "ready", result: {} } },
+    {
+      type: "checkpoint.result",
+      payload: { checkpointId: "checkpoint-1", commit: "abc", ref: "ref" },
+    },
+    {
+      type: "effect.result",
+      payload: {
+        effectId: "effect-1",
+        effectKind: "workspace.create",
+        status: "failed",
+        error: "failed",
+      },
+    },
+    { type: "projection.ack", payload: { cursor: 1 } },
+  ];
+
+  for (const commandCase of commandCases) {
+    for (const status of RUN_STATUSES) {
+      test(`${commandCase.type} ${status}`, () => {
+        const result = decide(
+          snap({ status }),
+          cmd(commandCase.type, commandCase.payload),
+        );
+        if (
+          commandCase.type === "provider.event" &&
+          (status === "stopped" || status === "completed" || status === "failed")
+        ) {
+          expect(result.events).toHaveLength(0);
+        } else {
+          expect(result).toBeDefined();
+        }
+      });
+    }
+  }
+
+  test("drops turn-scoped provider output after interruption", () => {
+    const active = snap({
+      status: "running",
+      activeTurnId: "turn-1" as never,
+    });
+    const interrupted = decide(
+      active,
+      cmd("turn.interrupt", { reason: "user" }),
+    ).snapshot!;
+    const late = decide(
+      interrupted,
+      cmd("provider.event", {
+        providerInstanceId: "provider-1",
+        normalizedEvent: {
+          eventId: "ev-late",
+          type: "assistant.delta",
+          turnId: "turn-1",
+          payload: { text: "late" },
+          correlationId: "corr-late",
+        },
+      }),
+    );
+    expect(late.events).toHaveLength(0);
+  });
+
+  test("drops every foreign turn-scoped provider event", () => {
+    const scoped = [
+      { type: "turn.started", payload: { prompt: "late" } },
+      { type: "turn.steered", payload: { steering: "late" } },
+      { type: "turn.completed", payload: {} },
+      { type: "turn.failed", payload: { error: "late" } },
+      { type: "turn.interrupted", payload: { reason: "late" } },
+      { type: "assistant.delta", payload: { text: "late" } },
+      { type: "assistant.completed", payload: {} },
+      {
+        type: "activity.started",
+        payload: { activityId: "activity-1", kind: "bash" },
+      },
+      {
+        type: "activity.delta",
+        payload: { activityId: "activity-1", content: "late" },
+      },
+      {
+        type: "activity.completed",
+        payload: { activityId: "activity-1" },
+      },
+      {
+        type: "activity.failed",
+        payload: { activityId: "activity-1", error: "late" },
+      },
+      {
+        type: "checkpoint.captured",
+        payload: {
+          checkpointId: "checkpoint-1",
+          commit: "abc",
+          ref: "refs/relay/checkpoint-1",
+        },
+      },
+    ] as const;
+    for (const [index, event] of scoped.entries()) {
+      const result = decide(
+        snap({
+          status: "running",
+          activeTurnId: "turn-current" as never,
+        }),
+        cmd("provider.event", {
+          providerInstanceId: "provider-1",
+          normalizedEvent: {
+            eventId: `ev-foreign-${index}`,
+            ...event,
+            turnId: "turn-foreign",
+            correlationId: `corr-foreign-${index}`,
+          },
+        }),
+      );
+      expect(result.events).toHaveLength(0);
+    }
   });
 });

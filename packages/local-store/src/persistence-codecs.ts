@@ -1,4 +1,5 @@
 import {
+  canonicalEventPayloadError,
   RUN_STATUSES,
   type CanonicalEventType,
   type CommandId,
@@ -15,34 +16,6 @@ const PERMISSION_PROFILES = new Set<PermissionProfile>([
   "workspace-write",
   "full-access",
 ]);
-const EVENT_TYPES = new Set<CanonicalEventType>([
-  "run.created",
-  "run.started",
-  "run.stopping",
-  "run.stopped",
-  "run.failed",
-  "provider.session.started",
-  "provider.session.resumed",
-  "provider.session.stopped",
-  "turn.started",
-  "turn.steered",
-  "turn.completed",
-  "turn.failed",
-  "turn.interrupted",
-  "assistant.delta",
-  "assistant.completed",
-  "activity.started",
-  "activity.delta",
-  "activity.completed",
-  "activity.failed",
-  "approval.requested",
-  "approval.resolved",
-  "usage.recorded",
-  "checkpoint.captured",
-  "checkpoint.restored",
-  "projection.published",
-]);
-
 type PersistedRecord<TKind extends string, TData> = {
   readonly schemaVersion: 1;
   readonly kind: TKind;
@@ -178,6 +151,10 @@ function validateSnapshot(value: unknown): RunSnapshot {
   assertFiniteNumber(value.updatedAt, "run snapshot updatedAt");
   assertOptionalString(value.projectId, "run snapshot projectId");
   assertOptionalString(value.activeTurnId, "run snapshot activeTurnId");
+  assertOptionalString(
+    value.pendingApprovalId,
+    "run snapshot pendingApprovalId",
+  );
   assertOptionalString(value.providerInstanceId, "run snapshot providerInstanceId");
   if (
     value.permissionProfile !== undefined &&
@@ -200,58 +177,8 @@ function assertCanonicalEventPayload(
   eventType: CanonicalEventType,
   value: unknown,
 ): void {
-  if (!EVENT_TYPES.has(eventType)) {
-    throw new PersistedRecordError(`Unknown canonical event type: ${eventType}`);
-  }
-  if (!isRecord(value)) {
-    throw new PersistedRecordError(`Payload for ${eventType} must be an object`);
-  }
-
-  const requiredStrings: Partial<Record<CanonicalEventType, readonly string[]>> = {
-    "run.failed": ["error"],
-    "provider.session.started": ["providerInstanceId"],
-    "provider.session.resumed": ["providerInstanceId", "providerThreadId"],
-    "provider.session.stopped": ["providerInstanceId", "reason"],
-    "turn.started": ["prompt"],
-    "turn.steered": ["steering"],
-    "turn.failed": ["error"],
-    "turn.interrupted": ["reason"],
-    "assistant.delta": ["text"],
-    "activity.started": ["activityId", "kind"],
-    "activity.delta": ["activityId", "content"],
-    "activity.completed": ["activityId"],
-    "activity.failed": ["activityId", "error"],
-    "approval.requested": ["approvalId", "capability", "risk", "details"],
-    "approval.resolved": ["approvalId", "resolution"],
-    "checkpoint.captured": ["checkpointId", "commit", "ref"],
-    "checkpoint.restored": ["checkpointId", "commit"],
-  };
-  for (const field of requiredStrings[eventType] ?? []) {
-    assertNonEmptyString(value[field], `${eventType}.${field}`);
-  }
-
-  if (eventType === "run.created") {
-    assertNonEmptyString(value.environmentId, "run.created.environmentId");
-    assertNonEmptyString(value.projectId, "run.created.projectId");
-  }
-  if (eventType === "run.stopping") {
-    assertNonEmptyString(value.reason, "run.stopping.reason");
-  }
-  if (eventType === "usage.recorded") {
-    for (const field of [
-      "inputTokens",
-      "outputTokens",
-      "cacheReadTokens",
-      "cacheWriteTokens",
-      "thinkingTokens",
-    ] as const) {
-      assertFiniteNumber(value[field], `usage.recorded.${field}`);
-    }
-    assertNonEmptyString(value.modelId, "usage.recorded.modelId");
-  }
-  if (eventType === "projection.published") {
-    assertFiniteNumber(value.cursor, "projection.published.cursor");
-  }
+  const message = canonicalEventPayloadError(eventType, value);
+  if (message) throw new PersistedRecordError(message);
 }
 
 function validateOptionalWorkspace(value: unknown): void {

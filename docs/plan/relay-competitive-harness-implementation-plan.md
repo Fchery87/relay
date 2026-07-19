@@ -46,8 +46,8 @@ Completed:
   SQLite transaction, and gave provider results stable semantic identities so
   partial batches recover without positional command-ID collisions;
 - enforced durable effect insertion order, fail-closed expiry for non-retryable
-  effects, terminal failure commands after retry exhaustion, exactly one final
-  terminal provider result, one active turn per run, and durable per-run
+  effects, terminal failure commands after retry exhaustion, turn-scoped
+  provider result validation, one active turn per run, and durable per-run
   turn-ID uniqueness;
 - serialized overlapping drain requests as successor passes without losing
   effects queued during promise settlement;
@@ -60,12 +60,82 @@ Completed:
 
 Next batch:
 
-- add bounded concurrent reactor scheduling while preserving per-run FIFO;
-- add retry timing/backoff and richer diagnostics for exhausted effects;
-- convert invalid persisted-record failures into a durable affected-run
-  diagnostic and stop transition;
-- complete the reducer command/state table and randomized crash/replay tests;
 - wire the first real Codex provider reactor through the daemon composition.
+
+### 2026-07-18 — Increment 1, batch 3
+
+Completed:
+
+- bounded durable reactor execution by the configured global active-run limit
+  while claiming only one FIFO head per run;
+- proved that twenty independent provider effects execute with no more than four
+  active reactors and that seeded, shuffled cross-run commands retain exact
+  per-run submission order;
+- persisted retry eligibility, failure category, last error, and terminal
+  failure time for every durable effect;
+- added deterministic exponential retry backoff with a cap and stable jitter,
+  explicit rate-limit delays, terminal and approval-required classification,
+  an injectable clock for sleep-free recovery tests, and a due-time scheduler
+  that rearms delayed retries without a polling loop;
+- emitted bounded, contextual terminal failure results after retry exhaustion
+  instead of exposing an unclassified provider exception;
+- added an idempotent corruption quarantine transaction that records one
+  durable affected-run diagnostic, emits a canonical `run.failed` event for a
+  live run, repairs its snapshot to a safe terminal state, and survives reopen;
+- applied corruption quarantine consistently when snapshot, event, command
+  receipt, or command-processing reads encounter an invalid persisted record;
+- made external and internal command/run-state policies explicit and
+  table-tested across every command and every run status;
+- attached steer events to the active turn and rejected steer commands without
+  one;
+- persisted provider steer, interrupt, approval-resolution, session-stop, and
+  checkpoint-restore effects; interrupt and terminal transitions now
+  atomically fence superseded live effects before cleanup work is claimed;
+- ignored stale provider output for an inactive turn and every provider event
+  received after a run reaches a terminal state;
+- introduced strict canonical `replayRun()` validation for run identity,
+  sequence continuity, and stream-version continuity, plus genesis replay that
+  reconstructs creation metadata without consulting a persisted snapshot;
+- proved that persisted canonical history reconstructs the exact durable
+  snapshot after close/reopen and that retries wake without an external polling
+  drain.
+- treated successful provider-send execution as durable adapter acceptance so
+  queued live steering can execute while terminal turn notifications continue
+  to arrive independently;
+- required every turn-scoped provider event to carry an exact active `turnId`
+  at both the runtime schema boundary and the decider, using one shared scope
+  policy that includes turn genesis and checkpoint capture;
+- validated canonical event membership plus required and optional payload and
+  envelope fields before scheduling, so malformed live input is rejected
+  without being misclassified as persisted-store corruption;
+- delayed `checkpoint.restored` until the checkpoint reactor returns the real
+  commit instead of emitting speculative success with an empty commit;
+- archived a corrupt event and its untrusted suffix, preserved the validated
+  prefix, and replaced the suffix with one replayable canonical failure so
+  subsequent reads no longer remain permanently poisoned;
+- made retry recovery consider both pending due times and running lease expiry,
+  and made runtime shutdown fence admission, abort active reactors, and await
+  their settlement before closing SQLite.
+- routed successful effects back through fenced internal result commands,
+  correlated checkpoint and workspace results with their intents, and kept
+  approval gates pending until provider resolution is durably accepted;
+- persisted the pending approval identity, rejected stale external and provider
+  resolutions, and cleared abandoned gates when their turn terminates;
+- carried Relay turn identity through the real Codex and catalog-provider
+  daemon paths, serialized Codex notification appends, preserved and fenced on
+  native Codex thread/turn identity to reject late cross-run notifications, and
+  waited for a durable terminal notification instead of treating `turn/start`
+  acceptance as completion.
+
+Next batch:
+
+- complete the shared `HarnessRuntime` conformance suite so the deterministic
+  fake and local durable runtime execute identical lifecycle cases;
+- wire the first real Codex provider reactor through the daemon composition,
+  including schema generation and supervised app-server transport;
+- extend deterministic reliability coverage from transaction rollback and
+  close/reopen replay to the full lifecycle kill-point matrix tracked by
+  Ticket 14.
 
 ## Authority and relationship to existing plans
 

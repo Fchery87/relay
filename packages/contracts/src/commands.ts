@@ -123,6 +123,7 @@ export type InternalCommand =
   | CheckpointResultCommand
   | EffectResultCommand
   | ProjectionAckCommand;
+export type InternalCommandType = InternalCommand["type"];
 
 export type ProviderEventPayload = {
   readonly providerInstanceId: ProviderInstanceId;
@@ -156,13 +157,23 @@ export type CheckpointResultCommand = CommandEnvelope<
   CheckpointResultPayload
 >;
 
-export type EffectResultPayload = {
-  readonly effectId: EffectId;
-  readonly effectKind: string;
-  readonly status: "failed";
-  readonly error: string;
-  readonly turnId?: TurnId;
-};
+export type EffectResultPayload =
+  | {
+      readonly effectId: EffectId;
+      readonly effectKind: string;
+      readonly status: "completed";
+      readonly turnId?: TurnId;
+      readonly approvalId?: string;
+      readonly resolution?: "allow" | "deny";
+    }
+  | {
+      readonly effectId: EffectId;
+      readonly effectKind: string;
+      readonly status: "failed";
+      readonly error: string;
+      readonly turnId?: TurnId;
+      readonly approvalId?: string;
+    };
 
 export type EffectResultCommand = CommandEnvelope<
   "effect.result",

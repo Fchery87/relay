@@ -38,6 +38,8 @@ export type RunSnapshot = {
   readonly streamVersion: number;
   /** The turn currently active, if any. */
   readonly activeTurnId?: TurnId;
+  /** The approval request currently allowed to unblock this run. */
+  readonly pendingApprovalId?: string;
   /** The provider currently serving this run, if one has been selected. */
   readonly providerInstanceId?: ProviderInstanceId;
   readonly permissionProfile?: PermissionProfile;
@@ -109,6 +111,9 @@ export function reduceRun(
       return {
         status: "ready",
         projectId: event.payload.projectId,
+        permissionProfile:
+          event.payload.permissionProfile ?? snapshot.permissionProfile,
+        createdAt: now,
         updatedAt: now,
         ...(event.payload.providerInstanceId === undefined
           ? {}
@@ -132,13 +137,23 @@ export function reduceRun(
     case "run.stopped": {
       if (current === "stopped") return null;
       assertTransition(current, "stopped");
-      return { status: "stopped", activeTurnId: undefined, updatedAt: now };
+      return {
+        status: "stopped",
+        activeTurnId: undefined,
+        pendingApprovalId: undefined,
+        updatedAt: now,
+      };
     }
 
     case "run.failed": {
       if (current === "failed") return null;
       assertTransition(current, "failed");
-      return { status: "failed", activeTurnId: undefined, updatedAt: now };
+      return {
+        status: "failed",
+        activeTurnId: undefined,
+        pendingApprovalId: undefined,
+        updatedAt: now,
+      };
     }
 
     // --- turn events may gate status transitions ---
@@ -157,7 +172,14 @@ export function reduceRun(
     case "turn.failed":
     case "turn.interrupted": {
       if (event.turnId && event.turnId !== snapshot.activeTurnId) return null;
-      return { activeTurnId: undefined, updatedAt: now };
+      return {
+        activeTurnId: undefined,
+        pendingApprovalId: undefined,
+        ...(current === "awaiting_approval"
+          ? { status: "running" as const }
+          : {}),
+        updatedAt: now,
+      };
     }
 
     // --- provider session events ---
@@ -193,14 +215,22 @@ export function reduceRun(
     case "approval.requested": {
       if (current === "awaiting_approval") return null;
       assertTransition(current, "awaiting_approval");
-      return { status: "awaiting_approval", updatedAt: now };
+      return {
+        status: "awaiting_approval",
+        pendingApprovalId: event.payload.approvalId,
+        updatedAt: now,
+      };
     }
 
     case "approval.resolved": {
       // Approval resolution transitions back to running.
       if (current === "running") return null;
       assertTransition(current, "running");
-      return { status: "running", updatedAt: now };
+      return {
+        status: "running",
+        pendingApprovalId: undefined,
+        updatedAt: now,
+      };
     }
 
     // --- usage, checkpoint, projection events ---
@@ -268,11 +298,83 @@ export function applySnapshot(
   update: Partial<RunSnapshot> | null,
 ): RunSnapshot {
   if (!update) return snapshot;
-  return {
+  const next = {
     ...snapshot,
     ...update,
     sequence: update.sequence ?? snapshot.sequence,
     streamVersion: update.streamVersion ?? snapshot.streamVersion,
     updatedAt: update.updatedAt ?? snapshot.updatedAt,
   };
+  for (const key of Object.keys(next) as Array<keyof RunSnapshot>) {
+    if (next[key] === undefined) {
+      delete (next as Partial<RunSnapshot>)[key];
+    }
+  }
+  return next;
+}
+
+/**
+ * Rebuild a snapshot from a contiguous canonical event stream.
+ *
+ * Replay is intentionally strict: accepting a gap, duplicate, cross-run event,
+ * or mismatched stream version would produce a believable but false state.
+ */
+export function replayRun(
+  initialSnapshot: RunSnapshot,
+  events: ReadonlyArray<CanonicalEvent>,
+): RunSnapshot {
+  let current = initialSnapshot;
+  for (const event of events) {
+    const expectedSequence = current.sequence + 1;
+    const expectedStreamVersion = current.streamVersion + 1;
+    if (event.runId !== current.runId) {
+      throw new Error(
+        `Cannot replay event for run ${event.runId} into ${current.runId}`,
+      );
+    }
+    if (event.sequence !== expectedSequence) {
+      throw new Error(
+        `Cannot replay run ${current.runId}: expected sequence ${expectedSequence}, received ${event.sequence}`,
+      );
+    }
+    if (event.streamVersion !== expectedStreamVersion) {
+      throw new Error(
+        `Cannot replay run ${current.runId}: expected stream version ${expectedStreamVersion}, received ${event.streamVersion}`,
+      );
+    }
+    current = applySnapshot(current, {
+      ...(reduceRun(current, event) ?? {}),
+      sequence: event.sequence,
+      streamVersion: event.streamVersion,
+      updatedAt: event.occurredAt,
+    });
+  }
+  return current;
+}
+
+/** Rebuild a run from canonical history without consulting a persisted snapshot. */
+export function replayRunFromEvents(
+  events: ReadonlyArray<CanonicalEvent>,
+): RunSnapshot {
+  const first = events[0];
+  if (!first || first.type !== "run.created") {
+    throw new Error("Canonical run history must begin with run.created");
+  }
+  if (first.sequence !== 1 || first.streamVersion !== 1) {
+    throw new Error(
+      "Canonical run history must begin at sequence and stream version 1",
+    );
+  }
+  return replayRun(
+    {
+      runId: first.runId,
+      status: "created",
+      sequence: 0,
+      streamVersion: 0,
+      restartCount: 0,
+      createdAt: first.occurredAt,
+      updatedAt: first.occurredAt,
+    },
+    events,
+  );
 }

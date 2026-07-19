@@ -21,6 +21,7 @@
       },
       "dependencies": {
         "@relay/codex-app-server": "workspace:*",
+        "@relay/contracts": "workspace:*",
         "@relay/harness-runtime": "workspace:*",
         "@relay/local-store": "workspace:*",
         "@relay/shared": "workspace:*",
