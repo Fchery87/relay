@@ -1,5 +1,17 @@
-import type { RunSnapshot, EventEnvelope, CanonicalEventType } from "@relay/contracts";
-import { openMemoryStore, openStore, getSnapshot, getEventsAfter, insertSnapshot, appendEvents } from "@relay/local-store";
+import type {
+  CanonicalEventDraft,
+  RunSnapshot,
+  EventEnvelope,
+  CanonicalEventType,
+} from "@relay/contracts";
+import {
+  openMemoryStore,
+  openStore,
+  getSnapshot,
+  getEventsAfter,
+  getEventCommitVersion,
+  waitForEventCommit,
+} from "@relay/local-store";
 import type { StoreDatabase } from "@relay/local-store";
 import { OrchestrationEngine } from "@relay/orchestration";
 import {
@@ -20,6 +32,7 @@ import {
 
 export class LocalHarnessRuntime implements HarnessRuntime {
   private readonly engine: OrchestrationEngine;
+  private readonly closeController = new AbortController();
 
   constructor(
     private readonly db: StoreDatabase,
@@ -43,27 +56,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   // -- HarnessRuntime impl ---------------------------------------------------
 
   async createRun(input: CreateRunInput): Promise<RunSnapshot> {
-    const snapshot = this.engine.createRunSnapshot(input.projectId);
-
-    const result = appendEvents(this.db, {
-      runId: snapshot.runId as string,
-      commandId: `cmd-create-${snapshot.runId}`,
-      events: [
-        {
-          eventId: `ev-create-${snapshot.runId}`,
-          type: "run.created",
-          payload: { environmentId: "local", projectId: input.projectId },
-          correlationId: `corr-create-${snapshot.runId}`,
-        },
-      ],
-    });
-
-    if (!result.ok) throw new Error(`createRun failed: ${result.reason}`);
-
-    // Move to ready
-    updateStatus(this.db, snapshot.runId as string, "ready");
-    const ready = getSnapshot(this.db, snapshot.runId as string);
-    return ready ?? result.snapshot;
+    return this.engine.createRun(input);
   }
 
   async resumeRun(input: ResumeRunInput): Promise<RunSnapshot> {
@@ -81,8 +74,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   async sendTurn(input: SendTurnInput): Promise<TurnReceipt> {
     const commandId = `cmd-send-${crypto.randomUUID()}`;
 
-    // Simulate provider producing assistant output
-    const snap = await this.engine.submit({
+    await this.engine.submit({
       commandId: commandId as never,
       type: "turn.send",
       runId: input.runId,
@@ -90,32 +82,6 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       actor: { kind: "user", id: "user" },
       issuedAt: Date.now(),
       payload: { prompt: input.prompt },
-    });
-
-    // Emit assistant response events
-    appendEvents(this.db, {
-      runId: input.runId as string,
-      commandId: `cmd-assistant-${commandId}`,
-      events: [
-        {
-          eventId: `ev-delta-${commandId}`,
-          type: "assistant.delta",
-          payload: { text: "Harness reply to: " + input.prompt.substring(0, 50) },
-          correlationId: `corr-send`,
-        },
-        {
-          eventId: `ev-comp-${commandId}`,
-          type: "assistant.completed",
-          payload: {},
-          correlationId: `corr-send`,
-        },
-        {
-          eventId: `ev-turn-done-${commandId}`,
-          type: "turn.completed",
-          payload: {},
-          correlationId: `corr-send`,
-        },
-      ],
     });
 
     return { turnId: `turn-${commandId}` as never, commandId: commandId as never };
@@ -176,35 +142,79 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   }
 
   async *observe(input: ObserveInput): AsyncIterable<EventEnvelope<CanonicalEventType, unknown>> {
-    const after = input.afterSequence ?? -1;
-    const events = getEventsAfter(this.db, input.runId as string, after);
-    for (const ev of events) {
-      yield ev;
+    const runId = input.runId;
+    let cursor = input.afterSequence ?? -1;
+    let notificationVersion = getEventCommitVersion(this.db, runId);
+    const combined = combineAbortSignals(input.signal, this.closeController.signal);
+
+    try {
+      while (!combined.signal.aborted) {
+        const events = getEventsAfter(this.db, runId, cursor);
+        for (const event of events) {
+          if (combined.signal.aborted) return;
+          cursor = event.sequence;
+          yield event;
+        }
+
+        const snapshot = getSnapshot(this.db, runId);
+        if (!snapshot) throw new Error(`Run not found: ${runId}`);
+        if (isTerminal(snapshot.status)) return;
+
+        const latestVersion = getEventCommitVersion(this.db, runId);
+        if (latestVersion !== notificationVersion) {
+          notificationVersion = latestVersion;
+          continue;
+        }
+
+        notificationVersion = await waitForEventCommit(
+          this.db,
+          runId,
+          notificationVersion,
+          combined.signal,
+        );
+      }
+    } finally {
+      combined.dispose();
     }
   }
 
   /** Close the underlying database connection (if file-backed). */
   close(): void {
+    if (this.closeController.signal.aborted) return;
+    this.closeController.abort();
     this.db.close();
   }
 
   // -- Extended methods (not in HarnessRuntime, used by kernel daemon) -----
 
   async appendEvent(runId: string, input: AppendEventInput): Promise<AppendEventResult> {
-    const result = appendEvents(this.db, {
-      runId,
-      commandId: `cmd-event-${input.eventId}`,
-      events: [
-        {
-          eventId: input.eventId,
-          type: input.type,
-          payload: input.payload,
-          correlationId: input.correlationId ?? `corr-${input.eventId}`,
+    const commandId = `cmd-event-${input.eventId}` as never;
+    const correlationId = (input.correlationId ?? `corr-${input.eventId}`) as never;
+
+    try {
+      const snapshot = await this.engine.submit({
+        commandId,
+        type: "provider.event",
+        runId: runId as never,
+        correlationId,
+        actor: { kind: "provider", id: "local-provider" },
+        issuedAt: Date.now(),
+        payload: {
+          providerInstanceId: "provider-local" as never,
+          normalizedEvent: toCanonicalEventDraft(
+            input,
+            correlationId,
+            commandId,
+          ),
         },
-      ],
-    });
-    if (!result.ok) return { ok: false, reason: result.reason };
-    return { ok: true, sequence: result.snapshot.sequence };
+      });
+      return { ok: true, sequence: snapshot.sequence };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   listRuns(): ReadonlyArray<{ runId: string; status: string }> {
@@ -219,10 +229,46 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   }
 }
 
-function updateStatus(db: StoreDatabase, runId: string, status: string): void {
-  db.run("UPDATE run_snapshots SET status = ?, updated_at = ? WHERE run_id = ?", [
-    status,
-    Date.now(),
-    runId,
-  ]);
+function toCanonicalEventDraft(
+  input: AppendEventInput,
+  correlationId: CanonicalEventDraft["correlationId"],
+  causationId: NonNullable<CanonicalEventDraft["causationId"]>,
+): CanonicalEventDraft {
+  return {
+    ...input,
+    eventId: input.eventId as never,
+    correlationId,
+    causationId,
+  } as CanonicalEventDraft;
+}
+
+function isTerminal(status: RunSnapshot["status"]): boolean {
+  return status === "stopped" || status === "completed" || status === "failed";
+}
+
+function combineAbortSignals(
+  ...signals: ReadonlyArray<AbortSignal | undefined>
+): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const activeSignals = signals.filter(
+    (signal): signal is AbortSignal => signal !== undefined,
+  );
+  const abort = () => controller.abort();
+
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      for (const signal of activeSignals) {
+        signal.removeEventListener("abort", abort);
+      }
+    },
+  };
 }

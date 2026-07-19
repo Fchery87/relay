@@ -1,8 +1,12 @@
-import type { RunSnapshot } from "@relay/contracts";
+import type { CreateRunCommand, RunSnapshot } from "@relay/contracts";
 import type { Command, ExternalCommand, InternalCommand } from "@relay/contracts";
 import type { StoreDatabase } from "@relay/local-store";
-import { appendEvents, getSnapshot, insertSnapshot, updateSnapshotStatus } from "@relay/local-store";
-import { decide, type DeciderResult, type EffectIntent } from "./decider";
+import {
+  appendEvents,
+  getCommandReceiptSnapshot,
+  getSnapshot,
+} from "@relay/local-store";
+import { decide, type EffectIntent } from "./decider";
 
 // ---------------------------------------------------------------------------
 // Engine configuration
@@ -18,14 +22,19 @@ export type EngineConfig = {
 // ---------------------------------------------------------------------------
 
 export class OrchestrationEngine {
-  private activeRuns = new Set<string>();
-  private runQueues = new Map<string, Array<() => void>>();
-  private processing = new Map<string, boolean>();
+  private readonly activeRuns = new Set<string>();
+  private readonly queuedRuns = new Set<string>();
+  private readonly readyRuns: string[] = [];
+  private readonly runQueues = new Map<string, ScheduledTask[]>();
 
   constructor(
     private readonly db: StoreDatabase,
     private readonly config: EngineConfig,
-  ) {}
+  ) {
+    if (!Number.isInteger(config.maxConcurrentRuns) || config.maxConcurrentRuns < 1) {
+      throw new Error("maxConcurrentRuns must be a positive integer");
+    }
+  }
 
   /**
    * Submit an external or internal command. Returns the resulting snapshot
@@ -33,48 +42,17 @@ export class OrchestrationEngine {
    */
   async submit(command: ExternalCommand | InternalCommand): Promise<RunSnapshot> {
     const runId = command.runId as string;
-
-    // Queue up if this run is already processing
-    if (this.processing.get(runId)) {
-      return new Promise<RunSnapshot>((resolve) => {
-        const queue = this.runQueues.get(runId) ?? [];
-        queue.push(() => {
-          resolve(this.processCommand(command));
-        });
-        this.runQueues.set(runId, queue);
-      });
-    }
-
-    // Wait for concurrency slot if at limit and this is a new run
-    if (!this.activeRuns.has(runId) && this.activeRuns.size >= this.config.maxConcurrentRuns) {
-      // For simplicity, allow the command but the run won't proceed concurrently.
-      // A real implementation would queue at the engine level.
-    }
-
-    this.processing.set(runId, true);
-    this.activeRuns.add(runId);
-
-    try {
-      return await this.processCommand(command);
-    } finally {
-      this.processing.set(runId, false);
-      // Drain queued commands for this run
-      const queue = this.runQueues.get(runId);
-      if (queue && queue.length > 0) {
-        const next = queue.shift();
-        this.runQueues.set(runId, queue);
-        if (next) next();
-      } else {
-        this.activeRuns.delete(runId);
-      }
-    }
+    return this.schedule(runId, () => this.processCommand(command));
   }
 
   // -- creation helpers -------------------------------------------------------
 
-  createRunSnapshot(projectId: string): RunSnapshot {
+  async createRun(input: {
+    readonly projectId: string;
+    readonly permissionProfile?: "read-only" | "workspace-write" | "full-access";
+  }): Promise<RunSnapshot> {
     const runId = `run-${crypto.randomUUID()}` as never;
-    const snapshot: RunSnapshot = {
+    const initialSnapshot: RunSnapshot = {
       runId,
       status: "created",
       sequence: 0,
@@ -83,16 +61,61 @@ export class OrchestrationEngine {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    insertSnapshot(this.db, snapshot);
-    return snapshot;
+    const command: CreateRunCommand = {
+      commandId: `cmd-create-${runId}` as never,
+      type: "run.create",
+      runId,
+      correlationId: `corr-create-${runId}` as never,
+      actor: { kind: "system", id: "harness" },
+      issuedAt: Date.now(),
+      payload: {
+        projectId: input.projectId,
+        permissionProfile: input.permissionProfile,
+      },
+    };
+    return this.schedule(runId, () =>
+      this.processCreateCommand(initialSnapshot, command),
+    );
   }
 
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
 
+  private async processCreateCommand(
+    initialSnapshot: RunSnapshot,
+    command: CreateRunCommand,
+  ): Promise<RunSnapshot> {
+    const result = decide(initialSnapshot, command);
+    const appendResult = appendEvents(this.db, {
+      runId: command.runId,
+      commandId: command.commandId,
+      expectedStreamVersion: initialSnapshot.streamVersion,
+      initialSnapshot,
+      nextSnapshot: result.snapshot ?? initialSnapshot,
+      events: result.events,
+    });
+
+    if (!appendResult.ok) {
+      if (appendResult.reason === "duplicate_command") {
+        return appendResult.duplicateSnapshot ?? initialSnapshot;
+      }
+      throw new Error(`Create run failed: ${appendResult.reason}`);
+    }
+
+    return appendResult.snapshot;
+  }
+
   private async processCommand(command: Command): Promise<RunSnapshot> {
     const runId = command.runId as string;
+
+    // Redelivery must return its immutable result before state validation.
+    const completed = getCommandReceiptSnapshot(
+      this.db,
+      command.commandId,
+      command.runId,
+    );
+    if (completed) return completed;
 
     // Load current snapshot
     const snapshot = getSnapshot(this.db, runId);
@@ -109,16 +132,12 @@ export class OrchestrationEngine {
 
     // Persist atomically
     const appendResult = appendEvents(this.db, {
-      runId,
-      commandId: command.commandId as string,
-      expectedStreamVersion: command.expectedStreamVersion,
-      events: result.events.map((ev) => ({
-        eventId: ev.eventId,
-        type: ev.type,
-        payload: ev.payload,
-        correlationId: ev.correlationId,
-        causationId: ev.causationId,
-      })),
+      runId: command.runId,
+      commandId: command.commandId,
+      expectedStreamVersion:
+        command.expectedStreamVersion ?? snapshot.streamVersion,
+      nextSnapshot: result.snapshot ?? snapshot,
+      events: result.events,
     });
 
     if (!appendResult.ok) {
@@ -128,17 +147,70 @@ export class OrchestrationEngine {
       throw new Error(`Append failed: ${appendResult.reason}`);
     }
 
-    // Apply status transitions
-    if (result.snapshot) {
-      updateSnapshotStatus(this.db, runId, result.snapshot.status);
-    }
-
     // Dispatch effects (for now, synchronous — reactors will be async in a real impl)
     for (const effect of result.effects) {
       this.dispatchEffect(runId, effect);
     }
 
     return appendResult.snapshot;
+  }
+
+  private schedule(
+    runId: string,
+    execute: () => Promise<RunSnapshot>,
+  ): Promise<RunSnapshot> {
+    return new Promise<RunSnapshot>((resolve, reject) => {
+      const queue = this.runQueues.get(runId) ?? [];
+      queue.push({ execute, resolve, reject });
+      this.runQueues.set(runId, queue);
+
+      if (!this.activeRuns.has(runId) && !this.queuedRuns.has(runId)) {
+        this.queuedRuns.add(runId);
+        this.readyRuns.push(runId);
+      }
+      this.pump();
+    });
+  }
+
+  private pump(): void {
+    while (
+      this.activeRuns.size < this.config.maxConcurrentRuns &&
+      this.readyRuns.length > 0
+    ) {
+      const runId = this.readyRuns.shift();
+      if (!runId) continue;
+      this.queuedRuns.delete(runId);
+      const queue = this.runQueues.get(runId);
+      const task = queue?.shift();
+      if (!queue || !task) {
+        this.runQueues.delete(runId);
+        continue;
+      }
+
+      this.activeRuns.add(runId);
+      void this.runScheduledTask(runId, task);
+    }
+  }
+
+  private async runScheduledTask(
+    runId: string,
+    task: ScheduledTask,
+  ): Promise<void> {
+    try {
+      task.resolve(await task.execute());
+    } catch (error) {
+      task.reject(error);
+    } finally {
+      this.activeRuns.delete(runId);
+      const queue = this.runQueues.get(runId);
+      if (queue && queue.length > 0) {
+        this.queuedRuns.add(runId);
+        this.readyRuns.push(runId);
+      } else {
+        this.runQueues.delete(runId);
+      }
+      queueMicrotask(() => this.pump());
+    }
   }
 
   private dispatchEffect(runId: string, effect: EffectIntent): void {
@@ -154,3 +226,9 @@ export class OrchestrationEngine {
     }
   }
 }
+
+type ScheduledTask = {
+  readonly execute: () => Promise<RunSnapshot>;
+  readonly resolve: (snapshot: RunSnapshot) => void;
+  readonly reject: (error: unknown) => void;
+};

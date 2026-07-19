@@ -13,7 +13,11 @@ import { join } from "node:path";
 
 import { isDeviceTokenRejected } from "./device-auth";
 import { createCodexSessionAdapter, type CodexSessionAdapter, type CodexTransportConfig, type NormalizedEvent } from "@relay/codex-app-server";
-import { LocalHarnessRuntime } from "@relay/harness-runtime";
+import {
+  LocalHarnessRuntime,
+  type AppendEventInput,
+  type AppendEventResult,
+} from "@relay/harness-runtime";
 import { DEFAULT_MODEL_ID, type Capability } from "@relay/shared";
 import {
   createConvexCommandSource,
@@ -109,9 +113,8 @@ async function executeTurnViaCodex({
     // Normalize & append each canonical event from the Codex session
     const result = await runtime.appendEvent(runId, {
       eventId: `ev-codex-${runId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      type: ev.type,
-      payload: ev.payload,
-    });
+      ...ev,
+    } as AppendEventInput);
     if (!result.ok) {
       console.error("Kernel daemon: failed to append Codex event", result.reason);
     }
@@ -149,11 +152,19 @@ async function executeTurnViaCodex({
 
   unsub();
 
-  await runtime.appendEvent(runId, {
-    eventId: `ev-codex-completed-${runId}-${Date.now()}`,
-    type: succeeded ? "turn.completed" : "turn.failed",
-    payload: {},
-  });
+  if (succeeded) {
+    await runtime.appendEvent(runId, {
+      eventId: `ev-codex-completed-${runId}-${Date.now()}`,
+      type: "turn.completed",
+      payload: {},
+    });
+  } else {
+    await runtime.appendEvent(runId, {
+      eventId: `ev-codex-failed-terminal-${runId}-${Date.now()}`,
+      type: "turn.failed",
+      payload: { error: "Codex turn failed" },
+    });
+  }
 
   return succeeded;
 }
@@ -203,7 +214,11 @@ async function executeTurn({
         const result = await runtime.appendEvent(runId, {
           eventId: `ev-usage-${runId}-${Date.now()}`,
           type: "usage.recorded",
-          payload: streamEvent.usage as unknown as Record<string, unknown>,
+          payload: {
+            ...streamEvent.usage,
+            thinkingTokens: streamEvent.usage.thinkingTokens ?? 0,
+            modelId: DEFAULT_MODEL_ID,
+          },
         });
         if (!result.ok) {
           console.error("Kernel daemon: failed to append usage.recorded", result.reason);
@@ -222,13 +237,37 @@ async function executeTurn({
     console.error("Kernel daemon: turn failed", message);
   }
 
-  await runtime.appendEvent(runId, {
-    eventId: `ev-completed-${runId}-${Date.now()}`,
-    type: turnSucceeded ? "turn.completed" : "turn.failed",
-    payload: {},
-  });
+  if (turnSucceeded) {
+    await runtime.appendEvent(runId, {
+      eventId: `ev-completed-${runId}-${Date.now()}`,
+      type: "turn.completed",
+      payload: {},
+    });
+  } else {
+    await runtime.appendEvent(runId, {
+      eventId: `ev-failed-terminal-${runId}-${Date.now()}`,
+      type: "turn.failed",
+      payload: { error: "Provider turn failed" },
+    });
+  }
 
   return turnSucceeded;
+}
+
+/**
+ * Temporary boundary for legacy adapter results that have not yet moved to
+ * the versioned canonical-event schemas scheduled in Increment 1 batch 2.
+ */
+function appendAdapterEvent(
+  runtime: LocalHarnessRuntime,
+  runId: string,
+  input: {
+    readonly eventId: string;
+    readonly type: AppendEventInput["type"];
+    readonly payload: Record<string, unknown>;
+  },
+): Promise<AppendEventResult> {
+  return runtime.appendEvent(runId, input as AppendEventInput);
 }
 
 // ---------------------------------------------------------------------------
@@ -531,7 +570,7 @@ export class KernelDaemon {
             runId ?? `ckpt-${commandId}`,
           );
           for (const ev of ckptEvents) {
-            await this.runtime.appendEvent(runId ?? `ckpt-${commandId}`, {
+            await appendAdapterEvent(this.runtime, runId ?? `ckpt-${commandId}`, {
               eventId: ev.eventId,
               type: ev.type as "checkpoint.restored" | "activity.completed",
               payload: ev.payload,
@@ -557,7 +596,7 @@ export class KernelDaemon {
             runId ?? `cmp-${commandId}`,
           );
           for (const ev of cmpEvents) {
-            await this.runtime.appendEvent(runId ?? `cmp-${commandId}`, {
+            await appendAdapterEvent(this.runtime, runId ?? `cmp-${commandId}`, {
               eventId: ev.eventId,
               type: "activity.completed" as const,
               payload: ev.payload,
@@ -597,7 +636,7 @@ export class KernelDaemon {
               | "activity.failed"
               | "usage.recorded"
               | "checkpoint.captured";
-            await this.runtime.appendEvent(runId ?? `sub-${commandId}`, {
+            await appendAdapterEvent(this.runtime, runId ?? `sub-${commandId}`, {
               eventId: ev.eventId,
               type: eventType,
               payload: ev.payload,

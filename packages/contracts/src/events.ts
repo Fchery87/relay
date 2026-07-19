@@ -76,6 +76,20 @@ export type CanonicalEvent =
 
 export type CanonicalEventType = CanonicalEvent["type"];
 
+/**
+ * A canonical event before storage assigns its per-run ordering metadata.
+ * Provider adapters emit this shape after normalising provider-native data.
+ */
+export type CanonicalEventDraft =
+  CanonicalEvent extends infer TEvent
+    ? TEvent extends CanonicalEvent
+      ? Pick<
+          TEvent,
+          "eventId" | "type" | "payload" | "correlationId" | "causationId"
+        >
+      : never
+    : never;
+
 // --- payloads ---
 
 export type RunCreatedPayload = {

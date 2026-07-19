@@ -1,6 +1,10 @@
 import type { RunSnapshot } from "@relay/contracts";
 import type { RunId, CommandId, TurnId } from "@relay/contracts";
-import type { CanonicalEvent, CanonicalEventType, EventEnvelope } from "@relay/contracts";
+import type {
+  CanonicalEventDraft,
+  CanonicalEventType,
+  EventEnvelope,
+} from "@relay/contracts";
 
 // ---------------------------------------------------------------------------
 // Input types — deliberately narrow; no store, provider, or Convex detail.
@@ -49,6 +53,8 @@ export type ObserveInput = {
   readonly runId: RunId;
   /** Resume observation from this sequence (exclusive). */
   readonly afterSequence?: number;
+  /** Stop a live observation without waiting for another event. */
+  readonly signal?: AbortSignal;
 };
 
 // ---------------------------------------------------------------------------
@@ -60,12 +66,15 @@ export type TurnReceipt = {
   readonly commandId: CommandId;
 };
 
-export type AppendEventInput = {
-  readonly eventId: string;
-  readonly type: CanonicalEventType;
-  readonly payload: Record<string, unknown>;
-  readonly correlationId?: string;
-};
+export type AppendEventInput =
+  CanonicalEventDraft extends infer TDraft
+    ? TDraft extends CanonicalEventDraft
+      ? Omit<TDraft, "eventId" | "correlationId" | "causationId"> & {
+          readonly eventId: string;
+          readonly correlationId?: string;
+        }
+      : never
+    : never;
 
 export type AppendEventResult =
   | { ok: true; sequence: number }

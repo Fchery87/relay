@@ -1,6 +1,10 @@
 import type { RunSnapshot } from "@relay/contracts";
 import type { Command, ExternalCommand, InternalCommand } from "@relay/contracts";
-import type { CanonicalEvent } from "@relay/contracts";
+import type {
+  CanonicalEvent,
+  CanonicalEventDraft,
+  CanonicalEventType,
+} from "@relay/contracts";
 import { reduceRun, applySnapshot } from "@relay/contracts";
 
 // ---------------------------------------------------------------------------
@@ -20,14 +24,7 @@ export type EffectIntent =
 // ---------------------------------------------------------------------------
 
 export type DeciderResult = {
-  readonly events: Array<{
-    readonly eventId: string;
-    readonly type: CanonicalEvent["type"];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    readonly payload: Record<string, any>;
-    readonly correlationId: string;
-    readonly causationId?: string;
-  }>;
+  readonly events: Array<CanonicalEventDraft>;
   readonly effects: ReadonlyArray<EffectIntent>;
   readonly snapshot: RunSnapshot | null;
 };
@@ -48,43 +45,49 @@ export function decide(
 
   let current = snapshot;
 
-  const appendEvent = (
-    type: CanonicalEvent["type"],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    payload: Record<string, any> = {},
+  const appendEvent = <TType extends CanonicalEventType>(
+    type: TType,
+    payload: Extract<CanonicalEvent, { type: TType }>["payload"],
   ) => {
-    events.push({
-      eventId: `ev-${events.length + 1}-${command.commandId}`,
+    const event = {
+      eventId: `ev-${events.length + 1}-${command.commandId}` as never,
       type,
       payload,
-      correlationId: corrId,
-      causationId,
-    });
+      correlationId: corrId as never,
+      causationId: causationId as never,
+    } as unknown as Extract<CanonicalEventDraft, { type: TType }>;
+    events.push(event);
   };
 
   switch (command.type) {
     // --- run lifecycle ---
     case "run.create": {
       appendEvent("run.created", {
-        environmentId: "local",
-        projectId: command.payload.projectId,
+        environmentId: "local" as never,
+        projectId: command.payload.projectId as never,
         providerInstanceId: command.payload.providerInstanceId,
       });
-      // createRun sets initial snapshot before calling decide, so just validate.
-      return { events, effects, snapshot: null };
+      const updated = reduceAndApply(current, events, command.issuedAt);
+      return { events, effects, snapshot: updated };
     }
 
     case "run.resume": {
-      appendEvent("run.started");
-      const updated = reduceAndApply(current, events);
+      appendEvent("run.started", {});
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
     case "run.stop": {
-      appendEvent("run.stopping", { reason: command.payload.reason ?? "user" });
-      appendEvent("run.stopped");
+      appendEvent("run.stopping", {
+        reason:
+          command.payload.reason === "error" ||
+          command.payload.reason === "shutdown"
+            ? command.payload.reason
+            : "user",
+      });
+      appendEvent("run.stopped", {});
       effects.push({ kind: "provider.stop_session" });
-      const updated = reduceAndApply(current, events);
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
@@ -93,48 +96,48 @@ export function decide(
       appendEvent("turn.started", { prompt: command.payload.prompt });
       // Emit a provider effect so the engine knows to route the turn
       effects.push({ kind: "provider.send_turn", prompt: command.payload.prompt });
-      const updated = reduceAndApply(current, events);
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
     case "turn.steer": {
       appendEvent("turn.steered", { steering: command.payload.steering });
-      const updated = reduceAndApply(current, events);
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
     case "turn.interrupt": {
       appendEvent("turn.interrupted", { reason: command.payload.reason ?? "user" });
-      const updated = reduceAndApply(current, events);
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
     // --- approval ---
     case "approval.resolve": {
       appendEvent("approval.resolved", {
-        approvalId: command.payload.approvalId,
+        approvalId: command.payload.approvalId as never,
         resolution: command.payload.resolution,
       });
-      const updated = reduceAndApply(current, events);
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
     // --- checkpoint ---
     case "checkpoint.restore": {
       appendEvent("checkpoint.restored", {
-        checkpointId: command.payload.checkpointId,
+        checkpointId: command.payload.checkpointId as never,
         commit: "",
       });
-      const updated = reduceAndApply(current, events);
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
     // --- internal commands from reactors ---
     case "provider.event": {
-      // Reactors report results as internal commands; the decider records them
-      // but does not interpret provider-native semantics.
-      appendEvent("activity.completed", { activityId: command.commandId });
-      const updated = reduceAndApply(current, events);
+      // The provider adapter already normalised this event. Routing it through
+      // an internal command keeps the decider as the sole transition owner.
+      events.push(command.payload.normalizedEvent);
+      const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };
     }
 
@@ -160,11 +163,24 @@ export function decide(
 function reduceAndApply(
   snapshot: RunSnapshot,
   events: DeciderResult["events"],
+  occurredAt: number,
 ): RunSnapshot {
   let current = snapshot;
   for (const ev of events) {
-    const update = reduceRun(current, { type: ev.type } as CanonicalEvent);
-    current = applySnapshot(current, update);
+    const event = {
+      ...ev,
+      sequence: current.sequence + 1,
+      streamVersion: current.streamVersion + 1,
+      runId: current.runId,
+      occurredAt,
+    } as CanonicalEvent;
+    const update = reduceRun(current, event);
+    current = applySnapshot(current, {
+      ...(update ?? {}),
+      sequence: event.sequence,
+      streamVersion: event.streamVersion,
+      updatedAt: event.occurredAt,
+    });
   }
   return current;
 }

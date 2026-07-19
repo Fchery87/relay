@@ -20,14 +20,19 @@ describe("Backup/rollback rehearsal", () => {
       const runId = snap.runId as string;
       await runtime.resumeRun({ runId: snap.runId });
 
-      // Send a turn — this produces turn.started + assistant.delta + turn.completed
+      // Send a turn, then simulate explicit provider output.
       await runtime.sendTurn({ runId: snap.runId, prompt: "build a feature" });
+      await completeTurn(runtime, runId, "before-restart");
 
       // Append additional events
       await runtime.appendEvent(runId, {
         eventId: "ev-ckpt-1",
         type: "checkpoint.captured",
-        payload: { commit: "abc123def", projectPath: "/tmp/test", threadId: "thr-1" },
+        payload: {
+          checkpointId: "ckpt-1" as never,
+          commit: "abc123def",
+          ref: "refs/relay/ckpt-1",
+        },
       });
       await runtime.appendEvent(runId, {
         eventId: "ev-usage-1",
@@ -39,10 +44,7 @@ describe("Backup/rollback rehearsal", () => {
       const snapshot = runtime.getSnapshotByRunId(runId as never);
       expect(snapshot).toBeTruthy();
       const snapshotJson = JSON.stringify(snapshot);
-      const eventsBefore: Array<{ eventId: string; type: string }> = [];
-      for await (const ev of runtime.observe({ runId: runId as never, afterSequence: -1 })) {
-        eventsBefore.push({ eventId: ev.eventId, type: ev.type });
-      }
+      const eventsBefore = await collectEventIdentities(runtime, runId);
 
       // Serialize to disk
       const snapshotPath = join(tmp, "snapshot.json");
@@ -65,10 +67,7 @@ describe("Backup/rollback rehearsal", () => {
       expect(restoredSnapshot!.sequence).toBe(snapshot!.sequence);
 
       // Verify all events are replayed identically
-      const replayedEvents: Array<{ eventId: string; type: string }> = [];
-      for await (const ev of restored.observe({ runId: runId as never, afterSequence: -1 })) {
-        replayedEvents.push({ eventId: ev.eventId, type: ev.type });
-      }
+      const replayedEvents = await collectEventIdentities(restored, runId);
 
       expect(replayedEvents.length).toBe(eventsBefore.length);
       for (let i = 0; i < replayedEvents.length; i++) {
@@ -78,6 +77,7 @@ describe("Backup/rollback rehearsal", () => {
 
       // Phase 3: Continue operating on the restored runtime
       await restored.sendTurn({ runId: snap.runId, prompt: "continue after restore" });
+      await completeTurn(restored, runId, "after-restore");
       const eventsAfter = await collectEvents(restored, runId);
       expect(eventsAfter.length).toBeGreaterThan(eventsBefore.length);
       expect(eventsAfter.some((e) => e.type === "turn.completed")).toBe(true);
@@ -119,10 +119,7 @@ describe("Backup/rollback rehearsal", () => {
     expect((reparsed as { sequence: number }).sequence).toBeGreaterThanOrEqual(0);
 
     // Verify events are replayable from this snapshot
-    const events: Array<{ type: string }> = [];
-    for await (const ev of runtime.observe({ runId: runId as never, afterSequence: -1 })) {
-      events.push({ type: ev.type });
-    }
+    const events = await collectEvents(runtime, runId);
     expect(events.some((e) => e.type === "run.created")).toBe(true);
     expect(events.some((e) => e.type === "run.started")).toBe(true);
 
@@ -131,9 +128,54 @@ describe("Backup/rollback rehearsal", () => {
 });
 
 async function collectEvents(runtime: LocalHarnessRuntime, runId: string) {
-  const events: Array<{ type: string; payload: unknown }> = [];
+  const snapshot = runtime.getSnapshotByRunId(runId);
+  if (!snapshot) throw new Error(`Run not found: ${runId}`);
+  const events: Array<{
+    eventId: string;
+    type: string;
+    payload: unknown;
+    sequence: number;
+  }> = [];
   for await (const ev of runtime.observe({ runId: runId as never, afterSequence: -1 })) {
-    events.push(ev);
+    events.push({
+      eventId: ev.eventId,
+      type: ev.type,
+      payload: ev.payload,
+      sequence: ev.sequence,
+    });
+    if (ev.sequence >= snapshot.sequence) break;
   }
   return events;
+}
+
+async function collectEventIdentities(
+  runtime: LocalHarnessRuntime,
+  runId: string,
+): Promise<Array<{ eventId: string; type: string }>> {
+  return (await collectEvents(runtime, runId)).map((event) => ({
+    eventId: event.eventId,
+    type: event.type,
+  }));
+}
+
+async function completeTurn(
+  runtime: LocalHarnessRuntime,
+  runId: string,
+  suffix: string,
+): Promise<void> {
+  await runtime.appendEvent(runId, {
+    eventId: `ev-assistant-delta-${suffix}`,
+    type: "assistant.delta",
+    payload: { text: "done" },
+  });
+  await runtime.appendEvent(runId, {
+    eventId: `ev-assistant-completed-${suffix}`,
+    type: "assistant.completed",
+    payload: {},
+  });
+  await runtime.appendEvent(runId, {
+    eventId: `ev-turn-completed-${suffix}`,
+    type: "turn.completed",
+    payload: { summary: "done" },
+  });
 }

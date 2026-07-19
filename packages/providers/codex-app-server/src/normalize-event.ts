@@ -1,5 +1,5 @@
 import type { ProviderInstanceId } from "@relay/contracts";
-import type { CanonicalEvent, CanonicalEventType } from "@relay/contracts";
+import type { CanonicalEvent } from "@relay/contracts";
 
 // ---------------------------------------------------------------------------
 // Codex app-server event normalization — table-driven mapping from
@@ -35,11 +35,12 @@ export type CodexNotification = {
   readonly params?: Record<string, any>;
 };
 
-export type NormalizedEvent = {
-  readonly type: CanonicalEventType;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly payload: Record<string, any>;
-};
+export type NormalizedEvent =
+  CanonicalEvent extends infer TEvent
+    ? TEvent extends CanonicalEvent
+      ? Pick<TEvent, "type" | "payload">
+      : never
+    : never;
 
 /**
  * Normalize a Codex app-server notification into zero or more canonical events.
@@ -139,7 +140,7 @@ export function normalizeCodexNotification(
         {
           type: "activity.started",
           payload: {
-            activityId: notification.params?.activityId ?? "",
+            activityId: (notification.params?.activityId ?? "") as never,
             kind: notification.params?.kind ?? "unknown",
             toolName: notification.params?.toolName,
           },
@@ -151,7 +152,7 @@ export function normalizeCodexNotification(
         {
           type: "activity.delta",
           payload: {
-            activityId: notification.params?.activityId ?? "",
+            activityId: (notification.params?.activityId ?? "") as never,
             content: notification.params?.content ?? "",
           },
         },
@@ -162,7 +163,7 @@ export function normalizeCodexNotification(
         {
           type: "activity.completed",
           payload: {
-            activityId: notification.params?.activityId ?? "",
+            activityId: (notification.params?.activityId ?? "") as never,
             summary: notification.params?.summary,
             result: notification.params?.result,
           },
@@ -174,7 +175,7 @@ export function normalizeCodexNotification(
         {
           type: "activity.failed",
           payload: {
-            activityId: notification.params?.activityId ?? "",
+            activityId: (notification.params?.activityId ?? "") as never,
             error: notification.params?.error ?? "unknown",
           },
         },
@@ -185,7 +186,7 @@ export function normalizeCodexNotification(
         {
           type: "approval.requested",
           payload: {
-            approvalId: notification.params?.approvalId ?? "",
+            approvalId: (notification.params?.approvalId ?? "") as never,
             capability: notification.params?.capability ?? "unknown",
             risk: notification.params?.risk ?? "unknown",
             details: notification.params?.details ?? "",
@@ -198,7 +199,7 @@ export function normalizeCodexNotification(
         {
           type: "approval.resolved",
           payload: {
-            approvalId: notification.params?.approvalId ?? "",
+            approvalId: (notification.params?.approvalId ?? "") as never,
             resolution: notification.params?.resolution ?? "allow",
           },
         },
@@ -224,7 +225,10 @@ export function normalizeCodexNotification(
         {
           type: "turn.failed",
           payload: {
-            error: (notification.params as Record<string, unknown> | undefined)?.message ?? "Codex app-server error",
+            error: String(
+              (notification.params as Record<string, unknown> | undefined)?.message ??
+                "Codex app-server error",
+            ),
           },
         },
       ];
@@ -241,9 +245,9 @@ export function normalizeCodexNotification(
       // Unknown notifications become bounded diagnostics — never crash.
       return [
         {
-          type: "activity.delta" as CanonicalEventType,
+          type: "activity.delta",
           payload: {
-            activityId: `diag-${notification.method}`,
+            activityId: `diag-${notification.method}` as never,
             content: `[Codex diagnostic] Unrecognized notification: ${notification.method}`,
           },
         },

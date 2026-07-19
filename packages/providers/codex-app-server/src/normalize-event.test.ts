@@ -37,8 +37,10 @@ describe("normalizeCodexNotification", () => {
       "run-1",
       "pi-1" as never,
     );
-    expect(result[0]!.type).toBe("turn.started");
-    expect(result[0]!.payload.prompt).toBe("write code");
+    const event = result[0];
+    expect(event?.type).toBe("turn.started");
+    if (event?.type !== "turn.started") throw new Error("expected turn.started");
+    expect(event.payload.prompt).toBe("write code");
   });
 
   test("agent/text-delta produces assistant.delta", () => {

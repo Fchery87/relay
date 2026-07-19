@@ -15,14 +15,15 @@ const baseSnapshot = (overrides?: Partial<RunSnapshot>): RunSnapshot => ({
 // --- run lifecycle ---
 
 describe("run.created", () => {
-  test("no-op when already created", () => {
-    expect(reduceRun(baseSnapshot(), { type: "run.created" } as never)).toBeNull();
+  test("created → ready", () => {
+    const result = reduceRun(baseSnapshot(), { type: "run.created" } as never);
+    expect(result?.status).toBe("ready");
   });
 
-  test("transitions from ready to created? — not valid, ready → created is denied", () => {
-    expect(() =>
+  test("no-op when already ready", () => {
+    expect(
       reduceRun(baseSnapshot({ status: "ready" }), { type: "run.created" } as never),
-    ).toThrow(RunTransitionError);
+    ).toBeNull();
   });
 });
 

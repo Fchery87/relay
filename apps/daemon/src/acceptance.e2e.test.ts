@@ -4,7 +4,10 @@
 // ---------------------------------------------------------------------------
 
 import { expect, test, describe } from "bun:test";
-import { LocalHarnessRuntime } from "@relay/harness-runtime";
+import {
+  LocalHarnessRuntime,
+  type AppendEventInput,
+} from "@relay/harness-runtime";
 
 describe("Production acceptance — all 25 canonical event types", () => {
   test("run lifecycle: created, started, stopping, stopped", async () => {
@@ -28,8 +31,23 @@ describe("Production acceptance — all 25 canonical event types", () => {
     const snap = await runtime.createRun({ projectId: "proj-2" });
     await runtime.resumeRun({ runId: snap.runId });
 
-    // Send a turn via the harness (synthetic provider)
+    // Send a turn, then simulate explicit provider events.
     await runtime.sendTurn({ runId: snap.runId, prompt: "test" });
+    await runtime.appendEvent(snap.runId as string, {
+      eventId: "ev-assistant-delta",
+      type: "assistant.delta",
+      payload: { text: "done" },
+    });
+    await runtime.appendEvent(snap.runId as string, {
+      eventId: "ev-assistant-completed",
+      type: "assistant.completed",
+      payload: {},
+    });
+    await runtime.appendEvent(snap.runId as string, {
+      eventId: "ev-turn-completed",
+      type: "turn.completed",
+      payload: { summary: "done" },
+    });
 
     const events = await collectEvents(runtime, snap.runId as string);
     expect(types(events)).toContain("turn.started");
@@ -56,22 +74,22 @@ describe("Production acceptance — all 25 canonical event types", () => {
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-start`,
       type: "activity.started",
-      payload: { activityId: "act-1", kind: "bash", toolName: "bash" },
+      payload: { activityId: "act-1" as never, kind: "bash", toolName: "bash" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-delta`,
       type: "activity.delta",
-      payload: { activityId: "act-1", content: "npm install" },
+      payload: { activityId: "act-1" as never, content: "npm install" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-done`,
       type: "activity.completed",
-      payload: { activityId: "act-1", summary: "installed" },
+      payload: { activityId: "act-1" as never, summary: "installed" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-act-fail`,
       type: "activity.failed",
-      payload: { activityId: "act-1", error: "permission denied" },
+      payload: { activityId: "act-1" as never, error: "permission denied" },
     });
 
     const events = await collectEvents(runtime, snap.runId as string);
@@ -89,7 +107,7 @@ describe("Production acceptance — all 25 canonical event types", () => {
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-apr-req`,
       type: "approval.requested",
-      payload: { approvalId: "apr-1", capability: "exec", risk: "high", details: "rm -rf" },
+      payload: { approvalId: "apr-1" as never, capability: "exec", risk: "high", details: "rm -rf" },
     });
     await runtime.resolveApproval({
       runId: snap.runId,
@@ -152,17 +170,17 @@ describe("Production acceptance — all 25 canonical event types", () => {
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-ckpt-cap`,
       type: "checkpoint.captured",
-      payload: { commit: "abc123", projectPath: "/tmp/test", threadId: "thr-1" },
+      payload: { checkpointId: "ckpt-1" as never, commit: "abc123", ref: "refs/relay/ckpt-1" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-ckpt-restore`,
       type: "checkpoint.restored",
-      payload: { commit: "abc123", projectPath: "/tmp/test", threadId: "thr-1" },
+      payload: { checkpointId: "ckpt-1" as never, commit: "abc123" },
     });
     await runtime.appendEvent(snap.runId as string, {
       eventId: `ev-proj-pub`,
       type: "projection.published",
-      payload: { runId: snap.runId, sequence: 10 },
+      payload: { cursor: 10 },
     });
 
     const events = await collectEvents(runtime, snap.runId as string);
@@ -178,7 +196,10 @@ describe("Production acceptance — all 25 canonical event types", () => {
     await runtime.resumeRun({ runId: snap.runId });
 
     // Emit all 25 types
-    const allTypes: Array<{ type: string; payload: Record<string, unknown> }> = [
+    const allTypes: Array<{
+      type: AppendEventInput["type"];
+      payload: Record<string, unknown>;
+    }> = [
       { type: "run.created", payload: { environmentId: "local", projectId: "p" } },
       { type: "run.started", payload: {} },
       { type: "run.stopping", payload: { reason: "user" } },
@@ -194,27 +215,56 @@ describe("Production acceptance — all 25 canonical event types", () => {
       { type: "turn.interrupted", payload: { reason: "user" } },
       { type: "assistant.delta", payload: { text: "hi" } },
       { type: "assistant.completed", payload: {} },
-      { type: "activity.started", payload: { activityId: "a1", kind: "bash", toolName: "bash" } },
-      { type: "activity.delta", payload: { activityId: "a1", content: "npm i" } },
-      { type: "activity.completed", payload: { activityId: "a1", summary: "ok" } },
-      { type: "activity.failed", payload: { activityId: "a1", error: "no" } },
-      { type: "approval.requested", payload: { approvalId: "ap1", capability: "exec", risk: "high", details: "rm" } },
-      { type: "approval.resolved", payload: { approvalId: "ap1", resolution: "deny" } },
+      { type: "activity.started", payload: { activityId: "a1" as never, kind: "bash", toolName: "bash" } },
+      { type: "activity.delta", payload: { activityId: "a1" as never, content: "npm i" } },
+      { type: "activity.completed", payload: { activityId: "a1" as never, summary: "ok" } },
+      { type: "activity.failed", payload: { activityId: "a1" as never, error: "no" } },
+      { type: "approval.requested", payload: { approvalId: "ap1" as never, capability: "exec", risk: "high", details: "rm" } },
+      { type: "approval.resolved", payload: { approvalId: "ap1" as never, resolution: "deny" } },
       { type: "usage.recorded", payload: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0, modelId: "t" } },
-      { type: "checkpoint.captured", payload: { commit: "abc", projectPath: "/tmp", threadId: "t" } },
-      { type: "checkpoint.restored", payload: { commit: "abc", projectPath: "/tmp", threadId: "t" } },
-      { type: "projection.published", payload: { runId: "r", sequence: 1 } },
+      { type: "checkpoint.captured", payload: { checkpointId: "ckpt-all" as never, commit: "abc", ref: "refs/relay/ckpt-all" } },
+      { type: "checkpoint.restored", payload: { checkpointId: "ckpt-all" as never, commit: "abc" } },
+      { type: "projection.published", payload: { cursor: 1 } },
     ];
 
+    const initialOrAlternateTerminal = new Set([
+      "run.created",
+      "run.started",
+      "run.failed",
+      "run.stopping",
+      "run.stopped",
+    ]);
     for (const ev of allTypes) {
+      if (initialOrAlternateTerminal.has(ev.type)) continue;
       await runtime.appendEvent(runId, {
+        ...ev,
         eventId: `ev-${ev.type}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        type: ev.type as Parameters<typeof runtime.appendEvent>[1]["type"],
-        payload: ev.payload,
-      });
+      } as AppendEventInput);
     }
 
-    const events = await collectEvents(runtime, runId);
+    await runtime.appendEvent(runId, {
+      eventId: "ev-run-stopping",
+      type: "run.stopping",
+      payload: { reason: "user" },
+    });
+    await runtime.appendEvent(runId, {
+      eventId: "ev-run-stopped",
+      type: "run.stopped",
+      payload: {},
+    });
+
+    const failedRun = await runtime.createRun({ projectId: "proj-failed" });
+    await runtime.resumeRun({ runId: failedRun.runId });
+    await runtime.appendEvent(failedRun.runId as string, {
+      eventId: "ev-run-failed",
+      type: "run.failed",
+      payload: { error: "test" },
+    });
+
+    const events = [
+      ...(await collectEvents(runtime, runId)),
+      ...(await collectEvents(runtime, failedRun.runId as string)),
+    ];
     const seen = new Set(types(events));
     const expected = new Set(allTypes.map((e) => e.type));
 
@@ -228,9 +278,12 @@ describe("Production acceptance — all 25 canonical event types", () => {
 // -- helpers ----------------------------------------------------------------
 
 async function collectEvents(runtime: LocalHarnessRuntime, runId: string) {
+  const snapshot = runtime.getSnapshotByRunId(runId);
+  if (!snapshot) throw new Error(`Run not found: ${runId}`);
   const events: Array<{ type: string; payload: unknown }> = [];
   for await (const ev of runtime.observe({ runId: runId as never, afterSequence: -1 })) {
     events.push(ev);
+    if (ev.sequence >= snapshot.sequence) break;
   }
   return events;
 }

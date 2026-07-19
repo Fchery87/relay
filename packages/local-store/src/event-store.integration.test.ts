@@ -34,20 +34,21 @@ describe("event store", () => {
     setup(db);
 
     const result = appendEvents(db, {
-      runId: "run-1",
-      commandId: "cmd-1",
+      runId: "run-1" as never,
+      commandId: "cmd-1" as never,
+      nextSnapshot: makeSnapshot({ status: "running" }),
       events: [
         {
-          eventId: "ev-1",
+          eventId: "ev-1" as never,
           type: "run.started",
           payload: {},
-          correlationId: "corr-1",
+          correlationId: "corr-1" as never,
         },
         {
-          eventId: "ev-2",
+          eventId: "ev-2" as never,
           type: "turn.started",
           payload: { prompt: "hi" },
-          correlationId: "corr-1",
+          correlationId: "corr-1" as never,
         },
       ],
     });
@@ -61,6 +62,7 @@ describe("event store", () => {
     // Snapshot persisted
     const loaded = getSnapshot(db, "run-1");
     expect(loaded?.sequence).toBe(2);
+    expect(loaded?.status).toBe("running");
 
     // Events persisted
     const events = getEventsAfter(db, "run-1", -1);
@@ -73,17 +75,19 @@ describe("event store", () => {
 
     // First append bumps version to 1
     appendEvents(db, {
-      runId: "run-1",
-      commandId: "cmd-1",
-      events: [{ eventId: "ev-1", type: "run.started", payload: {}, correlationId: "c-1" }],
+      runId: "run-1" as never,
+      commandId: "cmd-1" as never,
+      nextSnapshot: makeSnapshot({ status: "running" }),
+      events: [{ eventId: "ev-1" as never, type: "run.started", payload: {}, correlationId: "c-1" as never }],
     });
 
     // Second append with stale version
     const result = appendEvents(db, {
-      runId: "run-1",
-      commandId: "cmd-2",
+      runId: "run-1" as never,
+      commandId: "cmd-2" as never,
       expectedStreamVersion: 0, // stale — current is 1
-      events: [{ eventId: "ev-2", type: "turn.started", payload: {}, correlationId: "c-2" }],
+      nextSnapshot: makeSnapshot({ status: "running" }),
+      events: [{ eventId: "ev-2" as never, type: "turn.started", payload: { prompt: "hi" }, correlationId: "c-2" as never }],
     });
 
     expect(result.ok).toBe(false);
@@ -96,16 +100,18 @@ describe("event store", () => {
     setup(db);
 
     const first = appendEvents(db, {
-      runId: "run-1",
-      commandId: "cmd-1",
-      events: [{ eventId: "ev-1", type: "run.started", payload: {}, correlationId: "c-1" }],
+      runId: "run-1" as never,
+      commandId: "cmd-1" as never,
+      nextSnapshot: makeSnapshot({ status: "running" }),
+      events: [{ eventId: "ev-1" as never, type: "run.started", payload: {}, correlationId: "c-1" as never }],
     });
 
     // Duplicate
     const second = appendEvents(db, {
-      runId: "run-1",
-      commandId: "cmd-1",
-      events: [{ eventId: "ev-2", type: "turn.started", payload: {}, correlationId: "c-2" }],
+      runId: "run-1" as never,
+      commandId: "cmd-1" as never,
+      nextSnapshot: makeSnapshot({ status: "running" }),
+      events: [{ eventId: "ev-2" as never, type: "turn.started", payload: { prompt: "hi" }, correlationId: "c-2" as never }],
     });
 
     expect(second.ok).toBe(false);
@@ -126,13 +132,43 @@ describe("event store", () => {
   test("unknown run returns run_not_found", () => {
     const db = openMemoryStore();
     const result = appendEvents(db, {
-      runId: "nonexistent",
-      commandId: "cmd-1",
-      events: [{ eventId: "ev-1", type: "run.started", payload: {}, correlationId: "c-1" }],
+      runId: "nonexistent" as never,
+      commandId: "cmd-1" as never,
+      nextSnapshot: makeSnapshot({ runId: "nonexistent" as never }),
+      events: [{ eventId: "ev-1" as never, type: "run.started", payload: {}, correlationId: "c-1" as never }],
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected not found");
     expect(result.reason).toBe("run_not_found");
+  });
+
+  test("persists orchestration's snapshot without interpreting event semantics", () => {
+    const db = openMemoryStore();
+    setup(db);
+
+    const result = appendEvents(db, {
+      runId: "run-1" as never,
+      commandId: "cmd-approval" as never,
+      nextSnapshot: makeSnapshot({
+        status: "ready",
+        sequence: 0,
+        streamVersion: 0,
+      }),
+      events: [{
+        eventId: "ev-approval" as never,
+        type: "approval.requested",
+        payload: {
+          approvalId: "approval-1" as never,
+          capability: "exec",
+          risk: "high",
+          details: "Run a command",
+        },
+        correlationId: "corr-approval" as never,
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(getSnapshot(db, "run-1")?.status).toBe("ready");
   });
 });
 
@@ -143,12 +179,13 @@ describe("outbox", () => {
 
     // Append events (which also create outbox rows)
     appendEvents(db, {
-      runId: "run-1",
-      commandId: "cmd-1",
+      runId: "run-1" as never,
+      commandId: "cmd-1" as never,
+      nextSnapshot: makeSnapshot({ status: "running" }),
       events: [
-        { eventId: "ev-1", type: "run.started", payload: {}, correlationId: "c-1" },
-        { eventId: "ev-2", type: "turn.started", payload: {}, correlationId: "c-1" },
-        { eventId: "ev-3", type: "turn.completed", payload: {}, correlationId: "c-1" },
+        { eventId: "ev-1" as never, type: "run.started", payload: {}, correlationId: "c-1" as never },
+        { eventId: "ev-2" as never, type: "turn.started", payload: { prompt: "hi" }, correlationId: "c-1" as never },
+        { eventId: "ev-3" as never, type: "turn.completed", payload: {}, correlationId: "c-1" as never },
       ],
     });
 

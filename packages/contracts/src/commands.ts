@@ -1,4 +1,5 @@
 import type { CausationId, CommandId, CorrelationId, ProviderInstanceId, RunId } from "./ids";
+import type { CanonicalEventDraft } from "./events";
 
 // ---------------------------------------------------------------------------
 // Command envelope
@@ -112,7 +113,7 @@ export type InternalCommand =
 export type ProviderEventPayload = {
   readonly providerInstanceId: ProviderInstanceId;
   /** Normalised canonical event data produced by the provider adapter. */
-  readonly normalizedEvent: unknown;
+  readonly normalizedEvent: CanonicalEventDraft;
 };
 
 export type ProviderEventCommand = CommandEnvelope<

@@ -64,23 +64,15 @@ export function reduceRun(
   snapshot: RunSnapshot,
   event: CanonicalEvent,
 ): Partial<RunSnapshot> | null {
-  return reduceRunStatus(snapshot, event.type);
-}
-
-function reduceRunStatus(
-  snapshot: RunSnapshot,
-  eventType: CanonicalEvent["type"],
-): Partial<RunSnapshot> | null {
   const current = snapshot.status;
-  const now = Date.now();
+  const now = event.occurredAt;
 
-  switch (eventType) {
+  switch (event.type) {
     // --- run lifecycle ---
     case "run.created": {
-      // Already created — idempotent, no change.
-      if (current === "created") return null;
-      assertTransition(current, "created");
-      return { status: "created", updatedAt: now };
+      if (current === "ready") return null;
+      assertTransition(current, "ready");
+      return { status: "ready", updatedAt: now };
     }
 
     case "run.started": {
@@ -159,7 +151,7 @@ function reduceRunStatus(
 
     default: {
       // Exhaustiveness check — compile-time guarantee.
-      const _exhaustive: never = eventType;
+      const _exhaustive: never = event;
       void _exhaustive;
       return null;
     }

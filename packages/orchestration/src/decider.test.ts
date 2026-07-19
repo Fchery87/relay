@@ -63,6 +63,26 @@ describe("decider", () => {
     expect(result.snapshot?.status).toBe("running");
   });
 
+  test("provider.event preserves the adapter-normalised event", () => {
+    const normalizedEvent = {
+      eventId: "ev-provider-1" as never,
+      type: "assistant.delta" as const,
+      payload: { text: "real provider output" },
+      correlationId: "corr-provider-1" as never,
+      causationId: "cause-provider-1" as never,
+    };
+    const result = decide(
+      snap({ status: "running" }),
+      cmd("provider.event", {
+        providerInstanceId: "provider-1",
+        normalizedEvent,
+      }),
+    );
+
+    expect(result.events).toEqual([normalizedEvent]);
+    expect(result.snapshot?.status).toBe("running");
+  });
+
   test("duplicate run.resume on running is idempotent", () => {
     const result = decide(snap({ status: "running" }), cmd("run.resume"));
     // The decider always emits run.started for resume; idempotency is in the store.
