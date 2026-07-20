@@ -9,7 +9,11 @@ export type ProviderRequest = { body: Record<string, unknown>; headers: Record<s
 export const TOOL_PARAMETERS = {
   bash: { properties: { command: { type: "string" }, timeout: { type: "number" } }, required: ["command"], type: "object" },
   edit: { properties: { content: { type: "string" }, path: { type: "string" } }, required: ["path", "content"], type: "object" },
+  str_replace: { properties: { newString: { description: "Replacement text", type: "string" }, oldString: { description: "Exact text to replace — must match the file content exactly, including whitespace", type: "string" }, path: { type: "string" }, replaceAll: { description: "Replace every occurrence instead of requiring a unique match", type: "boolean" } }, required: ["path", "oldString", "newString"], type: "object" },
   read: { properties: { limit: { type: "number" }, offset: { type: "number" }, path: { type: "string" } }, required: ["path"], type: "object" },
+  grep: { properties: { glob: { description: "Filter files by glob pattern, e.g. '*.ts'", type: "string" }, path: { description: "Directory or file to search, relative to the project root", type: "string" }, pattern: { description: "Regular expression to search for", type: "string" } }, required: ["pattern"], type: "object" },
+  glob: { properties: { pattern: { description: "Glob pattern relative to the project root, e.g. 'src/**/*.ts'", type: "string" } }, required: ["pattern"], type: "object" },
+  todo: { properties: { items: { items: { properties: { content: { type: "string" }, status: { enum: ["pending", "in_progress", "completed"], type: "string" } }, required: ["content", "status"], type: "object" }, type: "array" } }, required: ["items"], type: "object" },
   task: { properties: { capabilities: { items: { enum: ["read", "edit", "exec", "task"], type: "string" }, type: "array" }, role: { type: "string" }, task: { type: "string" } }, required: ["role", "task", "capabilities"], type: "object" },
   web_search: { properties: { query: { description: "Search query to look up on the web", type: "string" } }, required: ["query"], type: "object" },
   web_fetch: { properties: { url: { description: "URL to fetch content from", type: "string" }, prompt: { description: "What to extract from the page", type: "string" } }, required: ["url", "prompt"], type: "object" },

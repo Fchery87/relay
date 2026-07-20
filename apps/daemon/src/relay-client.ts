@@ -17,7 +17,8 @@ const completePlanningMutation = makeFunctionReference<"mutation", { content: st
 const claimCommandMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("commands:claim");
 const completeCommandMutation = makeFunctionReference<"mutation", { commandId: string; deviceToken: string; status: "complete" | "failed" }>("commands:complete");
 const appendCommandOutputMutation = makeFunctionReference<"mutation", { deviceToken: string; output: string; threadId: string }>("events:appendCommandOutput");
-const appendToolCompletedMutation = makeFunctionReference<"mutation", { deviceToken: string; summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "skill" | "task" }>("events:appendToolCompleted");
+const appendToolCompletedMutation = makeFunctionReference<"mutation", { deviceToken: string; summary: string; threadId: string; tool: string }>("events:appendToolCompleted");
+const compactThreadMutation = makeFunctionReference<"mutation", { deviceToken: string; summary: string; threadId: string }, null>("conversations:compactThread");
 const appendMcpTaskStatusMutation = makeFunctionReference<"mutation", { deviceToken: string; serverId: string; status: string; taskId: string; threadId: string }>("events:appendMcpTaskStatus");
 const listThreadIdsQuery = makeFunctionReference<"query", { deviceToken: string }, string[]>("conversations:listThreadIds");
 const snapshotDiffMutation = makeFunctionReference<"mutation", { content: string; deviceToken: string; threadId: string }>("diffs:snapshot");
@@ -105,7 +106,8 @@ export function createConvexConversationGateway({ deploymentUrl, deviceToken }: 
     completeAssistantMessage: ({ messageId, resolvedCommentIds, status = "done", threadId }: { messageId: string; resolvedCommentIds?: string[]; status?: "done" | "failed"; threadId: string }) => client.mutation(completeAssistantMessageMutation, { deviceToken, messageId, resolvedCommentIds, status, threadId }),
     completePlanning: (input: { content: string; messageId: string; threadId: string }) => client.mutation(completePlanningMutation, { ...input, deviceToken }),
     enqueueSubagent: (input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }) => client.mutation(enqueueSubagentMutation, input),
-    recordToolCompleted: (input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "task" }) => client.mutation(appendToolCompletedMutation, { ...input, deviceToken }),
+    recordToolCompleted: (input: { summary: string; threadId: string; tool: string }) => client.mutation(appendToolCompletedMutation, { ...input, deviceToken }),
+    compactThread: (input: { summary: string; threadId: string }) => client.mutation(compactThreadMutation, { ...input, deviceToken }),
     listThreadIds: () => client.query(listThreadIdsQuery, { deviceToken }),
     isStopRequested: async (input: { deviceToken: string; threadId: string }) => stopStateSchema.parse(await client.query(getStopStateQuery, input)).requested,
     recordCheckpoint: (input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }) => client.mutation(recordCheckpointMutation, input),

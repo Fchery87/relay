@@ -1,10 +1,13 @@
 import type { Capability, MachinePlatform } from "@relay/shared";
 
-import { editFile, readProjectFile, runCommand } from "./tools";
+import { editFile, globFind, grepSearch, readProjectFile, runCommand, strReplaceFile } from "./tools";
 
 export type ToolCall =
   | { content: string; kind: "edit"; path: string }
+  | { kind: "str_replace"; newString: string; oldString: string; path: string; replaceAll?: boolean }
   | { kind: "read"; limit?: number; offset?: number; path: string }
+  | { glob?: string; kind: "grep"; path?: string; pattern: string }
+  | { kind: "glob"; pattern: string }
   | { command: string; kind: "bash"; timeout?: number }
   | { capabilities: Capability[]; kind: "task"; role: string; task: string }
   | { arguments: Record<string, unknown>; kind: "mcp"; name: string; risk?: "low" | "high" | "critical"; serverId: string }
@@ -13,9 +16,11 @@ export type ToolCall =
   | { kind: "web_search"; query: string }
   | { kind: "web_fetch"; prompt?: string; url: string };
 
+export type CompletedTool = "bash" | "edit" | "glob" | "grep" | "mcp" | "read" | "skill" | "str_replace" | "task" | "todo" | "web_search" | "web_fetch";
+
 export async function executeToolCall({ call, onCompleted, onMcp, onOutput, onTask, platform, root }: {
   call: ToolCall;
-  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "skill" | "task" | "web_search" | "web_fetch" }): Promise<void>;
+  onCompleted(event: { summary: string; tool: CompletedTool }): Promise<void>;
   onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
   onOutput?: (output: string) => Promise<void>;
   onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<string>;
@@ -41,10 +46,25 @@ export async function executeToolCall({ call, onCompleted, onMcp, onOutput, onTa
     return { output: body, succeeded: true };
   }
   if (call.kind === "todo") {
-    // Todo list is handled via the onTodo callback from the gateway
+    // Persistence to Convex happens via the caller's gateway hook
     const itemCount = call.items.length;
-    await onCompleted({ summary: `Updated todo list (${itemCount} items)`, tool: "skill" });
+    await onCompleted({ summary: `Updated todo list (${itemCount} items)`, tool: "todo" });
     return { output: `Todo list updated (${itemCount} items)`, succeeded: true };
+  }
+  if (call.kind === "str_replace") {
+    const result = await strReplaceFile({ newString: call.newString, oldString: call.oldString, path: call.path, replaceAll: call.replaceAll, root });
+    await onCompleted({ summary: `Edited ${call.path}`, tool: "str_replace" });
+    return { output: result, succeeded: true };
+  }
+  if (call.kind === "grep") {
+    const output = await grepSearch({ glob: call.glob, path: call.path, pattern: call.pattern, root });
+    await onCompleted({ summary: `Searched for ${call.pattern}`, tool: "grep" });
+    return { output, succeeded: true };
+  }
+  if (call.kind === "glob") {
+    const output = await globFind({ pattern: call.pattern, root });
+    await onCompleted({ summary: `Globbed ${call.pattern}`, tool: "glob" });
+    return { output, succeeded: true };
   }
   if (call.kind === "web_search") {
     // Pass-through: the model provider (Anthropic/OpenAI) executes web search

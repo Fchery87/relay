@@ -1,5 +1,6 @@
 import type { McpModelTool, ModelProvider, ModelProviderRouter } from "./model-provider";
-import { DEFAULT_MODEL_ID, narrowCapabilities, type Capability, type MachinePlatform, type SubagentResult, type TokenUsage } from "@relay/shared";
+import { DEFAULT_MODEL_ID, DEFAULT_SUBAGENT_ROLES, narrowCapabilities, type Capability, type MachinePlatform, type SubagentResult, type TokenUsage } from "@relay/shared";
+import type { CompletedTool, ToolCall } from "./tool-executor";
 import { executeGovernedToolCall, summarizeToolCall, type GovernanceGateway, type GovernedToolResult } from "./governed-tool-executor";
 import { computeDiff } from "./git-review";
 import { createCheckpoint } from "./checkpoints";
@@ -32,7 +33,8 @@ export interface ConversationGateway {
   enqueueSubagent?(input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }): Promise<string>;
   waitForSubagent?(input: { deviceToken: string; runId: string; threadId: string }): Promise<SubagentResult>;
   recordUsage(input: { callId: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }): Promise<unknown>;
-  recordToolCompleted?(input: { summary: string; threadId: string; tool: "bash" | "edit" | "mcp" | "read" | "skill" | "task" | "web_search" | "web_fetch" }): Promise<unknown>;
+  recordToolCompleted?(input: { summary: string; threadId: string; tool: CompletedTool }): Promise<unknown>;
+  compactThread?(input: { summary: string; threadId: string }): Promise<unknown>;
   snapshotDiff?(input: { content: string; threadId: string }): Promise<unknown>;
 }
 
@@ -55,17 +57,63 @@ function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+type HistoryEntry = { content: string; role: string };
+
+/** Map thread history to chat messages, dropping the just-claimed user message
+ * (the server includes it in history because it is marked complete at claim time). */
+export function historyToChatMessages(history: HistoryEntry[] | undefined, currentContent: string): ChatMessage[] {
+  if (!history || history.length === 0) return [];
+  const last = history.at(-1);
+  const trimmed = last?.role === "user" && (last.content === currentContent || currentContent.startsWith(last.content)) ? history.slice(0, -1) : history;
+  return trimmed
+    .filter((m) => m.content.trim().length > 0)
+    .map((m) => m.role === "assistant"
+      ? { blocks: [{ kind: "text" as const, text: m.content }], role: "assistant" as const }
+      : { content: m.content, role: "user" as const });
+}
+
+function historyTranscript(history: HistoryEntry[] | undefined, currentContent: string): string {
+  if (!history) return "";
+  const last = history.at(-1);
+  const trimmed = last?.role === "user" && (last.content === currentContent || currentContent.startsWith(last.content)) ? history.slice(0, -1) : history;
+  return trimmed.filter((m) => m.content.trim().length > 0).map((m) => `${m.role}: ${m.content}`).join("\n\n");
+}
+
+/** Tools allowed during the read-only planning phase. */
+export function isPlanningAllowed(call: ToolCall): boolean {
+  return call.kind === "read" || call.kind === "grep" || call.kind === "glob" || call.kind === "web_search" || call.kind === "web_fetch" || call.kind === "skill" || call.kind === "todo";
+}
+
 function formatSkillsList(skills: Skill[]): string {
   if (skills.length === 0) return "No skills are installed. Add a SKILL.md under .relay/skills/<name>/ (project) or the Relay skills directory (user) to define one.";
   return skills.map((s) => `- ${s.name} (${s.scope}): ${s.description}`).join("\n");
 }
 
-async function dispatchBuiltinAction({ action, args, gateway, messageId, queued, skills }: {
+async function summarizeTranscript({ provider, transcript }: { provider: ModelProvider | TurnModelProvider; transcript: string }): Promise<string> {
+  const instruction = "Summarize this coding-agent conversation for use as compacted context. Preserve: the user's goals and constraints, decisions made, files and commands involved, the current state of the work, and any unresolved items. Be specific and concise (under 500 words). Output only the summary.";
+  const prompt = `${instruction}\n\n<transcript>\n${transcript}\n</transcript>`;
+  let text = "";
+  if (isTurnModelProvider(provider)) {
+    for await (const event of provider.streamTurn({ messages: [{ content: prompt, role: "user" }], signal: new AbortController().signal, system: "You summarize conversations faithfully and concisely.", tools: [] })) {
+      if (event.kind === "text") text += event.text;
+    }
+  } else {
+    for await (const event of provider.streamReply({ prompt, signal: new AbortController().signal })) {
+      if (event.kind === "text") text += event.text;
+    }
+  }
+  return text.trim() || "Summary unavailable.";
+}
+
+async function dispatchBuiltinAction({ action, args, gateway, messageId, platform, provider, queued, root, skills }: {
   action: "compact" | "context" | "rewind" | "plan" | "help" | "skills";
   args: string;
   gateway: ConversationGateway;
   messageId: string;
-  queued: { threadId: string };
+  platform: MachinePlatform;
+  provider: ModelProvider | TurnModelProvider;
+  queued: { content: string; history?: HistoryEntry[]; modelId?: string; planPhase?: "planning" | "building" | "complete"; threadId: string };
+  root: string;
   skills: Skill[];
 }): Promise<void> {
   if (action === "help") {
@@ -93,14 +141,35 @@ async function dispatchBuiltinAction({ action, args, gateway, messageId, queued,
     return;
   }
   if (action === "compact") {
-    // TODO: implement in Task 11
-    await gateway.appendAssistantText({ content: "Compaction is not yet implemented.", messageId });
+    const transcript = historyTranscript(queued.history, queued.content);
+    if (!transcript || !gateway.compactThread) {
+      const content = transcript ? "Compaction is not supported by this deployment." : "Nothing to compact — the conversation has no prior messages.";
+      await gateway.appendAssistantText({ content, messageId });
+      await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
+      return;
+    }
+    const summary = await summarizeTranscript({ provider, transcript });
+    await gateway.compactThread({ summary, threadId: queued.threadId });
+    await gateway.appendAssistantText({ content: `Compacted ${(queued.history ?? []).length} messages into a summary. Future turns see the summary instead of the full transcript.\n\n---\n\n${summary}`, messageId });
     await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
     return;
   }
   if (action === "context") {
-    // TODO: implement in Task 11
-    await gateway.appendAssistantText({ content: "Context reporting is not yet implemented.", messageId });
+    const systemPrompt = await buildSystemPrompt({ modelId: queued.modelId ?? DEFAULT_MODEL_ID, planPhase: queued.planPhase, platform, root, skills, subagentRoles: DEFAULT_SUBAGENT_ROLES });
+    const history = queued.history ?? [];
+    const historyChars = history.reduce((total, m) => total + m.content.length, 0);
+    const tokens = (chars: number) => Math.round(chars / 4);
+    await gateway.appendAssistantText({
+      content: [
+        "Context estimate for the next turn (≈4 characters/token):",
+        `- System prompt: ~${tokens(systemPrompt.length)} tokens (identity, rules, environment, project instructions, ${skills.length} skill${skills.length === 1 ? "" : "s"}, ${DEFAULT_SUBAGENT_ROLES.length} subagent roles)`,
+        `- Conversation history: ${history.length} message${history.length === 1 ? "" : "s"}, ~${tokens(historyChars)} tokens (the server sends at most the last 40)`,
+        `- Total: ~${tokens(systemPrompt.length + historyChars)} tokens, before the new message and tool definitions.`,
+        "",
+        "Use /compact to condense the conversation history into a summary.",
+      ].join("\n"),
+      messageId,
+    });
     await gateway.completeAssistantMessage({ messageId, threadId: queued.threadId });
     return;
   }
@@ -169,7 +238,7 @@ export async function runQueuedTurn({
     const builtin = getBuiltinCommand(slashInvocation.name);
     if (builtin) {
       if (builtin.kind === "action") {
-        await dispatchBuiltinAction({ action: builtin.action, args: slashInvocation.args, gateway, messageId, queued, skills: loadedSkills });
+        await dispatchBuiltinAction({ action: builtin.action, args: slashInvocation.args, gateway, messageId, platform, provider: turnProvider, queued, root, skills: loadedSkills });
         return true;
       }
       // Prompt built-in: expand the template
@@ -181,7 +250,7 @@ export async function runQueuedTurn({
     }
   }
 
-  const systemPrompt = await buildSystemPrompt({ modelId: turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID, platform, root, skills: loadedSkills });
+  const systemPrompt = await buildSystemPrompt({ modelId: turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID, planPhase: queued.planPhase, platform, root, skills: loadedSkills, subagentRoles: DEFAULT_SUBAGENT_ROLES });
   const skills = new Map(loadedSkills.map((skill) => [skill.name, { body: skill.body, directory: skill.directory }]));
 
   try {
@@ -224,7 +293,7 @@ async function runClaimedTurn({
   policy: Policy;
   platform: MachinePlatform;
   prompt: string;
-  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
+  queued: { content: string; history?: HistoryEntry[]; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
   reviewComments: ReviewComment[];
   root: string;
   skills: Map<string, { body: string; directory: string }>;
@@ -241,14 +310,16 @@ async function runClaimedTurn({
     await gateway.recordCheckpoint({ ...checkpoint, deviceToken, messageId, threadId: queued.threadId });
     checkpointed = true;
   };
-  const systemPrefixedPrompt = system ? `${system}\n\n---\n\n${prompt}` : prompt;
+  const transcript = historyTranscript(queued.history, queued.content);
+  const historyBlock = transcript ? `CONVERSATION SO FAR:\n${transcript}` : "";
+  const systemPrefixedPrompt = [system, historyBlock, prompt].filter(Boolean).join("\n\n---\n\n");
   if (turnProvider.toolCalls) {
     for await (const call of turnProvider.toolCalls({ prompt: systemPrefixedPrompt, tools: mcpTools })) {
       if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
         await acknowledgeStoppedTurn({ deviceToken, gateway, messageId, threadId: queued.threadId });
         return true;
       }
-      const toolResult = queued.planPhase === "planning" && call.kind !== "read" && call.kind !== "web_search" && call.kind !== "web_fetch" ? await refusePlanningMutation({ call, governance, threadId: queued.threadId }) : await executeGovernedToolCall({
+      const toolResult = queued.planPhase === "planning" && !isPlanningAllowed(call) ? await refusePlanningMutation({ call, governance, threadId: queued.threadId }) : await executeGovernedToolCall({
         call,
         governance,
         onTask: gateway.enqueueSubagent ? async (taskCall) => {
@@ -270,7 +341,8 @@ async function runClaimedTurn({
         threadId: queued.threadId,
       });
       toolResults.push(toolResult.output);
-      if (toolResult.kind === "executed" && (call.kind === "edit" || call.kind === "bash")) mutated = true;
+      if (toolResult.kind === "executed" && (call.kind === "edit" || call.kind === "str_replace" || call.kind === "bash")) mutated = true;
+      if (toolResult.kind === "executed" && call.kind === "todo") await gateway.updateTodos?.({ items: call.items, threadId: queued.threadId }).catch(() => undefined);
       if (await gateway.isStopRequested({ deviceToken, threadId: queued.threadId })) {
         if (mutated) await gateway.snapshotDiff?.({ content: await computeDiff({ root, startCommit: "HEAD" }), threadId: queued.threadId });
         await checkpointTurn();
@@ -415,7 +487,7 @@ async function runAgenticClaimedTurn({
   policy: Policy;
   platform: MachinePlatform;
   prompt: string;
-  queued: { content: string; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
+  queued: { content: string; history?: HistoryEntry[]; modelId?: string; permissionProfile?: "read-only" | "workspace-write" | "full-access"; planPhase?: "planning" | "building" | "complete"; projectId?: string; projectPath: string; reviewComments?: ReviewComment[]; thinkingLevel?: "none" | "low" | "medium" | "high"; threadId: string };
   reviewComments: ReviewComment[];
   root: string;
   skills: Map<string, { body: string; directory: string }>;
@@ -446,7 +518,7 @@ async function runAgenticClaimedTurn({
 
   const callbacks: TurnCallbacks = {
     executeToolCall: async (call) => {
-      const toolResult = queued.planPhase === "planning" && call.kind !== "read" && call.kind !== "web_search" && call.kind !== "web_fetch"
+      const toolResult = queued.planPhase === "planning" && !isPlanningAllowed(call)
         ? await refusePlanningMutation({ call, governance, threadId: queued.threadId })
         : await executeGovernedToolCall({
             call,
@@ -470,7 +542,8 @@ async function runAgenticClaimedTurn({
             threadId: queued.threadId,
           });
 
-      if (toolResult.kind === "executed" && (call.kind === "edit" || call.kind === "bash")) mutated = true;
+      if (toolResult.kind === "executed" && (call.kind === "edit" || call.kind === "str_replace" || call.kind === "bash")) mutated = true;
+      if (toolResult.kind === "executed" && call.kind === "todo") await gateway.updateTodos?.({ items: call.items, threadId: queued.threadId }).catch(() => undefined);
       return { content: toolResult.output, isError: toolResult.kind === "refused", toolUseId: call.kind };
     },
     onText: async (text) => {
@@ -484,7 +557,7 @@ async function runAgenticClaimedTurn({
   };
 
   try {
-    const messages: ChatMessage[] = [{ content: prompt, role: "user" }];
+    const messages: ChatMessage[] = [...historyToChatMessages(queued.history, queued.content), { content: prompt, role: "user" }];
 
     const result = await runAgenticTurn({
       messages,

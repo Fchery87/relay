@@ -44,6 +44,64 @@ export async function editFile({ content, path, root }: { content: string; path:
   await writeFile(target, content, "utf8");
 }
 
+export async function strReplaceFile({ newString, oldString, path, replaceAll, root }: { newString: string; oldString: string; path: string; replaceAll?: boolean; root: string }): Promise<string> {
+  const target = resolveInsideRoot({ path, root });
+  if (oldString === "") {
+    try { await readFile(target, "utf8"); } catch {
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, newString, "utf8");
+      return `Created ${path}`;
+    }
+    throw new Error("oldString is empty but the file already exists — provide the text to replace");
+  }
+  const content = await readFile(target, "utf8");
+  const occurrences = content.split(oldString).length - 1;
+  if (occurrences === 0) throw new Error("oldString not found in file — read the file and match its content exactly");
+  if (occurrences > 1 && !replaceAll) throw new Error(`oldString appears ${occurrences} times — make it unique or set replaceAll to true`);
+  const updated = replaceAll ? content.replaceAll(oldString, newString) : content.replace(oldString, newString);
+  await writeFile(target, updated, "utf8");
+  return `Replaced ${replaceAll ? occurrences : 1} occurrence${(replaceAll ? occurrences : 1) === 1 ? "" : "s"} in ${path}`;
+}
+
+export async function grepSearch({ glob, path, pattern, root }: { glob?: string; path?: string; pattern: string; root: string }): Promise<string> {
+  const MAX_MATCHES = 200;
+  const MAX_BYTES = 20_000;
+  const searchRoot = path ? resolveInsideRoot({ path, root }) : root;
+  // Args are passed as an array (no shell), so the pattern cannot inject commands.
+  const rgArgs = ["--line-number", "--no-heading", "--max-count", "50", "-e", pattern, ...(glob ? ["--glob", glob] : []), searchRoot];
+  const grepArgs = ["-rn", "-e", pattern, ...(glob ? [`--include=${glob}`] : []), searchRoot];
+  let stdout: string;
+  let exitCode: number;
+  try {
+    const proc = Bun.spawn(["rg", ...rgArgs], { cwd: root, stderr: "pipe", stdout: "pipe" });
+    stdout = await new Response(proc.stdout).text();
+    exitCode = await proc.exited;
+  } catch {
+    const proc = Bun.spawn(["grep", ...grepArgs], { cwd: root, stderr: "pipe", stdout: "pipe" });
+    stdout = await new Response(proc.stdout).text();
+    exitCode = await proc.exited;
+  }
+  if (exitCode === 1 && !stdout.trim()) return "No matches found.";
+  if (exitCode > 1) throw new Error(`Search failed (exit ${exitCode}) — check the pattern syntax`);
+  const lines = stdout.split("\n").filter(Boolean).slice(0, MAX_MATCHES)
+    .map((line) => line.startsWith(root) ? line.slice(root.length + 1) : line);
+  let output = lines.join("\n");
+  if (output.length > MAX_BYTES) output = `${output.slice(0, MAX_BYTES)}\n[truncated at 20KB]`;
+  return output || "No matches found.";
+}
+
+export async function globFind({ pattern, root }: { pattern: string; root: string }): Promise<string> {
+  const MAX_RESULTS = 500;
+  const glob = new Bun.Glob(pattern);
+  const matches: string[] = [];
+  for await (const file of glob.scan({ cwd: root, dot: false, onlyFiles: true })) {
+    matches.push(file);
+    if (matches.length >= MAX_RESULTS) break;
+  }
+  if (matches.length === 0) return "No files matched.";
+  return matches.sort().join("\n") + (matches.length >= MAX_RESULTS ? "\n[capped at 500 results]" : "");
+}
+
 export async function runCommand({ command, onOutput, platform, root, timeout = 120_000, permissionProfile = "workspace-write" }: {
   command: string;
   onOutput?: (chunk: string) => Promise<void>;

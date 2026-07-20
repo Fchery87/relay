@@ -1,7 +1,7 @@
 import type { MachinePlatform } from "@relay/shared";
 
 import { classifyToolCall, evaluatePolicy, type Capability, type Policy, type PolicyDecision, type RiskTier } from "./policy";
-import { executeToolCall, type ToolCall } from "./tool-executor";
+import { executeToolCall, type CompletedTool, type ToolCall } from "./tool-executor";
 import { toolContract } from "./tool-registry";
 
 export interface GovernanceGateway {
@@ -16,7 +16,7 @@ export type GovernedToolResult =
 export async function executeGovernedToolCall({ call, governance, onCompleted, onMcp, onOutput, onTask, platform, policy, root, skills, threadId }: {
   call: ToolCall;
   governance: GovernanceGateway;
-  onCompleted(event: { summary: string; tool: "bash" | "edit" | "mcp" | "read" | "skill" | "task" | "web_search" | "web_fetch" }): Promise<void>;
+  onCompleted(event: { summary: string; tool: CompletedTool }): Promise<void>;
   onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
   onOutput?: (output: string) => Promise<void>;
   onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<string>;
@@ -59,6 +59,8 @@ export function summarizeToolCall(call: ToolCall): string {
   if (call.kind === "bash") return redactCredentials(call.command);
   if (call.kind === "skill") return `skill ${call.name}`;
   if (call.kind === "todo") return "todo";
+  if (call.kind === "grep") return `grep ${call.pattern}`;
+  if (call.kind === "glob") return `glob ${call.pattern}`;
   if (call.kind === "web_search") return `web search: ${call.query}`;
   if (call.kind === "web_fetch") return `web fetch: ${call.url}`;
   return `${call.kind} ${"path" in call ? call.path : ""}`;

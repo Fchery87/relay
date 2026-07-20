@@ -12,9 +12,13 @@ export interface SystemPromptContext {
   skills?: Skill[];
   /** Effective model id for this turn (e.g. "deepseek/deepseek-v4-flash") */
   modelId?: string;
+  /** Plan-mode phase for this turn, when the thread is a plan run */
+  planPhase?: "planning" | "building" | "complete";
+  /** Subagent roles available to the task tool */
+  subagentRoles?: ReadonlyArray<{ description: string; name: string }>;
 }
 
-export async function buildSystemPrompt({ root, platform, skills, modelId }: SystemPromptContext): Promise<string> {
+export async function buildSystemPrompt({ root, platform, skills, modelId, planPhase, subagentRoles }: SystemPromptContext): Promise<string> {
   const blocks: string[] = [];
 
   // Identity
@@ -39,6 +43,22 @@ export async function buildSystemPrompt({ root, platform, skills, modelId }: Sys
   }
   blocks.push(rules.join("\n"));
 
+  // Plan-mode phase
+  if (planPhase === "planning") {
+    blocks.push([
+      "PLAN MODE — PLANNING PHASE:",
+      "You are in the read-only planning phase. Investigate with read, grep, glob, web_search, and web_fetch, then produce an ordered, verifiable implementation plan as your reply.",
+      "Mutating tools (edit, str_replace, bash, task) are refused in this phase — do not attempt them; plan the changes instead.",
+      "A good plan lists concrete steps with the files involved and how each step will be verified.",
+    ].join("\n"));
+  } else if (planPhase === "building") {
+    blocks.push([
+      "PLAN MODE — BUILDING PHASE:",
+      "An approved plan exists for this thread (see the conversation). Execute it step by step with your full toolset, verifying each step as the plan specifies before moving on.",
+      "If reality contradicts the plan, say so and adapt — do not silently diverge.",
+    ].join("\n"));
+  }
+
   // Environment
   const envBlocks: string[] = [`Project root: ${root}`, `Platform: ${platform}`];
   try {
@@ -52,13 +72,29 @@ export async function buildSystemPrompt({ root, platform, skills, modelId }: Sys
 
   blocks.push(`ENVIRONMENT:\n${envBlocks.join("\n")}`);
 
-  // Project instructions
-  for (const filename of ["AGENTS.md", "CLAUDE.md", ".relay/instructions.md"]) {
+  // Project instructions. AGENTS.md and CLAUDE.md are alternative names for
+  // the same convention — load whichever exists first, not both.
+  const instructionFiles: string[] = [];
+  for (const filename of ["AGENTS.md", "CLAUDE.md"]) {
+    try {
+      await readFile(join(root, filename), "utf8");
+      instructionFiles.push(filename);
+      break;
+    } catch { /* file doesn't exist */ }
+  }
+  instructionFiles.push(".relay/instructions.md");
+  for (const filename of instructionFiles) {
     try {
       const content = await readFile(join(root, filename), "utf8");
-      const capped = content.length > 8000 ? content.slice(0, 8000) : content;
+      const capped = content.length > 8000 ? `${content.slice(0, 8000)}\n[…truncated at 8000 characters]` : content;
       blocks.push(`PROJECT INSTRUCTIONS (${filename}):\n${capped}`);
     } catch { /* file doesn't exist */ }
+  }
+
+  // Subagent role catalog for the task tool
+  if (subagentRoles && subagentRoles.length > 0) {
+    const catalog = subagentRoles.map((r) => `- ${r.name}: ${r.description}`).join("\n");
+    blocks.push(`AVAILABLE SUBAGENT ROLES (for the task tool — use these exact role names):\n${catalog}`);
   }
 
   // Skills catalog

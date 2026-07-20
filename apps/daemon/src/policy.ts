@@ -50,7 +50,10 @@ export function classifyToolCall(call: ToolCall): { capability: Capability; risk
   if (call.kind === "skill") return { capability: "read", risk: "low" };
   if (call.kind === "todo") return { capability: "read", risk: "low" };
   if (call.kind === "read") return { capability: "read", risk: isSensitivePath(call.path) ? "critical" : "low" };
+  if (call.kind === "grep") return { capability: "read", risk: call.path && isSensitivePath(call.path) ? "critical" : "low" };
+  if (call.kind === "glob") return { capability: "read", risk: "low" };
   if (call.kind === "edit") return { capability: "edit", risk: isSensitivePath(call.path) ? "critical" : "low" };
+  if (call.kind === "str_replace") return { capability: "edit", risk: isSensitivePath(call.path) ? "critical" : "low" };
   if (call.kind === "web_search") return { capability: "search", risk: "low" };
   if (call.kind === "web_fetch") return { capability: "search", risk: "low" };
   const normalized = call.command.toLowerCase().replaceAll(/\s+/g, " ").trim();

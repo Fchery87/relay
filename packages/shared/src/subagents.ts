@@ -28,6 +28,14 @@ export type SubagentResult = z.infer<typeof subagentResultSchema>;
 const READ_ONLY: Capability[] = ["read", "task"];
 const WRITER: Capability[] = ["read", "edit", "exec", "task"];
 
+const RESULT_CONTRACT = [
+  "End your reply with a Subagent Result Contract in exactly this format:",
+  "Result: <one-line outcome>",
+  "Findings: <bullet list; cite evidence as file:line where applicable>",
+  "Risks: <anything uncertain, unverified, or needing follow-up — or 'none'>",
+  "Artifacts: <files created or changed — or 'none'>",
+].join("\n");
+
 function role(name: string, description: string, options: Partial<SubagentRole> = {}): SubagentRole {
   const writer = options.writer ?? false;
   return subagentRoleSchema.parse({
@@ -37,7 +45,14 @@ function role(name: string, description: string, options: Partial<SubagentRole> 
     maxTurns: 20,
     modelId: DEFAULT_MODEL_ID,
     name,
-    prompt: `You are the ${name} subagent. ${description} Return a concise Subagent Result Contract.`,
+    prompt: [
+      `You are the ${name} subagent, a focused specialist working one delegated task. ${description}`,
+      writer
+        ? "Make narrow, coherent changes scoped to the task — do not refactor beyond it. Verify your changes (run tests or read back the result) before reporting."
+        : "You are read-only: investigate and report, do not attempt to modify anything.",
+      "Stay strictly on the delegated task; if it is impossible or ambiguous, say so in your result rather than guessing.",
+      RESULT_CONTRACT,
+    ].join("\n\n"),
     thinkingLevel: "none",
     writer,
     ...options,

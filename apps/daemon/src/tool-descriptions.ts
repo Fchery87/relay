@@ -47,7 +47,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   task: [
     "Delegate a subtask to a specialized subagent with a specific role and capability set.",
     "Each subagent runs in its own context (fresh or forked) with a bounded number of turns.",
-    "Specify the role (e.g., 'explorer', 'builder', 'reviewer') and the exact task to perform.",
+    "The role must be one of the exact names listed under AVAILABLE SUBAGENT ROLES in the system prompt (e.g., 'explore', 'build', 'reviewer').",
     "Capabilities must be a subset of the parent's allowed capabilities — escalation is blocked.",
     "Subagents can read, edit, execute commands, or delegate further (subject to depth limits).",
     "Results are returned as a summary with findings and artifacts.",

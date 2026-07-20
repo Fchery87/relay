@@ -2,7 +2,7 @@ import { tokenUsageSchema, type TokenUsage } from "@relay/shared";
 import { z } from "zod";
 
 import { getToolDescription } from "../tool-descriptions";
-import { toolCallSchema } from "./shared";
+import { toolCallSchema, toolCallToArgs } from "./shared";
 import type { ToolCall } from "../tool-executor";
 import type { ChatMessage, TurnModelProvider, TurnStreamEvent } from "../turn-loop";
 import type { McpModelTool } from "../model-provider";
@@ -144,7 +144,7 @@ export class OpenAIResponsesTurnProvider implements TurnModelProvider {
 
 function buildToolDefinitions(mcpTools: McpModelTool[]): Array<{ description: string; name: string; parameters: Record<string, unknown>; type: "function" }> {
   const definitions: Array<{ description: string; name: string; parameters: Record<string, unknown>; type: "function" }> = [];
-  const nativeTools = ["bash", "read", "edit", "task", "web_search", "web_fetch", "skill"];
+  const nativeTools = ["bash", "read", "edit", "str_replace", "grep", "glob", "todo", "task", "web_search", "web_fetch", "skill"];
 
   for (const name of nativeTools) {
     definitions.push({
@@ -173,18 +173,6 @@ function mapToolName(call: ToolCall, tools: McpModelTool[]): string {
     return mcpModelName(tools[index] ?? { name: call.name, serverId: call.serverId }, Math.max(0, index));
   }
   return call.kind;
-}
-
-function toolCallToArgs(call: ToolCall): Record<string, unknown> {
-  if (call.kind === "bash") return { command: call.command };
-  if (call.kind === "read") return { path: call.path };
-  if (call.kind === "edit") return { content: call.content, path: call.path };
-  if (call.kind === "task") return { capabilities: call.capabilities, role: call.role, task: call.task };
-  if (call.kind === "web_search") return { query: call.query };
-  if (call.kind === "web_fetch") return { prompt: call.prompt ?? "", url: call.url };
-  if (call.kind === "mcp") return call.arguments;
-  if (call.kind === "skill") return { name: call.name };
-  return {};
 }
 
 function parseToolCall(modelName: string, args: unknown, mcpTools: McpModelTool[]): ToolCall | null {
