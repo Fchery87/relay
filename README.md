@@ -1,10 +1,10 @@
 # Relay
 
-Relay is a browser control surface for a local coding-agent daemon. It pairs a locally running daemon with the Convex-backed workspace and renders its machine state in the web sidebar.
+Relay is a browser control surface for a local coding-agent daemon. It pairs a locally running daemon with a Convex-backed workspace and renders its machine state in the web sidebar. The Convex backend is [self-hosted](docs/operations/self-hosted-convex.md) — a single local binary, no cloud account required.
 
 ## Architecture
 
-Relay v1 uses a raw, daemon-owned agent loop. The **harness kernel** (in progress) replaces this with a durable, adapter-first architecture:
+Relay v1 uses a raw, daemon-owned agent loop. The **harness kernel** replaces this with a durable, adapter-first architecture. The kernel implementation has landed (provider runtime with registry/driver seams and a Codex app-server driver, orchestration task graph/scheduler/time machine and durable workflows, client-runtime sync/subscription supervisors, local task/artifact/history stores with retention, daemon extension and tool registries, observability, and conformance/crash/security gate scripts under `scripts/`); it runs behind `RELAY_RUNTIME_MODE` and stays off by default until the production acceptance gates pass.
 
 - **`@relay/contracts`** — canonical types: branded identifiers, event/command envelopes, run state machine, history, workspace, permissions
 - **`@relay/harness-runtime`** — deep `HarnessRuntime` interface (single primary seam), deterministic fake, local durable implementation, context manager
@@ -22,8 +22,9 @@ Relay v1 uses a raw, daemon-owned agent loop. The **harness kernel** (in progres
 
 ## Development
 
+0. **Backend**: start the self-hosted Convex backend if it isn't already running (`curl http://127.0.0.1:3210/version` to check): `~/.local/share/convex-selfhost/start-relay-backend.sh`. First-time machine setup (binary, keys, env files) is covered in [docs/operations/self-hosted-convex.md](docs/operations/self-hosted-convex.md).
 1. Install dependencies: `bun install`.
-2. Push Convex functions to your deployment. This syncs schema validators and must run **before** the daemon (the daemon calls functions whose schemas may have changed locally):
+2. Push Convex functions to the deployment. This syncs schema validators and must run **before** the daemon (the daemon calls functions whose schemas may have changed locally):
 
    ```bash
    bun run convex:dev
@@ -31,7 +32,7 @@ Relay v1 uses a raw, daemon-owned agent loop. The **harness kernel** (in progres
 
    Keep it running for live reload, or Ctrl+C once `🤖 Convex is ready` appears.
 
-3. Start the web sidebar. If `apps/web/.env.local` does not already exist, create it and set `VITE_CONVEX_URL` to your deployment's URL:
+3. Start the web sidebar. If `apps/web/.env.local` does not already exist, create it and set `VITE_CONVEX_URL` to the backend URL (`http://127.0.0.1:3210` for the self-hosted backend):
 
    ```bash
    bun run web:dev
@@ -56,6 +57,8 @@ The sidebar marks a machine offline 30 seconds after its last heartbeat. Skip st
 ### Troubleshooting
 
 **`ArgumentValidationError` or `Could not find public function for …`** — the deployed Convex functions are out of date with local code. Run `bun run convex:dev` to push the latest function schemas, tables, and validators, then retry.
+
+**`fatal: Unable to create '…/.git/index.lock'` when committing** — the running daemon periodically executes git commands against the repo and can race your commit. Stop `daemon:dev`, remove the stale `.git/index.lock` if one is left behind, commit, then restart the daemon.
 
 **`bun run` shows a help page instead of executing** — Bun's `--cwd` flag can misparse on some versions. The root `package.json` uses `cd <dir> && bun run <script>` to avoid this; if you encounter it in custom scripts, use the `cd` form instead.
 
