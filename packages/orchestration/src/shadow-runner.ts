@@ -82,17 +82,13 @@ export function defaultEventComparator(
   legacyEvents: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>,
 ): string[] {
   const issues: string[] = [];
-  // Compare event counts
-  if (kernelEvents.length === 0 && legacyEvents.length > 0) {
-    issues.push("Kernel produced 0 events while legacy produced events");
-  }
-  // Check for missing critical event types in kernel
-  const kernelTypes = new Set(kernelEvents.map((e) => e.type));
-  const legacyTypes = new Set(legacyEvents.map((e) => e.type));
-  for (const lt of legacyTypes) {
-    if (!kernelTypes.has(lt) && isCriticalEvent(lt)) {
-      issues.push(`Critical event "${lt}" missing from kernel stream`);
-    }
+  const comparable = (events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>) => events.filter((event) => isCriticalEvent(event.type));
+  const kernel = comparable(kernelEvents); const legacy = comparable(legacyEvents);
+  if (kernel.length !== legacy.length) issues.push(`Critical event count differs: kernel=${kernel.length}, legacy=${legacy.length}`);
+  const count = Math.min(kernel.length, legacy.length);
+  for (let i = 0; i < count; i++) {
+    const left = kernel[i]!; const right = legacy[i]!;
+    if (left.type !== right.type || left.turnId !== right.turnId) issues.push(`Critical event divergence at index ${i}: kernel=${left.type}/${left.turnId ?? ""}, legacy=${right.type}/${right.turnId ?? ""}`);
   }
   return issues;
 }

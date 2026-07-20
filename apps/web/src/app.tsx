@@ -14,7 +14,7 @@ import { resolveSettingsSection, SettingsView, type SettingsSection } from "./se
 import { shortcutForEvent, useShellState } from "./shell-state";
 import { SubagentPanel, type RoleRecord } from "./subagent-panel";
 import { ThreadView } from "./thread-view";
-import { createThreadRef, legacyRunData, listNeedsYou, removeThreadRef, requestAddProjectRef, type LegacyRunSummary, type MachineSummary } from "./run-data";
+import { canonicalRunData, createThreadRef, listNeedsYou, removeThreadRef, requestAddProjectRef, type MachineSummary, type ProjectionRunSummary } from "./run-data";
 import { WorkspaceSidebar, type SidebarProject } from "./workspace-sidebar";
 import type { ThinkingLevel } from "@relay/shared";
 
@@ -71,7 +71,7 @@ export function UnconfiguredWorkspace() {
 }
 
 function SidebarRuns({ activeThreadId, onSelectRun, projectId }: { activeThreadId?: string; onSelectRun: (projectId: string, threadId: string) => void; projectId: string }) {
-  const runs = useQuery(legacyRunData.listRuns, { projectId }) as LegacyRunSummary[] | undefined;
+  const runs = useQuery(canonicalRunData.listRuns, { projectId }) as ProjectionRunSummary[] | undefined;
   const removeThread = useMutation(removeThreadRef);
   const navigate = useNavigate();
   const [pendingDelete, setPendingDelete] = useState<{ threadId: string; title: string } | null>(null);
@@ -90,14 +90,14 @@ function SidebarRuns({ activeThreadId, onSelectRun, projectId }: { activeThreadI
     <>
       <ul className="run-list">
         {runs.map((run) => (
-          <li key={run._id}>
-            <button aria-current={run._id === activeThreadId ? "page" : undefined} className="run-link" onClick={() => onSelectRun(projectId, run._id)} type="button">
+          <li key={run.runId}>
+            <button aria-current={run.runId === activeThreadId ? "page" : undefined} className="run-link" onClick={() => onSelectRun(projectId, run.runId)} type="button">
               <span aria-hidden="true" className="run-status-dot" data-thread-status={run.status} />
               <span className="run-title">{run.title}</span>
               <button
                 aria-label="Delete task"
                 className="run-delete"
-                onClick={(e) => { e.stopPropagation(); setPendingDelete({ threadId: run._id, title: run.title }); }}
+                onClick={(e) => { e.stopPropagation(); setPendingDelete({ threadId: run.runId, title: run.title }); }}
                 type="button"
               >
                 ✕
@@ -152,7 +152,7 @@ function Workspace({
   const projects = useMemo(() => flattenProjects(machines ?? [], now), [machines, now]);
   const requestedProject = params.projectId ? projects.find((project) => project.id === params.projectId) : undefined;
   const activeProject = requestedProject ?? (params.projectId ? undefined : projects[0]);
-  const activeProjectRuns = useQuery(legacyRunData.listRuns, activeProject ? { projectId: activeProject.id } : "skip") as LegacyRunSummary[] | undefined;
+  const activeProjectRuns = useQuery(canonicalRunData.listRuns, activeProject ? { projectId: activeProject.id } : "skip") as ProjectionRunSummary[] | undefined;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -178,7 +178,7 @@ function Workspace({
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const runItems: PaletteItem[] = (activeProjectRuns ?? []).map((run) => ({
       detail: activeProject?.name,
-      id: `run:${activeProject?.id}:${run._id}`,
+      id: `run:${activeProject?.id}:${run.runId}`,
       kind: "run",
       label: run.title,
     }));
@@ -327,11 +327,11 @@ function AuthenticatedSettings() {
 
 function SettingsConnections({ projectId }: { projectId: string }) {
   const servers = useQuery(listMcpServers, { projectId });
-  const runs = useQuery(legacyRunData.listRuns, { projectId }) as LegacyRunSummary[] | undefined;
+  const runs = useQuery(canonicalRunData.listRuns, { projectId }) as ProjectionRunSummary[] | undefined;
   const createMcp = useMutation(createMcpServer);
   const updateMcp = useMutation(updateMcpServer);
   const removeMcp = useMutation(removeMcpServer);
-  const approvalThreadId = runs?.[0]?._id;
+  const approvalThreadId = runs?.[0]?.runId;
 
   if (!approvalThreadId) return <p className="settings-hint">Start a task in this project first — MCP connections attach their approvals to a run.</p>;
   return (

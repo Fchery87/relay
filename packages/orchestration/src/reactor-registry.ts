@@ -1,0 +1,2 @@
+import type { EffectIntent, EffectReactor, ReactorRegistry } from "@relay/contracts";
+export class MutableReactorRegistry { private readonly reactors = new Map<EffectIntent["kind"], EffectReactor>(); register(kind: EffectIntent["kind"], reactor: EffectReactor): void { if (this.reactors.has(kind)) throw new Error(`Reactor already registered: ${kind}`); this.reactors.set(kind, reactor); } build(): ReactorRegistry { return Object.fromEntries(this.reactors) as ReactorRegistry; } }

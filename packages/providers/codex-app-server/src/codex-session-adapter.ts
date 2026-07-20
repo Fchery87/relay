@@ -23,6 +23,8 @@ export type SessionAdapterConfig = {
   onEvent?: (event: NormalizedEvent) => void;
   /** Whether to subscribe to thread notifications automatically. */
   autoSubscribe?: boolean;
+  /** Resolve server-initiated approval/input/MCP requests durably. */
+  onRequest?: (request: { method: string; params: unknown }) => Promise<{ result?: unknown; error?: { code: number; message: string; data?: unknown } }>;
 };
 
 export type CodexSessionAdapter = {
@@ -62,6 +64,17 @@ export function createCodexSessionAdapter(config: SessionAdapterConfig): CodexSe
 
   // Subscribe to Codex notifications and normalize them
   notificationUnsub = transport.onNotification((notification: CodexServerNotification) => {
+    if (notification.method.startsWith("serverRequest/")) {
+      const request = notification.params as unknown as { method?: string; params?: unknown; respond?: (result?: unknown, error?: { code: number; message: string; data?: unknown }) => void };
+      const method = request.method ?? notification.method.slice("serverRequest/".length);
+      const unhandled: { result?: unknown; error?: { code: number; message: string; data?: unknown } } = { error: { code: -32601, message: `Unhandled Codex server request: ${method}` } };
+      void (config.onRequest
+        ? config.onRequest({ method, params: request.params })
+        : Promise.resolve(unhandled))
+        .then((resolution) => request.respond?.(resolution.result, resolution.error))
+        .catch((error) => request.respond?.(undefined, { code: -32603, message: error instanceof Error ? error.message : String(error) }));
+      return;
+    }
     const normalized = normalizeCodexNotification(
       { method: notification.method, params: notification.params as Record<string, unknown> | undefined },
       activeThreadId ?? "unknown",

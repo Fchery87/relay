@@ -75,21 +75,30 @@ export function buildContext(
     };
   }
 
-  // 3. Collect items until we hit the budget, then compact
+  // 3. Select a deterministic recent-turn suffix, then compact older items.
   let historyTokens = 0;
   const toInclude: CanonicalHistoryItem[] = [];
   const compacted: CanonicalHistoryItem[] = [];
   let triggered = false;
-
+  const totalHistoryTokens = items.reduce((sum, item) => sum + estimateItemTokens(item), 0);
+  const shouldCompact = totalHistoryTokens > budgetForHistory * 0.8;
+  const recentTurnIds = new Set<string>();
   for (const item of items) {
+    const turnId = "turnId" in item ? (item as { turnId?: string }).turnId : undefined;
+    if (turnId) recentTurnIds.add(turnId);
+    if (recentTurnIds.size >= policy.preserveRecentTurns) break;
+  }
+  for (const item of items) {
+    const turnId = "turnId" in item ? (item as { turnId?: string }).turnId : undefined;
+    const recent = Boolean(turnId && recentTurnIds.has(turnId));
     const t = estimateItemTokens(item);
-    if (historyTokens + t > budgetForHistory * 0.8) {
+    if (!shouldCompact || (recent && t <= budgetForHistory * 0.8 && historyTokens + t <= budgetForHistory) || (!recent && historyTokens + t <= policy.compactToTokens)) {
+      historyTokens += t;
+      toInclude.push(item);
+    } else {
       triggered = true;
       compacted.push(item);
-      continue;
     }
-    historyTokens += t;
-    toInclude.push(item);
   }
 
   // Reverse back to chronological order

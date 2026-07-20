@@ -234,7 +234,8 @@ export default defineSchema({
     runId: v.string(),
     sequence: v.number(),
     type: v.string(),
-  }).index("by_run_sequence", ["runId", "sequence"]).index("by_event_id", ["eventId"]).index("by_owner", ["ownerId"]).index("by_machine_run", ["machineId", "runId"]),
+    projectId: v.optional(v.id("projects")),
+  }).index("by_run_sequence", ["runId", "sequence"]).index("by_project_run", ["projectId", "runId", "sequence"]).index("by_event_id", ["eventId"]).index("by_owner", ["ownerId"]).index("by_machine_run", ["machineId", "runId"]),
 
   projectionSnapshots: defineTable({
     machineId: v.optional(v.id("machines")),
@@ -243,7 +244,8 @@ export default defineSchema({
     sequence: v.number(),
     snapshotJson: v.string(),
     updatedAt: v.number(),
-  }).index("by_run", ["runId"]).index("by_owner", ["ownerId"]).index("by_machine_run", ["machineId", "runId"]),
+    projectId: v.optional(v.id("projects")),
+  }).index("by_run", ["runId"]).index("by_project", ["projectId", "updatedAt"]).index("by_owner", ["ownerId"]).index("by_machine_run", ["machineId", "runId"]),
 
   projectionCursors: defineTable({
     direction: v.union(v.literal("inbound"), v.literal("outbound")),

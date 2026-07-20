@@ -1,0 +1,3 @@
+import { expect, test } from "bun:test";
+import { exportHandoff } from "./history-export";
+test("handoff export redacts secrets and carries canonical data", () => { const pkg = exportHandoff({ snapshot: { runId: "r", status: "ready", sequence: 0, streamVersion: 0, restartCount: 0, createdAt: 1, updatedAt: 1 } as any, history: { runId: "r", items: [], throughSequence: 0, createdAt: 1 } as any, artifacts: [], unresolved: [{ id: "i", runId: "r", kind: "trust", title: "x", detail: "token sk-1234567890123456", deepLink: "/r", action: { label: "allow", command: "x", payload: {} }, createdAt: 1 }] }); expect(pkg.schemaVersion).toBe(1); expect(JSON.stringify(pkg)).toContain("[REDACTED]"); });

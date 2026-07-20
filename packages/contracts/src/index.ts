@@ -8,3 +8,8 @@ export * from "./permissions";
 export * from "./receipts";
 export * from "./effects";
 export * from "./runtime-schemas";
+export * from "./artifacts";
+export * from "./tasks";
+export * from "./extensions";
+export * from "./operator-inbox";
+export * from "./task-messages";

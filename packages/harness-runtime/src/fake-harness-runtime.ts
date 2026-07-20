@@ -58,6 +58,7 @@ export class FakeHarnessRuntime implements HarnessRuntime {
     }
   >();
   private opCount = 0;
+  private readonly receipts = new Map<string, TurnReceipt>();
 
   constructor(private readonly scenario?: FakeScenario) {}
 
@@ -99,11 +100,19 @@ export class FakeHarnessRuntime implements HarnessRuntime {
   async sendTurn(input: SendTurnInput): Promise<TurnReceipt> {
     this.opCount++;
     const run = this.mustGetRun(input.runId);
+    if (input.commandId) { const existing = this.receipts.get(input.commandId as string); if (existing) return existing; }
 
     if (this.scenario?.providerFails) {
+      const turnId = `turn-${randomUUIDv7()}` as never;
+      const commandId = (input.commandId ?? `cmd-${randomUUIDv7()}`) as never;
+      const receipt: TurnReceipt = { turnId, commandId };
+      if (input.commandId) this.receipts.set(input.commandId as string, receipt);
+      const started = this.makeEvent("turn.started", run.snapshot, { prompt: input.prompt });
+      this.append(run.snapshot, started);
       const failed = this.makeEvent("turn.failed", run.snapshot, { error: "provider failure" });
       this.append(run.snapshot, failed);
-      throw new Error("Provider process lost");
+      run.snapshot.status = "failed";
+      return receipt;
     }
 
     if (this.scenario?.blockOnSend) {
@@ -135,7 +144,9 @@ export class FakeHarnessRuntime implements HarnessRuntime {
     this.transition(run.snapshot, "completed");
 
     const commandId = `cmd-${randomUUIDv7()}` as CommandId;
-    return { turnId: turnId as never, commandId };
+    const receipt = { turnId: turnId as never, commandId };
+    this.receipts.set((input.commandId ?? commandId) as string, receipt);
+    return receipt;
   }
 
   async steerTurn(input: SteerTurnInput): Promise<void> {

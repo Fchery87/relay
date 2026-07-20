@@ -34,7 +34,15 @@ test("the PRD amendment links the ADRs", () => {
   expect(content).toContain("adapter-first harness");
 });
 
-test("runtime mode selects once in the daemon root with legacy as the default", () => {
+test("kernel daemon routes provider callbacks through the provider event gateway", () => {
+  const content = readFileSync(resolve(repoRoot, "apps/daemon/src/kernel-daemon.ts"), "utf8");
+  expect(content).not.toContain("runtime.appendEvent");
+  expect(content).toContain("persistProviderEvent");
+  expect(content).toContain("resolveMaxConcurrentRuns");
+  expect(content).not.toContain("maxConcurrentRuns: 4");
+});
+
+test("runtime mode selects once in the daemon root with legacy as the migration-safe default", () => {
   const mode = resolveRuntimeMode({});
   expect(mode).toBe("legacy");
 });

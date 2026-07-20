@@ -11,6 +11,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@relay/contracts": "workspace:*"
+    "@relay/contracts": "workspace:*",
+    "@relay/provider-runtime": "workspace:*"
   }
 }

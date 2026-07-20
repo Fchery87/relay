@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { MachinePlatform } from "@relay/shared";
 
 import { shellInvocation } from "./shell";
+import { validateCommand } from "@relay/workspace-runtime";
 
 export function resolveInsideRoot({ path, root }: { path: string; root: string }): string {
   const resolved = resolve(root, path);
@@ -43,15 +44,18 @@ export async function editFile({ content, path, root }: { content: string; path:
   await writeFile(target, content, "utf8");
 }
 
-export async function runCommand({ command, onOutput, platform, root, timeout = 120_000 }: {
+export async function runCommand({ command, onOutput, platform, root, timeout = 120_000, permissionProfile = "workspace-write" }: {
   command: string;
   onOutput?: (chunk: string) => Promise<void>;
   platform: MachinePlatform;
   root: string;
   timeout?: number;
+  permissionProfile?: "read-only" | "workspace-write" | "full-access";
 }) {
   const MAX_OUTPUT = 30_000;
   const HEAD_KEEP = 10_000;
+  const validation = validateCommand(["sh", "-c", command], permissionProfile);
+  if (!validation.allowed) throw new Error(`Sandbox policy denied command: ${validation.reason}`);
   const invocation = shellInvocation({ command, platform });
   const process = Bun.spawn([invocation.executable, ...invocation.args], {
     cwd: root,

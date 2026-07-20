@@ -8,7 +8,7 @@ export type ToolCall =
   | { command: string; kind: "bash"; timeout?: number }
   | { capabilities: Capability[]; kind: "task"; role: string; task: string }
   | { arguments: Record<string, unknown>; kind: "mcp"; name: string; risk?: "low" | "high" | "critical"; serverId: string }
-  | { kind: "skill"; name: string }
+  | { body?: string; directory?: string; kind: "skill"; name: string }
   | { items: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>; kind: "todo" }
   | { kind: "web_search"; query: string }
   | { kind: "web_fetch"; prompt?: string; url: string };
@@ -36,7 +36,7 @@ export async function executeToolCall({ call, onCompleted, onMcp, onOutput, onTa
   }
   if (call.kind === "skill") {
     // Skill loading is handled externally via the onSkill callback
-    const body = (call as any).body ?? "Skill not loaded.";
+    const body = call.body ?? "Skill not loaded.";
     await onCompleted({ summary: `Loaded skill ${call.name}`, tool: "skill" });
     return { output: body, succeeded: true };
   }

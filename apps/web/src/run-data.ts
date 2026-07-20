@@ -84,11 +84,11 @@ export type RunDataBoundary = {
 
 export const listLegacyRuns = makeFunctionReference<"query", { projectId: string }, LegacyRunSummary[]>("conversations:listProjectThreads");
 
-export const listProjectionRuns = makeFunctionReference<"query", { projectId: string }, ProjectionRunSummary[]>("projections:listProjectionRuns");
+export const listProjectionRuns = makeFunctionReference<"query", { projectId: string }, ProjectionRunSummary[]>("projections/publish:listProjectionRuns");
 
-export const getProjectionSnapshot = makeFunctionReference<"query", { runId: string }, Record<string, unknown> | null>("projections:getRunSnapshot");
+export const getProjectionSnapshot = makeFunctionReference<"query", { runId: string }, Record<string, unknown> | null>("projections/publish:getRunSnapshot");
 
-export const listProjectionEvents = makeFunctionReference<"query", { runId: string; afterSequence: number; limit: number }, Array<{ eventId: string; type: string; payload: unknown; sequence: number }>>("projections:listRunEvents");
+export const listProjectionEvents = makeFunctionReference<"query", { runId: string; afterSequence: number; limit: number }, Array<{ eventId: string; type: string; payload: unknown; sequence: number }>>("projections/publish:listRunEvents");
 
 /** Resolve the run-data boundary at app startup. */
 export function resolveRunData(projectionEnabled: boolean): RunDataBoundary {
@@ -103,12 +103,12 @@ export function resolveRunData(projectionEnabled: boolean): RunDataBoundary {
   return { source: "legacy", listRuns: listLegacyRuns };
 }
 
-/**
- * The web app deliberately consumes the authenticated legacy transport through this
- * boundary until owner-scoped, contiguous kernel projections are production-verified.
- * Pass `RELAY_VITE_PROJECTION_ENABLED=true` to switch to projection reads.
- */
-export const legacyRunData: RunDataBoundary = {
-  source: "legacy",
-  listRuns: listLegacyRuns,
+/** Canonical projection reads are the default browser boundary; legacy is emergency rollback only. */
+export const canonicalRunData: RunDataBoundary = {
+  source: "projection",
+  listRuns: listProjectionRuns,
+  getRunSnapshot: getProjectionSnapshot,
+  listRunEvents: listProjectionEvents,
 };
+/** @deprecated emergency rollback boundary only; canonical projections are the default. */
+export const legacyRunData: RunDataBoundary = { source: "legacy", listRuns: listLegacyRuns };

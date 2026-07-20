@@ -5,6 +5,7 @@
 // and then routes bidirectional messages with bounded-parallelism queues.
 // ---------------------------------------------------------------------------
 
+import { ProviderProcessLostError } from "@relay/provider-runtime";
 import type { ServerRequest } from "./generated/ServerRequest";
 import type { ServerNotification } from "./generated/ServerNotification";
 import type { InitializeParams } from "./generated/InitializeParams";
@@ -64,8 +65,10 @@ export type CodexTransportConfig = {
   capabilities?: { experimentalApi?: boolean; optOutNotificationMethods?: string[] };
   /** Max pending outgoing requests before backpressure. */
   maxPendingRequests?: number;
-  /** Max queued incoming messages before dropping. */
+  /** Max queued incoming messages before applying typed overload failure. */
   maxIncomingQueue?: number;
+  /** Maximum stderr bytes retained for diagnostics. */
+  maxStderrBytes?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -85,6 +88,8 @@ export type CodexTransport = {
   notify(method: string, params?: unknown): void;
   /** Subscribe to incoming server→client notifications. */
   onNotification(handler: (notification: ServerNotification) => void): () => void;
+  /** Respond to a server-initiated request without losing its native id. */
+  respond(id: number | string, result?: unknown, error?: { code: number; message: string; data?: unknown }): void;
   /** Graceful shutdown. */
   close(): void;
   /** Whether the transport is connected/alive. */
@@ -94,6 +99,13 @@ export type CodexTransport = {
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
+
+function filteredEnvironment(): Record<string, string> {
+  const allowed = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CODEX_HOME"];
+  const environment: Record<string, string> = {};
+  for (const key of allowed) { const value = Bun.env[key]; if (value) environment[key] = value; }
+  return environment;
+}
 
 export function createCodexTransport(config: CodexTransportConfig): CodexTransport {
   const codexPath = config.codexPath ?? "codex";
@@ -108,6 +120,8 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
   let connected = false;
   let buffer = "";
   let incomingQueueSize = 0;
+  let stderrBytes = 0;
+  const maxStderrBytes = config.maxStderrBytes ?? 64 * 1024;
 
   // Spawn the child process
   process = Bun.spawn({
@@ -115,7 +129,7 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: Bun.env as Record<string, string>,
+    env: filteredEnvironment(),
   });
 
   // Read stderr asynchronously and log
@@ -126,7 +140,9 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
     while (true) {
       const { done, value } = await streamReader.read();
       if (done) break;
-      const text = decoder.decode(value, { stream: true });
+      const remaining = Math.max(0, maxStderrBytes - stderrBytes);
+      const text = decoder.decode(value, { stream: true }).slice(0, remaining);
+      stderrBytes += new TextEncoder().encode(text).byteLength;
       if (text.trim()) console.warn("[codex stderr]", text.trim());
     }
   })();
@@ -145,7 +161,14 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        if (incomingQueueSize >= maxIncoming) continue; // drop under load
+        if (incomingQueueSize >= maxIncoming) {
+          connected = false;
+          const error = new ProviderProcessLostError("Codex transport overloaded");
+          for (const [, p] of pending) { clearTimeout(p.timer); p.reject(error); }
+          pending.clear();
+          try { process?.kill(); } catch {}
+          return;
+        }
         incomingQueueSize++;
         try {
           const msg: JsonRpcMessage = JSON.parse(trimmed);
@@ -154,7 +177,10 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
             handleMessage(msg);
           });
         } catch {
-          console.warn("[codex transport] failed to parse:", trimmed.slice(0, 200));
+          const error = new ProviderProcessLostError("Malformed JSON-RPC message from Codex");
+          for (const [, p] of pending) { clearTimeout(p.timer); p.reject(error); }
+          pending.clear();
+          try { process?.kill(); } catch {}
         }
       }
     }
@@ -162,10 +188,15 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
     connected = false;
     for (const [, p] of pending) {
       clearTimeout(p.timer);
-      p.reject(new Error("Codex process exited"));
+      p.reject(new ProviderProcessLostError("Codex process exited"));
     }
     pending.clear();
   })();
+
+  function respond(id: number | string, result?: unknown, error?: { code: number; message: string; data?: unknown }): void {
+    if (!process || !connected) throw new Error("Codex transport disconnected");
+    sendRaw(error ? { jsonrpc: "2.0", id, error } : { jsonrpc: "2.0", id, result });
+  }
 
   function sendRaw(msg: JsonRpcMessage): void {
     if (!process?.stdin) throw new Error("Codex process not available");
@@ -190,13 +221,12 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
 
     // Server→client request (needs our response)
     if ("id" in msg && "method" in msg) {
-      // Route to notification handlers as a synthetic notification
       const serverReq = msg as JsonRpcRequest;
       for (const handler of notificationHandlers) {
         try {
           handler({
             method: `serverRequest/${serverReq.method}`,
-            params: serverReq as unknown as Record<string, unknown>,
+            params: { ...serverReq, respond: (result?: unknown, error?: { code: number; message: string; data?: unknown }) => respond(serverReq.id, result, error) },
           } as unknown as ServerNotification);
         } catch { /* swallow */ }
       }
@@ -235,6 +265,7 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
   function internalRequest(method: string, params?: unknown): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!process) return reject(new Error("Codex process not available"));
+      if (pending.size >= maxPending) return reject(new Error(`Codex request capacity exceeded (${maxPending})`));
       const id = nextId++;
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -253,6 +284,8 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
       if (!connected) throw new Error("Codex transport disconnected");
       return internalRequest(method, params);
     },
+
+    respond,
 
     notify(method: string, params?: unknown): void {
       if (!connected || !process) return;

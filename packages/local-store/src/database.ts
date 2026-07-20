@@ -249,6 +249,36 @@ const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 10,
+    up: (db) => {
+      db.run(`CREATE TABLE artifacts (artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, producing_event_id TEXT NOT NULL, media_type TEXT NOT NULL, byte_length INTEGER NOT NULL, sha256 TEXT NOT NULL, preview TEXT NOT NULL, storage_path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, UNIQUE(run_id, producing_event_id, sha256));`);
+      db.run(`CREATE INDEX idx_artifacts_run_created ON artifacts(run_id, created_at, artifact_id);`);
+    },
+  },
+  {
+    version: 11,
+    up: (db) => {
+      db.run(`CREATE TABLE history_snapshots (run_id TEXT NOT NULL, through_sequence INTEGER NOT NULL, hash TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(run_id, through_sequence));`);
+    },
+  },
+  {
+    version: 12,
+    up: (db) => {
+      db.run(`CREATE TABLE IF NOT EXISTS artifacts (artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, producing_event_id TEXT NOT NULL, media_type TEXT NOT NULL, byte_length INTEGER NOT NULL, sha256 TEXT NOT NULL, preview TEXT NOT NULL, storage_path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, UNIQUE(run_id, producing_event_id, sha256));`);
+      db.run(`CREATE TABLE IF NOT EXISTS history_snapshots (run_id TEXT NOT NULL, through_sequence INTEGER NOT NULL, hash TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(run_id, through_sequence));`);
+      db.run(`CREATE TABLE artifact_owners (artifact_id TEXT NOT NULL, run_id TEXT NOT NULL, producing_event_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(artifact_id, run_id, producing_event_id));`);
+      db.run(`CREATE INDEX idx_artifact_owners_run ON artifact_owners(run_id, artifact_id);`);
+      db.run(`INSERT OR IGNORE INTO artifact_owners SELECT artifact_id, run_id, producing_event_id, created_at FROM artifacts;`);
+    },
+  },
+  {
+    version: 13,
+    up: (db) => {
+      db.run(`CREATE TABLE durable_tasks (task_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, parent_task_id TEXT, state TEXT NOT NULL, payload_json TEXT NOT NULL, lease_owner TEXT, lease_expires_at INTEGER, lease_generation INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);`);
+      db.run(`CREATE INDEX idx_durable_tasks_frontier ON durable_tasks(state, lease_expires_at, updated_at);`);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

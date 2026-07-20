@@ -1,0 +1,1 @@
+export class BoundedMetrics { private readonly values = new Map<string, number>(); increment(name: "commands" | "events" | "failures", amount = 1): void { this.values.set(name, (this.values.get(name) ?? 0) + amount); } snapshot(): Readonly<Record<string, number>> { return Object.fromEntries(this.values); } }

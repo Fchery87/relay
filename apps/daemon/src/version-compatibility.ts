@@ -1,0 +1,2 @@
+export type ReleaseManifest = Readonly<{ version: string; schemaVersion: number; checksum: string; signature?: string }>;
+export function verifyRelease(manifest: ReleaseManifest, expectedChecksum: string, minimumSchema: number): void { if (manifest.checksum !== expectedChecksum) throw new Error("Release checksum mismatch"); if (manifest.schemaVersion < minimumSchema) throw new Error("Release schema is too old"); if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) throw new Error("Invalid release version"); }

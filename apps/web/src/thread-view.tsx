@@ -18,14 +18,14 @@ import { resolveHandoffStage } from "./handoff-trace-utils";
 import { Composer, type SlashCommandEntry } from "./composer";
 import { InspectorPanel } from "./inspector";
 import { TerminalDrawer } from "./terminal-drawer";
-import { createThreadRef, legacyRunData, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile } from "./run-data";
+import { createThreadRef, canonicalRunData, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile } from "./run-data";
 import { resolveWorkbenchView } from "./router";
 import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
 
-const listThreads = legacyRunData.listRuns;
+const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
 const sendUserMessage = makeFunctionReference<"mutation", { content: string; threadId: string }, string>("conversations:sendUserMessage");
 const listEvents = makeFunctionReference<"query", { threadId: string }, ThreadEvent[]>("events:list");

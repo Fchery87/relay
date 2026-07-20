@@ -48,9 +48,13 @@ export function effectiveRuntimeMode(
  *  Production gate iteration and release window must still be performed
  *  operationally before changing the effective default from legacy to kernel. */
 export const DEFAULT_GATES: CutoverGate = {
-  kernelReady: true,           // kernel foundation + Codex transport + projection parity
-  releaseWindowSatisfied: true, // one release window procedurally simulated via acceptance suite
-  zeroLegacyActivations: false, // requires monitoring — not a code artifact
-  backupRehearsalVerified: true, // backup-rehearsal.test.ts passes
-  acceptanceGatesPassed: true,  // acceptance.e2e.test.ts covers all 25 canonical types
+  kernelReady: false,
+  releaseWindowSatisfied: false,
+  zeroLegacyActivations: false,
+  backupRehearsalVerified: false,
+  acceptanceGatesPassed: false,
 };
+
+export function gatesFromEvidence(evidence: Readonly<{ kernelReadyAt?: number; releaseWindowEndedAt?: number; legacyActivations: number; backupHash?: string; acceptanceHash?: string }>): CutoverGate {
+  return { kernelReady: Boolean(evidence.kernelReadyAt), releaseWindowSatisfied: Boolean(evidence.releaseWindowEndedAt && evidence.kernelReadyAt && evidence.releaseWindowEndedAt > evidence.kernelReadyAt), zeroLegacyActivations: evidence.legacyActivations === 0, backupRehearsalVerified: Boolean(evidence.backupHash), acceptanceGatesPassed: Boolean(evidence.acceptanceHash) };
+}

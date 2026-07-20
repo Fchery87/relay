@@ -1,4 +1,4 @@
-import type { PermissionProfile, SandboxPolicy, PROFILES } from "@relay/contracts";
+import type { PermissionProfile, SandboxPolicy } from "@relay/contracts";
 
 // ---------------------------------------------------------------------------
 // Sandbox executor — the single interface all commands route through.
@@ -9,7 +9,23 @@ export type SandboxConfig = {
   readonly worktreePath: string;
   readonly tempDir: string;
   readonly permissionProfile: PermissionProfile;
+  readonly readRoots?: readonly string[];
+  readonly writeRoots?: readonly string[];
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly allowNetwork?: boolean;
+  readonly timeoutMs?: number;
+  readonly maxOutputBytes?: number;
+  readonly maxProcesses?: number;
+  readonly audit?: (event: SandboxAuditEvent) => void;
 };
+
+export type SandboxAuditEvent = Readonly<{
+  phase: "start" | "complete" | "denied";
+  command: readonly string[];
+  profile: PermissionProfile;
+  exitCode?: number;
+  reason?: string;
+}>;
 
 export type SandboxResult = {
   readonly exitCode: number;
@@ -40,7 +56,8 @@ export function validateCommand(
 ): { allowed: boolean; reason?: string } {
   const policy = getPolicy(profile);
 
-  // Detect escape attempts by command analysis
+  if (command.length === 0 || command.length > 128 || command.some((part) => part.length > 16_384 || part.includes("\0"))) return { allowed: false, reason: "malformed_command" };
+  // Defense in depth before OS confinement.
   const cmdStr = command.join(" ");
 
   // These patterns are always blocked for non-full-access profiles

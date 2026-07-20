@@ -17,7 +17,9 @@
     "@relay/contracts": "workspace:*",
     "@relay/harness-runtime": "workspace:*",
     "@relay/local-store": "workspace:*",
+    "@relay/provider-runtime": "workspace:*",
     "@relay/shared": "workspace:*",
+    "@relay/workspace-runtime": "workspace:*",
     "ajv": "^8.17.1",
     "convex": "^1.31.0",
     "zod": "^4.4.3"

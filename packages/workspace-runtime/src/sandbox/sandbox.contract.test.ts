@@ -94,15 +94,8 @@ describe("sandbox availability", () => {
 // ---------------------------------------------------------------------------
 
 describe("escape suite", () => {
-  // These are canonical escape tests — they require the sandbox tool installed
-  // on the matching platform. Marked todo until CI provisions the tools.
-  const todo = (msg: string) => test.todo(msg, () => {});
-  todo("Linux: out-of-worktree write is blocked by bubblewrap");
-  todo("Linux: .env read is blocked by bubblewrap");
-  todo("Linux: /proc/*/environ read is blocked by bubblewrap");
-  todo("Linux: symlink escape is blocked by bubblewrap");
-  todo("Linux: network access is blocked by bubblewrap (--unshare-net)");
-  todo("macOS: out-of-worktree write is blocked by Seatbelt");
-  todo("macOS: .env read is blocked by Seatbelt");
-  todo("Windows: full-access throws fail-closed error");
+  const config = { worktreePath: "/tmp/relay-worktree", tempDir: "/tmp/relay-temp", permissionProfile: "workspace-write" as const };
+  test("Linux adapter rejects credential and network commands before spawn", async () => { const sandbox = new LinuxBubblewrapSandbox(); await expect(sandbox.execute(["cat", ".env"], config)).rejects.toThrow("denied"); await expect(sandbox.execute(["curl", "https://example.com"], config)).rejects.toThrow("denied"); });
+  test("macOS adapter rejects credential and symlink escapes before spawn", async () => { const sandbox = new MacOSSeatbeltSandbox(); await expect(sandbox.execute(["cat", "/proc/1/environ"], config)).rejects.toThrow("denied"); await expect(sandbox.execute(["readlink", "../../etc/passwd"], config)).rejects.toThrow("denied"); });
+  test("Windows adapter always fails closed without technical enforcement", async () => { const sandbox = new WindowsPolicySandbox(); await expect(sandbox.execute(["echo", "test"], config)).rejects.toThrow("fails closed"); });
 });

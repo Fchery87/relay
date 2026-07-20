@@ -1,0 +1,2 @@
+export type HealthStatus = Readonly<{ ok: boolean; subsystems: Readonly<Record<string, "ok" | "degraded" | "failed">>; checkedAt: number }>;
+export function healthReport(checks: Readonly<Record<string, boolean>>): HealthStatus { const subsystems = Object.fromEntries(Object.entries(checks).map(([name, ok]) => [name, ok ? "ok" : "failed"])) as HealthStatus["subsystems"]; return { ok: Object.values(checks).every(Boolean), subsystems, checkedAt: Date.now() }; }

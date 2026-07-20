@@ -1,0 +1,3 @@
+# Incident runbook
+
+Stop rollout immediately on sequence gaps, duplicate effects, wrong-run events, cross-owner access, sandbox escapes, unrecoverable active runs, projection divergence, or secret leakage. Preserve redacted diagnostics and correlation IDs, fence new commands, drain/release leases, and restore from the last integrity-checked SQLite backup only after closing all database connections and removing WAL/SHM sidecars. Keep the emergency legacy flag available until the release window and rollback evidence are complete. Rotate/revoke affected device or provider credentials, then replay the canonical event stream and compare projections before resuming traffic.

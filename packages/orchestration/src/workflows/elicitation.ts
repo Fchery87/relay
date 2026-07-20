@@ -1,0 +1,2 @@
+export type Elicitation = Readonly<{ id: string; runId: string; question: string; options: readonly string[]; status: "pending" | "resolved" | "cancelled" }>;
+export function resolveElicitation(item: Elicitation, answer: string): Elicitation { if (item.status !== "pending") throw new Error("Elicitation is not pending"); if (item.options.length && !item.options.includes(answer)) throw new Error("Answer is not an allowed option"); return { ...item, status: "resolved" }; }

@@ -2,6 +2,7 @@ import type { MachinePlatform } from "@relay/shared";
 
 import { classifyToolCall, evaluatePolicy, type Capability, type Policy, type PolicyDecision, type RiskTier } from "./policy";
 import { executeToolCall, type ToolCall } from "./tool-executor";
+import { toolContract } from "./tool-registry";
 
 export interface GovernanceGateway {
   recordDecision(input: { capability: Capability; decision: Exclude<PolicyDecision, "ask">; risk: RiskTier; summary: string; threadId: string }): Promise<unknown>;
@@ -25,6 +26,7 @@ export async function executeGovernedToolCall({ call, governance, onCompleted, o
   skills?: Map<string, { body: string; directory: string }>;
   threadId: string;
 }): Promise<GovernedToolResult> {
+  const contract = toolContract(call);
   const classification = classifyToolCall(call);
   const decision = evaluatePolicy({ ...classification, policy });
   const summary = summarizeToolCall(call);
@@ -41,7 +43,8 @@ export async function executeGovernedToolCall({ call, governance, onCompleted, o
   // Resolve skill body for skill tool calls
   if (call.kind === "skill" && skills) {
     const skill = skills.get(call.name);
-    (call as any).body = skill ? `Skill directory: ${skill.directory}\n\n---\n\n${skill.body}` : `Unknown skill: ${call.name}`;
+    call.body = skill ? `Skill directory: ${skill.directory}\n\n---\n\n${skill.body}` : `Unknown skill: ${call.name}`;
+    call.directory = skill?.directory;
   }
   return { kind: "executed", ...await executeToolCall({ call, onCompleted, onMcp, onOutput, onTask, platform, root }) };
 }
@@ -58,7 +61,7 @@ export function summarizeToolCall(call: ToolCall): string {
   if (call.kind === "todo") return "todo";
   if (call.kind === "web_search") return `web search: ${call.query}`;
   if (call.kind === "web_fetch") return `web fetch: ${call.url}`;
-  return `${call.kind} ${(call as any).path ?? ""}`;
+  return `${call.kind} ${"path" in call ? call.path : ""}`;
 }
 
 function redactCredentials(value: string): string {

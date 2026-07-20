@@ -1,0 +1,3 @@
+import type { ContextPlan } from "./context-planner";
+import type { CompactionArtifactItem } from "@relay/contracts";
+export function compactPlan(plan: ContextPlan, now = Date.now()): CompactionArtifactItem { const summary = `Compacted ${plan.excluded.length} canonical items; preserved ${plan.included.length}; lineage ${plan.lineage.join(",")}.`; return { kind: "compaction_artifact", id: `compact-${now}`, summary, compactedSequences: [plan.lineage[0] ?? 0, plan.lineage.at(-1) ?? 0], turnCount: new Set(plan.included.map(item => "turnId" in item ? String((item as any).turnId) : "")).size, createdAt: now }; }

@@ -73,14 +73,16 @@ export const claimBatch = mutationGeneric({
       kind: string;
       payloadJson: string;
       runId?: string;
+      leaseGeneration: number;
     }> = [];
 
     // Claim pending commands for this machine
     const pending = await ctx.db.query("commandInbox").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).filter((q) => q.eq(q.field("status"), "pending")).take(args.limit);
 
     for (const cmd of pending) {
-      await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseOwner: machine._id, leaseGeneration: (cmd.leaseGeneration ?? 0) + 1, status: "claimed" });
-      results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, runId: cmd.runId });
+      const leaseGeneration = (cmd.leaseGeneration ?? 0) + 1;
+      await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseOwner: machine._id, leaseGeneration, status: "claimed" });
+      results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, runId: cmd.runId, leaseGeneration });
     }
 
     // Reclaim expired claimed commands for this machine
@@ -92,8 +94,9 @@ export const claimBatch = mutationGeneric({
         .take(args.limit - results.length);
 
       for (const cmd of expired) {
-        await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseGeneration: (cmd.leaseGeneration ?? 0) + 1, status: "claimed" });
-        results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, runId: cmd.runId });
+        const leaseGeneration = (cmd.leaseGeneration ?? 0) + 1;
+        await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseOwner: machine._id, leaseGeneration, status: "claimed" });
+        results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, runId: cmd.runId, leaseGeneration });
       }
     }
 

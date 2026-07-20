@@ -280,15 +280,8 @@ function normalizeCanonicalNotification(
       ];
 
     default:
-      // Unknown notifications become bounded diagnostics — never crash.
-      return [
-        {
-          type: "activity.delta",
-          payload: {
-            activityId: `diag-${notification.method}` as never,
-            content: `[Codex diagnostic] Unrecognized notification: ${notification.method}`,
-          },
-        },
-      ];
+      // Unknown notifications are retained in local transport diagnostics only.
+      // They must never fabricate canonical user-visible activity.
+      return [];
   }
 }

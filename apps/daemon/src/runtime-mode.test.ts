@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { resolveMaxConcurrentRuns, resolveRuntimeMode } from "./runtime-mode";
 
-test("defaults to legacy when RELAY_RUNTIME_MODE is not set", () => {
+test("defaults to legacy when RELAY_RUNTIME_MODE is not set (migration safety)", () => {
   expect(resolveRuntimeMode({})).toBe("legacy");
 });
 

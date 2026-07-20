@@ -97,7 +97,7 @@ if (runtimeMode === "kernel") {
 }
 
 if (runtimeMode === "shadow") {
-  console.info("Shadow mode: running legacy + kernel side-by-side");
+  console.info("Shadow mode: kernel comparator-only; legacy retains effect ownership");
   const kernelDaemon = new KernelDaemon({
     daemonHome,
     deploymentUrl: config.deploymentUrl,
@@ -111,10 +111,8 @@ if (runtimeMode === "shadow") {
       platform: config.registration.platform,
     },
   });
-  void kernelDaemon.start().catch((error: unknown) =>
-    console.error("Kernel daemon (shadow) crashed:", error),
-  );
-  // Fall through to legacy loop below
+  // Shadow mode intentionally does not start the kernel claim loop: only the
+  // legacy runtime may execute effects. Recorded inputs are compared offline.
 }
 
 let shuttingDown = false;

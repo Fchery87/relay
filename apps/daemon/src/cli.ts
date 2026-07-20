@@ -10,7 +10,8 @@ export type RelayCommand =
   | { command: "connect"; deploymentUrl?: string }
   | { command: "start"; yolo: boolean }
   | { command: "project"; subcommand: "add" | "remove" | "list"; path?: string; name?: string }
-  | { command: "help" };
+  | { command: "help" }
+  | { command: "doctor" };
 
 const usage = `Relay daemon
 
@@ -19,7 +20,8 @@ Usage:
   relay start [--yolo | --dangerously-skip-permissions]
   relay project add [path] [--name <name>]
   relay project remove <path>
-  relay project list`;
+  relay project list
+  relay doctor`;
 
 export function parseCli(args: readonly string[]): RelayCommand {
   if (args.length === 0 || args[0] === "start") {
@@ -32,6 +34,7 @@ export function parseCli(args: readonly string[]): RelayCommand {
     return { command: "start", yolo };
   }
   if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") return { command: "help" };
+  if (args[0] === "doctor") return { command: "doctor" };
   if (args[0] === "project") {
     const subcommand = args[1];
     if (subcommand === "add") {
@@ -67,10 +70,8 @@ export function parseCli(args: readonly string[]): RelayCommand {
 
 export async function runCli(args: readonly string[], dependencies: { runConnect?: typeof runConnect; runDaemon?: (input?: { yolo?: boolean }) => Promise<void> } = {}): Promise<void> {
   const command = parseCli(args);
-  if (command.command === "help") {
-    console.info(usage);
-    return;
-  }
+  if (command.command === "help") { console.info(usage); return; }
+  if (command.command === "doctor") { console.info(JSON.stringify({ ok: true, runtime: "kernel", platform: process.platform, bun: Bun.version })); return; }
   if (command.command === "connect") {
     await (dependencies.runConnect ?? runConnect)({ deploymentUrl: command.deploymentUrl });
     return;

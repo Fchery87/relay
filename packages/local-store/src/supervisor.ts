@@ -19,6 +19,8 @@ export type SupervisorState = {
   running: boolean;
 };
 
+export type SupervisorHooks = Readonly<{ exit?: (code: number) => never | void; now?: () => number }>;
+
 export class DaemonSupervisor {
   private state: SupervisorState = {
     restartCount: 0,
@@ -26,7 +28,7 @@ export class DaemonSupervisor {
     running: false,
   };
 
-  constructor(private readonly config: SupervisorConfig) {}
+  constructor(private readonly config: SupervisorConfig, private readonly hooks: SupervisorHooks = {}) {}
 
   /** Notify the supervisor that the daemon has started. */
   started(): void {
@@ -36,7 +38,7 @@ export class DaemonSupervisor {
   /** Notify the supervisor of a crash. Returns whether to restart. */
   onCrash(): boolean {
     this.state.running = false;
-    const now = Date.now();
+    const now = this.hooks.now?.() ?? Date.now();
 
     if (now - this.state.lastRestartAt > this.config.restartWindowMs) {
       this.state.restartCount = 0;
@@ -50,10 +52,11 @@ export class DaemonSupervisor {
 
   /** Initiate graceful shutdown: release leases, drain, then exit. */
   async shutdown(releaseLeases: () => Promise<void>): Promise<void> {
-    const deadline = Date.now() + this.config.shutdownTimeoutMs;
+    const deadline = (this.hooks.now?.() ?? Date.now()) + this.config.shutdownTimeoutMs;
     await releaseLeases();
     this.state.running = false;
-    process.exit(0);
+    if ((this.hooks.now?.() ?? Date.now()) > deadline) throw new Error("Supervisor shutdown deadline exceeded");
+    (this.hooks.exit ?? ((code: number) => process.exit(code)))(0);
   }
 }
 
@@ -106,19 +109,40 @@ export type BackupResult = {
  * In production this uses VACUUM INTO; for now a stub.
  */
 export async function backupStore(storePath: string, backupDir: string): Promise<BackupResult> {
-  // Stub: real impl copies/ vacuums the SQLite file
-  return {
-    ok: true,
-    path: `${backupDir}/relay-backup-${Date.now()}.sqlite`,
-    sizeBytes: 0,
-    schemaVersion: 3,
-  };
+  const fs = await import("node:fs/promises");
+  const { Database } = await import("bun:sqlite");
+  const path = `${backupDir}/relay-backup-${Date.now()}.sqlite`;
+  await fs.mkdir(backupDir, { recursive: true });
+  const db = new Database(storePath, { readonly: true });
+  try {
+    db.run("VACUUM INTO ?", [path]);
+  } finally { db.close(); }
+  const verify = new Database(path, { readonly: true });
+  try {
+    const integrity = verify.query("PRAGMA integrity_check").get() as { integrity_check?: string } | null;
+    if (integrity?.integrity_check !== "ok") throw new Error("SQLite backup integrity check failed");
+  } finally { verify.close(); }
+  const stat = await fs.stat(path);
+  return { ok: stat.size > 0, path, sizeBytes: stat.size, schemaVersion: 3 };
 }
 
 /**
  * Restore from a backup. Verifies schema compatibility before replacing.
  */
 export async function restoreStore(backupPath: string, storePath: string): Promise<boolean> {
-  // Stub: real impl verifies the backup, stops the daemon, replaces the file, restarts
+  const fs = await import("node:fs/promises");
+  const { Database } = await import("bun:sqlite");
+  const stat = await fs.stat(backupPath);
+  if (!stat.isFile() || stat.size === 0) throw new Error("Invalid empty SQLite backup");
+  const verify = new Database(backupPath, { readonly: true });
+  try {
+    const integrity = verify.query("PRAGMA integrity_check").get() as { integrity_check?: string } | null;
+    if (integrity?.integrity_check !== "ok") throw new Error("SQLite restore integrity check failed");
+  } finally { verify.close(); }
+  const temporary = `${storePath}.restore-${process.pid}-${Date.now()}`;
+  await fs.copyFile(backupPath, temporary);
+  await fs.rm(`${storePath}-wal`, { force: true });
+  await fs.rm(`${storePath}-shm`, { force: true });
+  await fs.rename(temporary, storePath);
   return true;
 }

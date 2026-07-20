@@ -90,14 +90,13 @@ describe("Codex session adapter integration", () => {
     expect((sanitized.text as string).length).toBeLessThan(100_000);
   });
 
-  test("unknown notification produces diagnostic, never crashes", () => {
+  test("unknown notification is ignored without fabricated activity", () => {
     const result = normalizeCodexNotification(
       { method: "some/future/notification" },
       "run-1",
       "codex" as never,
     );
-    expect(result[0]!.type).toBe("activity.delta");
-    expect((result[0]!.payload as { content: string }).content).toContain("diag");
+    expect(result).toEqual([]);
   });
 
   test("round-trips approval requested + resolved", () => {

@@ -1,0 +1,3 @@
+import type { RunSnapshot } from "@relay/contracts";
+export type JuryFinding = Readonly<{ severity: "P0" | "P1" | "P2" | "P3"; title: string; detail: string; source: string }>;
+export async function runReviewJury(reviewers: readonly ((runId: string) => Promise<readonly JuryFinding[]>)[], runId: string): Promise<readonly JuryFinding[]> { const results = await Promise.all(reviewers.map(review => review(runId))); const unique = new Map<string, JuryFinding>(); for (const finding of results.flat()) unique.set(`${finding.severity}:${finding.title}:${finding.detail}`, finding); return [...unique.values()].sort((a, b) => a.severity.localeCompare(b.severity) || a.title.localeCompare(b.title)); }

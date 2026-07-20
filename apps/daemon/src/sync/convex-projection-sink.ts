@@ -6,13 +6,13 @@ import { makeFunctionReference } from "convex/server";
 
 const appendEventsMutation = makeFunctionReference<
   "mutation",
-  { events: Array<{ eventId: string; occurredAt: number; payloadJson: string; runId: string; sequence: number; type: string }>; deviceToken: string },
+  { events: Array<{ eventId: string; occurredAt: number; payloadJson: string; projectId: string; runId: string; sequence: number; type: string }>; deviceToken: string },
   null
 >("projections/publish:appendEvents");
 
 const upsertSnapshotMutation = makeFunctionReference<
   "mutation",
-  { runId: string; sequence: number; snapshotJson: string; deviceToken: string },
+  { projectId: string; runId: string; sequence: number; snapshotJson: string; deviceToken: string },
   null
 >("projections/publish:upsertSnapshot");
 
@@ -23,8 +23,8 @@ const advanceCursorMutation = makeFunctionReference<
 >("projections/publish:advanceCursor");
 
 export type ProjectionSink = {
-  appendEvents(input: { events: Array<{ eventId: string; occurredAt: number; payloadJson: string; runId: string; sequence: number; type: string }>; deviceToken: string }): Promise<void>;
-  upsertSnapshot(input: { runId: string; sequence: number; snapshotJson: string; deviceToken: string }): Promise<void>;
+  appendEvents(input: { events: Array<{ eventId: string; occurredAt: number; payloadJson: string; projectId: string; runId: string; sequence: number; type: string }>; deviceToken: string }): Promise<void>;
+  upsertSnapshot(input: { projectId: string; runId: string; sequence: number; snapshotJson: string; deviceToken: string }): Promise<void>;
   advanceCursor(input: { direction: "inbound" | "outbound"; machineId: string; sequence: number; deviceToken: string }): Promise<void>;
 };
 

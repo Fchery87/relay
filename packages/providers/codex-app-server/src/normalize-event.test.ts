@@ -77,15 +77,13 @@ describe("normalizeCodexNotification", () => {
     expect(res[0]!.type).toBe("approval.resolved");
   });
 
-  test("unknown notification produces diagnostic, never crashes", () => {
+  test("unknown notification is ignored without fabricated activity", () => {
     const result = normalizeCodexNotification(
       { method: "some/unknown/event", params: {} },
       "run-1",
       "pi-1" as never,
     );
-    expect(result).toHaveLength(1);
-    expect(result[0]!.type).toBe("activity.delta");
-    expect((result[0]!.payload as { content: string }).content).toContain("diag");
+    expect(result).toEqual([]);
   });
 
   test("usage/recorded produces usage.recorded with token counts", () => {

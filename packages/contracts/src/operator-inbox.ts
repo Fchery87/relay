@@ -1,0 +1,3 @@
+export type OperatorInboxKind = "approval" | "provider-question" | "mcp-question" | "merge-conflict" | "plan-review" | "recovery-failed" | "budget" | "trust" | "extension" | "ambiguous-task";
+export type OperatorInboxItem = Readonly<{ id: string; runId: string; kind: OperatorInboxKind; title: string; detail: string; deepLink: string; action: Readonly<{ label: string; command: string; payload: Readonly<Record<string, unknown>> }>; createdAt: number }>;
+export function sortOperatorInbox(items: readonly OperatorInboxItem[]): readonly OperatorInboxItem[] { return [...items].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)); }

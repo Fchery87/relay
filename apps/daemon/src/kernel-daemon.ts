@@ -37,6 +37,8 @@ import type { Policy } from "./policy";
 import type { MachinePlatform } from "@relay/shared";
 import { ScriptedModelProvider } from "./model-provider";
 import { LocalModelRouter } from "./catalog-provider-router";
+import { persistProviderEvent } from "./provider-event-gateway";
+import { resolveMaxConcurrentRuns } from "./runtime-mode";
 import {
   executeCheckpointRestore,
   type CheckpointRestoreAdapterDeps,
@@ -167,7 +169,7 @@ async function executeTurnViaCodexExclusive({
           ev,
         );
         if (!input) return;
-        const result = await runtime.appendEvent(runId, input);
+        const result = await persistProviderEvent(runtime, runId, input);
         if (!result.ok) {
           throw new Error(
             `Failed to append Codex ${ev.type}: ${result.reason}`,
@@ -243,7 +245,7 @@ async function executeTurnViaCodexExclusive({
     succeeded = await terminalNotification;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await runtime.appendEvent(runId, {
+    await persistProviderEvent(runtime, runId, {
       eventId: `ev-codex-failed-${runId}-${Date.now()}`,
       type: "turn.failed",
       turnId: turnId as never,
@@ -369,7 +371,7 @@ async function executeTurn({
         }
         // Sanitize output before storing
         const sanitizedText = sanitizeForProjection(streamEvent.text);
-        const result = await runtime.appendEvent(runId, {
+        const result = await persistProviderEvent(runtime, runId, {
           eventId: `ev-delta-${runId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           type: "assistant.delta",
           turnId: turnId as never,
@@ -380,7 +382,7 @@ async function executeTurn({
         }
         incrementMetric("eventsProcessed");
       } else if (streamEvent.kind === "usage") {
-        const result = await runtime.appendEvent(runId, {
+        const result = await persistProviderEvent(runtime, runId, {
           eventId: `ev-usage-${runId}-${Date.now()}`,
           type: "usage.recorded",
           payload: {
@@ -398,7 +400,7 @@ async function executeTurn({
     turnSucceeded = true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await runtime.appendEvent(runId, {
+    await persistProviderEvent(runtime, runId, {
       eventId: `ev-failed-${runId}-${Date.now()}`,
       type: "turn.failed",
       turnId: turnId as never,
@@ -408,14 +410,14 @@ async function executeTurn({
   }
 
   if (turnSucceeded) {
-    await runtime.appendEvent(runId, {
+    await persistProviderEvent(runtime, runId, {
       eventId: `ev-completed-${runId}-${Date.now()}`,
       type: "turn.completed",
       turnId: turnId as never,
       payload: {},
     });
   } else {
-    await runtime.appendEvent(runId, {
+    await persistProviderEvent(runtime, runId, {
       eventId: `ev-failed-terminal-${runId}-${Date.now()}`,
       type: "turn.failed",
       turnId: turnId as never,
@@ -452,7 +454,7 @@ function appendAdapterEvent(
     ...input,
     ...(activeTurnId === undefined ? {} : { turnId: activeTurnId }),
   } as AppendEventInput;
-  return runtime.appendEvent(runId, validated);
+  return persistProviderEvent(runtime, runId, validated);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +477,7 @@ async function flushProjections({
       if (!snapshot) continue;
 
       await projectionSink.upsertSnapshot({
+        projectId: snapshot.projectId as string,
         runId: snapshot.runId as string,
         sequence: snapshot.sequence,
         snapshotJson: JSON.stringify(snapshot),
@@ -509,7 +512,7 @@ export class KernelDaemon {
     // 1. Open the local SQLite store
     const dbPath = join(this.config.daemonHome, "relay-kernel.sqlite");
     this.runtime = LocalHarnessRuntime.open(dbPath, {
-      maxConcurrentRuns: 4,
+      maxConcurrentRuns: resolveMaxConcurrentRuns(Bun.env as Record<string, string | undefined>),
     });
 
     // 2. Create the provider
@@ -571,7 +574,7 @@ export class KernelDaemon {
 
     const pollInterval = setInterval(() => {
       void this.poll();
-    }, this.config.pollIntervalMs ?? 200);
+    }, this.config.pollIntervalMs ?? 1_000);
 
     // Graceful shutdown via supervisor
     const shutdown = async () => {
@@ -595,8 +598,11 @@ export class KernelDaemon {
     this.tracer.endSpan(startSpan);
   }
 
+  private pollInFlight = false;
+
   private async poll(): Promise<void> {
-    if (this.shuttingDown) return;
+    if (this.shuttingDown || this.pollInFlight) return;
+    this.pollInFlight = true;
     const span = this.tracer.startSpan("daemon.poll");
     try {
       const batch = await this.commandGateway.claimBatch({
@@ -628,6 +634,7 @@ export class KernelDaemon {
         console.error("Kernel daemon: poll failed", error);
       }
     }
+    this.pollInFlight = false;
     this.tracer.endSpan(span);
   }
 
@@ -692,6 +699,7 @@ export class KernelDaemon {
           const turn = await this.runtime.sendTurn({
             runId: rId as never,
             prompt,
+            commandId: externalCommandId as never,
           });
 
           let succeeded: boolean;
