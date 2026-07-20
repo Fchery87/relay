@@ -23,8 +23,11 @@ Relay v1 uses a raw, daemon-owned agent loop. The **harness kernel** replaces th
 ## Development
 
 0. **Backend**: start the self-hosted Convex backend if it isn't already running (`curl http://127.0.0.1:3210/version` to check): `~/.local/share/convex-selfhost/start-relay-backend.sh`. First-time machine setup (binary, keys, env files) is covered in [docs/operations/self-hosted-convex.md](docs/operations/self-hosted-convex.md).
+
+   > **Two commands, two jobs** — the start script runs the backend *server* (the database itself; once per boot). `bun run convex:dev` (step 2) is the *deploy tool* that pushes the `convex/` code to that server. The server keeps serving whatever was last pushed, so step 2 is only needed when `convex/` code has changed — but the server must always be running first.
+
 1. Install dependencies: `bun install`.
-2. Push Convex functions to the deployment. This syncs schema validators and must run **before** the daemon (the daemon calls functions whose schemas may have changed locally):
+2. Push Convex functions to the deployment. This syncs schema validators and must run **before** the daemon (the daemon calls functions whose schemas may have changed locally). Skip it if `convex/` hasn't changed since the last push:
 
    ```bash
    bun run convex:dev

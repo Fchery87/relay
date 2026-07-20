@@ -130,6 +130,21 @@ Start the backend script first (once per boot), then `bun run daemon:dev` and
 `bun run web:dev` per session. After changing `convex/` code, push with
 `bun run convex:dev`.
 
+### `start-relay-backend.sh` vs `bun run convex:dev`
+
+These are commonly confused but do entirely different jobs:
+
+| | `start-relay-backend.sh` | `bun run convex:dev` |
+|---|---|---|
+| What it is | The backend **server** — the database process itself | The Convex **CLI deploy tool** |
+| What it does | Serves queries/mutations, stores data, streams updates | Pushes `convex/` code (schema, functions, validators) *to* the server |
+| When to run | Once per boot, before anything else | Only when `convex/` code changed since the last push |
+| If you skip it | Nothing works — connection refused on 3210 | Server keeps serving the previously pushed functions; stale-schema errors like `Could not find public function for …` |
+
+The relationship: the script turns the database on; `convex:dev` installs your
+latest backend code into it. With Convex cloud, only the second command existed
+(the server was theirs); self-hosting adds the first.
+
 Inspecting data without the dashboard: `npx convex data`, `npx convex run`,
 `npx convex logs`, `npx convex env list`.
 
@@ -142,5 +157,12 @@ Inspecting data without the dashboard: `npx convex data`, `npx convex run`,
   `~/.local/share/convex-selfhost/backend.log`.
 - **Web/daemon can't authenticate after key regeneration** — expected; sign up
   or sign in again, and re-pair the daemon.
+- **`Function execution timed out (maximum duration: 1s)` on sign-in/sign-up**
+  — Convex mutations have a hard, non-configurable 1 s limit, and password
+  hashing must fit inside it. `convex/auth.ts` uses PBKDF2 via native WebCrypto
+  for this reason; the Convex Auth default (pure-JS scrypt) exceeds the limit
+  on slow CPUs. If this recurs, lower `PBKDF2_ITERATIONS` in `convex/auth.ts`
+  and redeploy. Accounts hashed under a previous scheme cannot sign in and
+  must be recreated.
 - **Moving machines** — copy the whole `~/.local/share/convex-selfhost/`
   directory (binary, secrets, `relay-data/`); it is fully self-contained.
