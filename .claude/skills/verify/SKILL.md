@@ -17,9 +17,11 @@ cd apps/web && bun run dev        # vite; picks 5174 if 5173 busy — read the p
 
 - Open `http://localhost:<port>/` in a browser (chrome-devtools MCP works headed).
 - Auth wall: dev deployment accepts password sign-up. A disposable account
-  (`verify-bot@example.com`) exists from prior verification — sign in with
-  `verify-bot-password-1234`, or create another; it lands on the Pair-daemon
-  state (no machines).
+  (`pbkdf2-test@example.com` / `TestPassword123!`) exists from prior
+  verification — or create another; without pairing it lands on the
+  Pair-daemon state. (Accounts created before 2026-07-19 used the old scrypt
+  hash and can no longer sign in — passwords now hash via PBKDF2, see
+  `convex/auth.ts`.)
 - Without a paired daemon you can verify: auth panel, sidebar shell, ⌘K/Ctrl+K
   command palette, Ctrl+B/J/I toggles (persisted in localStorage key
   `relay.shell.panels`), `/settings` and `/settings/<section>` deep links.
