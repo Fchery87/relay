@@ -27,6 +27,7 @@ import { loadSlashCommands } from "./slash-commands";
 import { BUILTIN_COMMANDS } from "./builtin-commands";
 import { resolveExtensionRoots } from "./extension-paths";
 import { loadSkills } from "./skills";
+import { staggerOffset, startStaggeredPoller } from "./pollers";
 
 export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
@@ -129,25 +130,32 @@ const nestedSubagentGateway = createConvexSubagentGateway({ deploymentUrl: confi
 await subagentGateway.seedDefaults();
 const subagentPolicy = yoloMode ? ALLOW_ALL_POLICY : policy;
 await subagentGateway.setCapabilityCeiling([...new Set(policy.rules.filter((rule) => rule.decision !== "deny" && rule.capability !== "search").map((rule) => rule.capability as "read" | "edit" | "exec" | "task"))]);
+// Stagger the claim pollers so they don't all fire in the same instant and
+// pile up on the serialized self-hosted backend. Phase only — each still
+// runs once per config.pollIntervalMs. Update POLLER_COUNT if you add one.
+const POLLER_COUNT = 7;
+let pollerSlot = 0;
+const startClaimPoller = (tick: () => void) =>
+  startStaggeredPoller(tick, config.pollIntervalMs, staggerOffset(pollerSlot++, POLLER_COUNT, config.pollIntervalMs));
 let subagentRunning = false;
-setInterval(() => {
+startClaimPoller(() => {
   if (subagentRunning) return;
   subagentRunning = true;
   void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: subagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay subagent failed", error))
     .finally(() => { subagentRunning = false; });
-}, config.pollIntervalMs);
+});
 let nestedSubagentRunning = false;
-setInterval(() => {
+startClaimPoller(() => {
   if (nestedSubagentRunning) return;
   nestedSubagentRunning = true;
   void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: nestedSubagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay nested subagent failed", error))
     .finally(() => { nestedSubagentRunning = false; });
-}, config.pollIntervalMs);
+});
 
 let turnRunning = false;
-setInterval(() => {
+startClaimPoller(() => {
   if (turnRunning) return;
   turnRunning = true;
   void runQueuedTurn({
@@ -176,46 +184,46 @@ setInterval(() => {
   })
     .catch((error: unknown) => console.error("Relay turn failed", error))
     .finally(() => { turnRunning = false; });
-}, config.pollIntervalMs);
+});
 
 const checkpointComparisonGateway = createConvexCheckpointComparisonGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let checkpointComparisonRunning = false;
-setInterval(() => {
+startClaimPoller(() => {
   if (checkpointComparisonRunning) return;
   checkpointComparisonRunning = true;
   void runQueuedCheckpointComparison({ gateway: checkpointComparisonGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay checkpoint comparison failed", error))
     .finally(() => { checkpointComparisonRunning = false; });
-}, config.pollIntervalMs);
+});
 const gitGateway = createConvexGitGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let gitActionRunning = false;
-setInterval(() => {
+startClaimPoller(() => {
   if (gitActionRunning) return;
   gitActionRunning = true;
   void runQueuedGitAction({ gateway: gitGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay git action failed", error))
     .finally(() => { gitActionRunning = false; });
-}, config.pollIntervalMs);
+});
 
 const checkpointGateway = createConvexCheckpointGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let checkpointRestoreRunning = false;
-setInterval(() => {
+startClaimPoller(() => {
   if (checkpointRestoreRunning) return;
   checkpointRestoreRunning = true;
   void runQueuedCheckpointRestore({ gateway: checkpointGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay checkpoint restore failed", error))
     .finally(() => { checkpointRestoreRunning = false; });
-}, config.pollIntervalMs);
+});
 
 const commandGateway = createConvexCommandGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let commandRunning = false;
-setInterval(() => {
+startClaimPoller(() => {
   if (commandRunning) return;
   commandRunning = true;
   void runQueuedCommand({ gateway: commandGateway, governance, platform: config.registration.platform, policy: subagentPolicy, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay command failed", error))
     .finally(() => { commandRunning = false; });
-}, config.pollIntervalMs);
+});
 
 const projectRequestGateway = createConvexProjectRequestGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 const trustStore = new TrustStore({ daemonHome });
