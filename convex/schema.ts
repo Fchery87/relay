@@ -101,7 +101,7 @@ export default defineSchema({
     status: v.optional(v.string()),
     taskId: v.optional(v.string()),
     threadId: v.id("threads"),
-    tool: v.optional(v.union(v.literal("bash"), v.literal("edit"), v.literal("mcp"), v.literal("read"), v.literal("skill"), v.literal("task"))),
+    tool: v.optional(v.union(v.literal("bash"), v.literal("edit"), v.literal("glob"), v.literal("grep"), v.literal("mcp"), v.literal("read"), v.literal("skill"), v.literal("str_replace"), v.literal("task"), v.literal("todo"), v.literal("web_fetch"), v.literal("web_search"))),
   }).index("by_thread", ["threadId"]),
   commands: defineTable({
     command: v.string(),

@@ -34,7 +34,7 @@ export const appendCommandOutput = mutationGeneric({
 });
 
 export const appendToolCompleted = mutationGeneric({
-  args: { deviceToken: v.string(), summary: v.string(), threadId: v.id("threads"), tool: v.union(v.literal("bash"), v.literal("edit"), v.literal("mcp"), v.literal("read"), v.literal("task")) },
+  args: { deviceToken: v.string(), summary: v.string(), threadId: v.id("threads"), tool: v.union(v.literal("bash"), v.literal("edit"), v.literal("glob"), v.literal("grep"), v.literal("mcp"), v.literal("read"), v.literal("skill"), v.literal("str_replace"), v.literal("task"), v.literal("todo"), v.literal("web_fetch"), v.literal("web_search")) },
   handler: async (ctx, args) => {
     await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     return ctx.db.insert("events", { kind: "tool.completed", summary: args.summary, threadId: args.threadId, tool: args.tool });

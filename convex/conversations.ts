@@ -147,6 +147,20 @@ export const listThreadIds = queryGeneric({
   },
 });
 
+export const compactThread = mutationGeneric({
+  args: { deviceToken: v.string(), summary: v.string(), threadId: v.id("threads") },
+  handler: async (ctx, args) => {
+    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
+    if (args.summary.length > 100_000) throw new Error("Summary is too large");
+    for await (const message of ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) {
+      if (message.status === "queued") continue;
+      await ctx.db.delete(message._id);
+    }
+    await ctx.db.insert("messages", { content: `[Conversation compacted]\n${args.summary}`, role: "assistant", status: "complete", threadId: args.threadId });
+    return null;
+  },
+});
+
 export const removeThread = mutationGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
