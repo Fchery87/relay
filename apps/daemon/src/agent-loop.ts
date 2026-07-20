@@ -181,7 +181,7 @@ export async function runQueuedTurn({
     }
   }
 
-  const systemPrompt = await buildSystemPrompt({ platform, root, skills: loadedSkills });
+  const systemPrompt = await buildSystemPrompt({ modelId: turnProvider.modelId ?? queued.modelId ?? DEFAULT_MODEL_ID, platform, root, skills: loadedSkills });
   const skills = new Map(loadedSkills.map((skill) => [skill.name, { body: skill.body, directory: skill.directory }]));
 
   try {

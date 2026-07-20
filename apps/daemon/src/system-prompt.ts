@@ -10,13 +10,18 @@ export interface SystemPromptContext {
   platform: string;
   /** Loaded skills */
   skills?: Skill[];
+  /** Effective model id for this turn (e.g. "deepseek/deepseek-v4-flash") */
+  modelId?: string;
 }
 
-export async function buildSystemPrompt({ root, platform, skills }: SystemPromptContext): Promise<string> {
+export async function buildSystemPrompt({ root, platform, skills, modelId }: SystemPromptContext): Promise<string> {
   const blocks: string[] = [];
 
   // Identity
-  blocks.push("You are Relay, an agent running on the user's machine. You have access to tools for reading files, editing files, running commands, searching the web, and delegating tasks to subagents.");
+  const identity = modelId
+    ? `You are Relay, an agent running on the user's machine, powered by the model \`${modelId}\`. State this model id accurately if asked what model or provider you are — do not guess a different one.`
+    : "You are Relay, an agent running on the user's machine.";
+  blocks.push(`${identity} You have access to tools for reading files, editing files, running commands, searching the web, and delegating tasks to subagents.`);
 
   // Behavioral rules
   const rules = [

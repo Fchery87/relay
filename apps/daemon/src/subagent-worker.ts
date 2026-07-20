@@ -37,7 +37,7 @@ export async function runQueuedSubagent({ artifactRoot, createWriterRoot, gatewa
     const root = run.writer && createWriterRoot ? await createWriterRoot({ parentRoot, runId: run.runId, threadId: run.threadId }) : parentRoot;
     const selected = isRouter(provider) ? provider.resolve({ modelId: run.modelId, thinkingLevel: run.thinkingLevel }) : provider;
     const context = run.contextMode === "fresh" ? "" : `\nParent thread worktree: ${root}`;
-    const prompt = `${run.prompt}\n\nTask: ${run.task}${context}\nCapabilities: ${run.capabilities.join(", ")}.`;
+    const prompt = `${run.prompt}\n\nTask: ${run.task}${context}\nCapabilities: ${run.capabilities.join(", ")}.\nYou are powered by the model \`${run.modelId}\`; state this model id accurately if asked what model or provider you are.`;
     const toolResults: string[] = [];
     let turns = 0;
     if (selected.toolCalls) for await (const call of selected.toolCalls({ prompt })) {
