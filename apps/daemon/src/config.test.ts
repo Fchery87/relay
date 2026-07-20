@@ -17,6 +17,7 @@ test("loads daemon registration from environment", () => {
   ).toEqual({
     deploymentUrl: "https://relay.convex.cloud",
     heartbeatIntervalMs: 10_000,
+    pollIntervalMs: 200,
     registration: {
       daemonVersion: "0.0.0-dev",
       deviceToken: "development-device-token",

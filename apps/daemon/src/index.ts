@@ -136,7 +136,7 @@ setInterval(() => {
   void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: subagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay subagent failed", error))
     .finally(() => { subagentRunning = false; });
-}, 200);
+}, config.pollIntervalMs);
 let nestedSubagentRunning = false;
 setInterval(() => {
   if (nestedSubagentRunning) return;
@@ -144,7 +144,7 @@ setInterval(() => {
   void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: nestedSubagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay nested subagent failed", error))
     .finally(() => { nestedSubagentRunning = false; });
-}, 200);
+}, config.pollIntervalMs);
 
 let turnRunning = false;
 setInterval(() => {
@@ -176,7 +176,7 @@ setInterval(() => {
   })
     .catch((error: unknown) => console.error("Relay turn failed", error))
     .finally(() => { turnRunning = false; });
-}, 200);
+}, config.pollIntervalMs);
 
 const checkpointComparisonGateway = createConvexCheckpointComparisonGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let checkpointComparisonRunning = false;
@@ -186,7 +186,7 @@ setInterval(() => {
   void runQueuedCheckpointComparison({ gateway: checkpointComparisonGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay checkpoint comparison failed", error))
     .finally(() => { checkpointComparisonRunning = false; });
-}, 200);
+}, config.pollIntervalMs);
 const gitGateway = createConvexGitGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let gitActionRunning = false;
 setInterval(() => {
@@ -195,7 +195,7 @@ setInterval(() => {
   void runQueuedGitAction({ gateway: gitGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay git action failed", error))
     .finally(() => { gitActionRunning = false; });
-}, 200);
+}, config.pollIntervalMs);
 
 const checkpointGateway = createConvexCheckpointGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let checkpointRestoreRunning = false;
@@ -205,7 +205,7 @@ setInterval(() => {
   void runQueuedCheckpointRestore({ gateway: checkpointGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay checkpoint restore failed", error))
     .finally(() => { checkpointRestoreRunning = false; });
-}, 200);
+}, config.pollIntervalMs);
 
 const commandGateway = createConvexCommandGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 let commandRunning = false;
@@ -215,7 +215,7 @@ setInterval(() => {
   void runQueuedCommand({ gateway: commandGateway, governance, platform: config.registration.platform, policy: subagentPolicy, resolveProjectRoot: (input) => worktrees.resolve(input) })
     .catch((error: unknown) => console.error("Relay command failed", error))
     .finally(() => { commandRunning = false; });
-}, 200);
+}, config.pollIntervalMs);
 
 const projectRequestGateway = createConvexProjectRequestGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 const trustStore = new TrustStore({ daemonHome });

@@ -3,6 +3,7 @@ import { machinePlatformSchema, type MachineRegistration, type ProjectRegistrati
 export type DaemonConfig = {
   deploymentUrl: string;
   heartbeatIntervalMs: number;
+  pollIntervalMs: number;
   registration: MachineRegistration;
 };
 
@@ -32,9 +33,15 @@ export function loadDaemonConfig({
     throw new Error(`Unsupported platform: ${process.platform}`);
   }
 
+  const pollIntervalMs = Number(env.RELAY_POLL_INTERVAL_MS ?? 200);
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 50) {
+    throw new Error("RELAY_POLL_INTERVAL_MS must be a number >= 50");
+  }
+
   return {
     deploymentUrl: storedDeploymentUrl ?? requiredEnv(env, "RELAY_CONVEX_URL"),
     heartbeatIntervalMs: 10_000,
+    pollIntervalMs,
     registration: {
       daemonVersion: env.RELAY_DAEMON_VERSION ?? "0.0.0-dev",
       deviceToken: storedDeviceToken ?? requiredEnv(env, "RELAY_DEVICE_TOKEN"),
