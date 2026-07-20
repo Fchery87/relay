@@ -103,12 +103,22 @@ export function resolveRunData(projectionEnabled: boolean): RunDataBoundary {
   return { source: "legacy", listRuns: listLegacyRuns };
 }
 
-/** Canonical projection reads are the default browser boundary; legacy is emergency rollback only. */
-export const canonicalRunData: RunDataBoundary = {
+/** The browser reads legacy thread rows while the daemon's default runtime is
+ * legacy — projections are only published by the kernel-mode daemon, so
+ * projection reads return nothing until cutover. Switch back to
+ * `projectionRunData` when kernel becomes the effective default. */
+export const canonicalRunData: RunDataBoundary = { source: "legacy", listRuns: listLegacyRuns };
+/** Projection boundary; becomes canonical at kernel cutover. */
+export const projectionRunData: RunDataBoundary = {
   source: "projection",
   listRuns: listProjectionRuns,
   getRunSnapshot: getProjectionSnapshot,
   listRunEvents: listProjectionEvents,
 };
-/** @deprecated emergency rollback boundary only; canonical projections are the default. */
-export const legacyRunData: RunDataBoundary = { source: "legacy", listRuns: listLegacyRuns };
+/** @deprecated alias retained for rollback tooling; same boundary as canonicalRunData. */
+export const legacyRunData: RunDataBoundary = canonicalRunData;
+
+/** Adapt legacy thread rows to the run-summary shape the sidebar and palette render. */
+export function toRunSummaries(threads: LegacyRunSummary[] | undefined): ProjectionRunSummary[] | undefined {
+  return threads?.map((thread) => ({ projectId: "", runId: thread._id, sequence: 0, status: thread.status, title: thread.title, updatedAt: 0 }));
+}

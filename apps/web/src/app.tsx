@@ -14,7 +14,7 @@ import { resolveSettingsSection, SettingsView, type SettingsSection } from "./se
 import { shortcutForEvent, useShellState } from "./shell-state";
 import { SubagentPanel, type RoleRecord } from "./subagent-panel";
 import { ThreadView } from "./thread-view";
-import { canonicalRunData, createThreadRef, listNeedsYou, removeThreadRef, requestAddProjectRef, type MachineSummary, type ProjectionRunSummary } from "./run-data";
+import { canonicalRunData, createThreadRef, listNeedsYou, removeThreadRef, requestAddProjectRef, toRunSummaries, type LegacyRunSummary, type MachineSummary } from "./run-data";
 import { WorkspaceSidebar, type SidebarProject } from "./workspace-sidebar";
 import type { ThinkingLevel } from "@relay/shared";
 
@@ -71,7 +71,7 @@ export function UnconfiguredWorkspace() {
 }
 
 function SidebarRuns({ activeThreadId, onSelectRun, projectId }: { activeThreadId?: string; onSelectRun: (projectId: string, threadId: string) => void; projectId: string }) {
-  const runs = useQuery(canonicalRunData.listRuns, { projectId }) as ProjectionRunSummary[] | undefined;
+  const runs = toRunSummaries(useQuery(canonicalRunData.listRuns, { projectId }) as LegacyRunSummary[] | undefined);
   const removeThread = useMutation(removeThreadRef);
   const navigate = useNavigate();
   const [pendingDelete, setPendingDelete] = useState<{ threadId: string; title: string } | null>(null);
@@ -152,7 +152,7 @@ function Workspace({
   const projects = useMemo(() => flattenProjects(machines ?? [], now), [machines, now]);
   const requestedProject = params.projectId ? projects.find((project) => project.id === params.projectId) : undefined;
   const activeProject = requestedProject ?? (params.projectId ? undefined : projects[0]);
-  const activeProjectRuns = useQuery(canonicalRunData.listRuns, activeProject ? { projectId: activeProject.id } : "skip") as ProjectionRunSummary[] | undefined;
+  const activeProjectRuns = toRunSummaries(useQuery(canonicalRunData.listRuns, activeProject ? { projectId: activeProject.id } : "skip") as LegacyRunSummary[] | undefined);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -327,7 +327,7 @@ function AuthenticatedSettings() {
 
 function SettingsConnections({ projectId }: { projectId: string }) {
   const servers = useQuery(listMcpServers, { projectId });
-  const runs = useQuery(canonicalRunData.listRuns, { projectId }) as ProjectionRunSummary[] | undefined;
+  const runs = toRunSummaries(useQuery(canonicalRunData.listRuns, { projectId }) as LegacyRunSummary[] | undefined);
   const createMcp = useMutation(createMcpServer);
   const updateMcp = useMutation(updateMcpServer);
   const removeMcp = useMutation(removeMcpServer);
