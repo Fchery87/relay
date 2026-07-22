@@ -17,6 +17,7 @@
     "@relay/contracts": "workspace:*",
     "@relay/harness-runtime": "workspace:*",
     "@relay/local-store": "workspace:*",
+    "@relay/orchestration": "workspace:*",
     "@relay/provider-runtime": "workspace:*",
     "@relay/shared": "workspace:*",
     "@relay/workspace-runtime": "workspace:*",

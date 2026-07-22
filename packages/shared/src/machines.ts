@@ -8,6 +8,7 @@ export const projectRegistrationSchema = z.object({
 });
 
 export const machineRegistrationSchema = z.object({
+  deviceNonce: z.string().min(1).optional(),
   deviceToken: z.string().min(1),
   name: z.string().min(1),
   platform: machinePlatformSchema,

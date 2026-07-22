@@ -20,12 +20,14 @@ export function loadDaemonConfig({
   hostname,
   projects,
   storedDeploymentUrl,
+  storedDeviceNonce,
   storedDeviceToken,
 }: {
   env: Readonly<Record<string, string | undefined>>;
   hostname: () => string;
   projects: ProjectRegistration[];
   storedDeploymentUrl?: string;
+  storedDeviceNonce?: string;
   storedDeviceToken?: string;
 }): DaemonConfig {
   const parsedPlatform = machinePlatformSchema.safeParse(process.platform);
@@ -44,6 +46,7 @@ export function loadDaemonConfig({
     pollIntervalMs,
     registration: {
       daemonVersion: env.RELAY_DAEMON_VERSION ?? "0.0.0-dev",
+      deviceNonce: storedDeviceNonce,
       deviceToken: storedDeviceToken ?? requiredEnv(env, "RELAY_DEVICE_TOKEN"),
       name: env.RELAY_MACHINE_NAME ?? hostname(),
       platform: parsedPlatform.data,

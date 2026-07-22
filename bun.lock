@@ -24,7 +24,10 @@
         "@relay/contracts": "workspace:*",
         "@relay/harness-runtime": "workspace:*",
         "@relay/local-store": "workspace:*",
+        "@relay/orchestration": "workspace:*",
+        "@relay/provider-runtime": "workspace:*",
         "@relay/shared": "workspace:*",
+        "@relay/workspace-runtime": "workspace:*",
         "ajv": "^8.17.1",
         "convex": "^1.31.0",
         "zod": "^4.4.3",
@@ -38,6 +41,7 @@
         "@codemirror/state": "^6.7.1",
         "@codemirror/view": "^6.43.6",
         "@convex-dev/auth": "^0.0.94",
+        "@relay/client-runtime": "workspace:*",
         "@relay/shared": "workspace:*",
         "@tanstack/react-router": "^1.132.0",
         "convex": "^1.31.0",
@@ -100,12 +104,16 @@
     "packages/provider-runtime": {
       "name": "@relay/provider-runtime",
       "version": "0.0.0",
+      "dependencies": {
+        "@relay/contracts": "workspace:*",
+      },
     },
     "packages/providers/codex-app-server": {
       "name": "@relay/codex-app-server",
       "version": "0.0.0",
       "dependencies": {
         "@relay/contracts": "workspace:*",
+        "@relay/provider-runtime": "workspace:*",
       },
     },
     "packages/shared": {

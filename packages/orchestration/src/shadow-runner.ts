@@ -96,3 +96,78 @@ export function defaultEventComparator(
 function isCriticalEvent(type: string): boolean {
   return ["turn.started", "turn.completed", "assistant.delta"].includes(type);
 }
+
+// ---------------------------------------------------------------------------
+// Shadow persistence — records parity results with correlation evidence.
+// ---------------------------------------------------------------------------
+
+export type ShadowEvidence = {
+  readonly correlationId: string;
+  readonly runId: string;
+  readonly timestamp: number;
+  readonly parityReport: ParityReport;
+  readonly kernelSnapshot: RunSnapshot;
+  readonly legacySnapshot: RunSnapshot;
+  readonly allowlistRefs: ReadonlyArray<string>;
+};
+
+/** In-memory shadow evidence store — persists divergence evidence for promotion gate checks. */
+export class ShadowEvidenceStore {
+  readonly #records: ShadowEvidence[] = [];
+
+  record(evidence: ShadowEvidence): void {
+    this.#records.push(evidence);
+  }
+
+  /** Returns evidence where parity failed AND the divergence is not on the allowlist. */
+  unexplainedDivergences(): ReadonlyArray<ShadowEvidence> {
+    return this.#records.filter(
+      (r) =>
+        !r.parityReport.ok &&
+        r.parityReport.divergences.some(
+          (d) => !r.allowlistRefs.some((ref) => d.includes(ref)),
+        ),
+    );
+  }
+
+  /** Returns true if any unexplained divergence exists — blocks promotion. */
+  promotionBlocked(): boolean {
+    return this.unexplainedDivergences().length > 0;
+  }
+
+  /** Clear all records (called when shadow lifecycle resets). */
+  clear(): void {
+    this.#records.length = 0;
+  }
+
+  get records(): ReadonlyArray<ShadowEvidence> {
+    return this.#records;
+  }
+}
+
+/** Shadow supervisor — ensures single-effect ownership and no duplicate timers. */
+export class ShadowSupervisor {
+  #active = false;
+  #timerId?: ReturnType<typeof setInterval>;
+
+  start(onTick: () => void, intervalMs: number): void {
+    if (this.#active) return;
+    this.#active = true;
+    this.#timerId = setInterval(() => {
+      if (!this.#active) return;
+      onTick();
+    }, intervalMs);
+  }
+
+  stop(): void {
+    this.#active = false;
+    if (this.#timerId !== undefined) {
+      clearInterval(this.#timerId);
+      this.#timerId = undefined;
+    }
+  }
+
+  get active(): boolean {
+    return this.#active;
+  }
+}

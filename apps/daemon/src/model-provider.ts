@@ -231,8 +231,12 @@ function isAnthropicTextDelta(value: unknown): value is { delta: { text: string;
 const toolCallSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("read"), limit: z.number().optional(), offset: z.number().optional(), path: z.string() }),
   z.object({ content: z.string(), kind: z.literal("edit"), path: z.string() }),
+  z.object({ kind: z.literal("str_replace"), newString: z.string(), oldString: z.string(), path: z.string(), replaceAll: z.boolean().optional() }),
+  z.object({ glob: z.string().optional(), kind: z.literal("grep"), path: z.string().optional(), pattern: z.string() }),
+  z.object({ kind: z.literal("glob"), pattern: z.string() }),
   z.object({ command: z.string(), kind: z.literal("bash"), timeout: z.number().optional() }),
   z.object({ capabilities: z.array(z.enum(["read", "edit", "exec", "task"])), kind: z.literal("task"), role: z.string(), task: z.string() }),
+  z.object({ items: z.array(z.object({ content: z.string(), status: z.enum(["pending", "in_progress", "completed"]) })), kind: z.literal("todo") }),
   z.object({ kind: z.literal("web_search"), query: z.string() }),
   z.object({ kind: z.literal("web_fetch"), prompt: z.string().optional(), url: z.string() }),
   z.object({ kind: z.literal("skill"), name: z.string() }),

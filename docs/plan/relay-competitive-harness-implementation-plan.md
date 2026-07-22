@@ -155,7 +155,7 @@ Where sequencing conflicts, this plan supersedes:
 
 Those documents remain useful as implementation research and detailed task inventories. They must not be used to add new product behavior to the legacy runtime. New capabilities land behind the kernel contracts and are projected to the browser from the kernel path.
 
-The detailed production-readiness plan at `docs/plans/2026-07-15-relay-harness-kernel-production-readiness.md` remains the comprehensive acceptance inventory. This document narrows that inventory into the shortest dependency-ordered route to a competitive product.
+The active self-hosted recovery and cutover plan at `docs/plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md` is now the comprehensive acceptance inventory for reliability, migration, security, and rollout. The earlier production-readiness plan remains historical implementation context. This document narrows the active inventory into the shortest dependency-ordered route to a competitive product.
 
 ## Executive decision
 

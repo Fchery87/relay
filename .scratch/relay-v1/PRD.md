@@ -106,7 +106,7 @@ The v1 PRD's "Own agent loop" decision is **superseded** by three Architecture D
 - [ADR 0002: Local Execution Authority with Convex Projections](../../docs/adr/0002-local-authority-convex-projections.md) — the daemon is the sole execution authority with a durable local SQLite store; Convex becomes the authenticated remote-command ingress and curated, resumable browser projection plane.
 - [ADR 0003: Canonical Command and Event Model](../../docs/adr/0003-canonical-command-event-model.md) — an append-only canonical event log with a pure run-state reducer; the local store owns ordering, idempotency, and replay; provider-native shapes are normalized at the adapter seam.
 
-A `RELAY_RUNTIME_MODE=legacy|shadow|kernel` flag gates the old path behind the new; all v1 Convex tables are widened additively, not dropped. The binding implementation detail lives in `docs/plans/2026-07-15-relay-harness-kernel-production-readiness.md` (50 tasks, 11 phases).
+A `RELAY_RUNTIME_MODE=legacy|shadow|kernel` flag gates the old path behind the new; all v1 Convex tables are widened additively, not dropped. The active self-hosted recovery and cutover detail lives in `docs/plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md`; the earlier harness-kernel plan remains historical implementation context.
 
 ## Further Notes
 - Layout/UX north star: the Codex Desktop app (projects sidebar → threads, diff review with inline comments, approval flow). The governance/subagent mental model ports from Thanos (`~/.pi`): its glossary, ADRs, and role files are the design reference.

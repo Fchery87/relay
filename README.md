@@ -1,6 +1,6 @@
 # Relay
 
-Relay is a browser control surface for a local coding-agent daemon. It pairs a locally running daemon with a Convex-backed workspace and renders its machine state in the web sidebar. The Convex backend is [self-hosted](docs/operations/self-hosted-convex.md) — a single local binary, no cloud account required.
+Relay is a browser control surface for a local coding-agent daemon. It pairs a locally running daemon with a Convex-backed workspace and renders its machine state in the web sidebar. Local development uses a [self-hosted Convex backend](docs/operations/self-hosted-convex.md). Production topology, kernel cutover, and hosted-history migration remain gated by the [Self-Hosted Convex Recovery and Kernel Cutover Implementation Plan](docs/plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md).
 
 ## Architecture
 
@@ -19,6 +19,8 @@ Relay v1 uses a raw, daemon-owned agent loop. The **harness kernel** replaces th
 **Runtime modes:** `RELAY_RUNTIME_MODE=legacy|shadow|kernel` (default `legacy` until production acceptance gates pass). See [the kernel spec](.scratch/harness-kernel/PRD.md) and [ticket breakdown](tickets.md).
 
 **Architecture Decision Records:** [docs/adr/](docs/adr/)
+
+**Manual:** [Relay Manual](MANUAL.md). **Active recovery plan:** [Self-Hosted Convex Recovery and Kernel Cutover Implementation Plan](docs/plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md). Until its release gates pass, keep `RELAY_RUNTIME_MODE=legacy`; do not run schema narrowing or treat the current workflow as production self-hosted readiness.
 
 ## Development
 

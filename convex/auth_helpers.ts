@@ -8,6 +8,14 @@ export async function requireUser(ctx: Parameters<typeof getAuthUserId>[0]): Pro
   return userId;
 }
 
+/** Require operator role — only users with an operator role can invoke admin mutations. */
+export async function requireOperator(ctx: Parameters<typeof getAuthUserId>[0] & Pick<QueryCtx, "db">): Promise<NonNullable<Awaited<ReturnType<typeof getAuthUserId>>>> {
+  const userId = await requireUser(ctx);
+  const role = await ctx.db.query("operatorRoles").withIndex("by_user", (q) => q.eq("userId", userId as unknown as Id<"users">)).first();
+  if (!role) throw new Error("Operator role required");
+  return userId;
+}
+
 export async function digestSecret(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);

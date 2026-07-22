@@ -35,4 +35,34 @@ describe("MachineReporter", () => {
       "heartbeat:development-device-token",
     ]);
   });
+
+  test("repeated heartbeats advance without project changes", async () => {
+    const heartbeatCalls: string[] = [];
+    const reporter = new MachineReporter({
+      gateway: {
+        async heartbeat({ deviceToken }) {
+          heartbeatCalls.push(`heartbeat:${deviceToken}`);
+        },
+        async registerMachine(_machine) {
+          // no-op
+        },
+      },
+      registration,
+    });
+
+    await reporter.connect();
+
+    // Simulate several heartbeat intervals without any project change
+    await reporter.heartbeatOnce();
+    await reporter.heartbeatOnce();
+    await reporter.heartbeatOnce();
+    await reporter.heartbeatOnce();
+
+    expect(heartbeatCalls).toEqual([
+      "heartbeat:development-device-token",
+      "heartbeat:development-device-token",
+      "heartbeat:development-device-token",
+      "heartbeat:development-device-token",
+    ]);
+  });
 });

@@ -51,7 +51,7 @@ export const enqueue = mutation({
     const parentCapabilities = parent?.capabilities ?? machine.capabilityCeiling ?? [];
     const capabilities = narrowCapabilities({ child: args.capabilities as Capability[], depth: args.depth, parent: parentCapabilities as Capability[] });
     for (const granted of capabilities) if (!role.capabilities.includes(granted)) throw new Error(`Role capability ${granted} is not allowed`);
-    return await ctx.db.insert("subagentRuns", { capabilities, depth: args.depth, parentRunId: args.parentRunId, roleId: args.roleId, status: "queued", task: args.task, threadId: args.threadId });
+    return await ctx.db.insert("subagentRuns", { capabilities, depth: args.depth, machineId: machine._id, parentRunId: args.parentRunId, roleId: args.roleId, status: "queued", task: args.task, threadId: args.threadId });
   },
 });
 
@@ -66,7 +66,7 @@ export const enqueueByName = mutation({
     const parentCapabilities = parent?.capabilities ?? machine.capabilityCeiling ?? [];
     const capabilities = narrowCapabilities({ child: args.capabilities as Capability[], depth: args.depth, parent: parentCapabilities as Capability[] });
     for (const granted of capabilities) if (!role.capabilities.includes(granted)) throw new Error(`Role capability ${granted} is not allowed`);
-    return await ctx.db.insert("subagentRuns", { capabilities, depth: args.depth, parentRunId: args.parentRunId, roleId: role._id, status: "queued", task: args.task, threadId: args.threadId });
+    return await ctx.db.insert("subagentRuns", { capabilities, depth: args.depth, machineId: machine._id, parentRunId: args.parentRunId, roleId: role._id, status: "queued", task: args.task, threadId: args.threadId });
   },
 });
 
@@ -75,7 +75,11 @@ export const claim = mutation({
   handler: async (ctx, args) => {
     const machine = await requireActiveMachine(ctx, args.deviceToken);
     const now = Date.now();
-    const candidates = [...await ctx.db.query("subagentRuns").withIndex("by_status", (q) => q.eq("status", "queued")).collect(), ...await ctx.db.query("subagentRuns").withIndex("by_status", (q) => q.eq("status", "running")).collect()];
+    // Use the by_machine index to scope the claim to this daemon's machine,
+    // avoiding per-candidate thread/project reads for work owned by other machines.
+    const queued = await ctx.db.query("subagentRuns").withIndex("by_machine", (q) => q.eq("machineId", machine._id).eq("status", "queued")).take(50);
+    const running = await ctx.db.query("subagentRuns").withIndex("by_machine", (q) => q.eq("machineId", machine._id).eq("status", "running")).take(50);
+    const candidates = [...queued, ...running];
     for (const run of candidates) {
       if (args.depth !== undefined && run.depth !== args.depth) continue;
       if (run.status === "running" && (run.leaseExpiresAt ?? Infinity) > now) continue;

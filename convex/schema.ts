@@ -18,10 +18,11 @@ export default defineSchema({
   pairings: defineTable({
     codeHash: v.string(),
     deviceTokenHash: v.string(),
+    deviceNonce: v.string(),
     expiresAt: v.number(),
     ownerId: v.optional(v.id("users")),
     status: v.union(v.literal("waiting"), v.literal("claimed")),
-  }).index("by_code_hash", ["codeHash"]).index("by_device_token_hash", ["deviceTokenHash"]),
+  }).index("by_code_hash", ["codeHash"]).index("by_device_token_hash", ["deviceTokenHash"]).index("by_nonce", ["deviceNonce"]),
   projects: defineTable({
     archivedAt: v.optional(v.number()),
     error: v.optional(v.string()),
@@ -193,6 +194,7 @@ export default defineSchema({
     claimToken: v.optional(v.string()),
     depth: v.number(),
     leaseExpiresAt: v.optional(v.number()),
+    machineId: v.optional(v.id("machines")),
     parentRunId: v.optional(v.id("subagentRuns")),
     result: v.optional(v.object({
       artifacts: v.array(v.string()),
@@ -204,7 +206,7 @@ export default defineSchema({
     status: v.union(v.literal("queued"), v.literal("running"), v.literal("complete"), v.literal("failed")),
     task: v.string(),
     threadId: v.id("threads"),
-  }).index("by_status", ["status"]).index("by_thread", ["threadId"]).index("by_parent_run_id", ["parentRunId"]),
+  }).index("by_status", ["status"]).index("by_thread", ["threadId"]).index("by_parent_run_id", ["parentRunId"]).index("by_machine", ["machineId", "status"]),
 
   // --- Kernel projection tables (widen-only — additive, no legacy changes) ---
 
@@ -270,4 +272,10 @@ export default defineSchema({
     threadId: v.id("threads"),
     updatedAt: v.number(),
   }).index("by_thread", ["threadId"]),
+
+  operatorRoles: defineTable({
+    grantedAt: v.number(),
+    grantedBy: v.id("users"),
+    userId: v.id("users"),
+  }).index("by_user", ["userId"]),
 });

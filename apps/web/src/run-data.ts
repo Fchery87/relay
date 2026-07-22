@@ -122,3 +122,90 @@ export const legacyRunData: RunDataBoundary = canonicalRunData;
 export function toRunSummaries(threads: LegacyRunSummary[] | undefined): ProjectionRunSummary[] | undefined {
   return threads?.map((thread) => ({ projectId: "", runId: thread._id, sequence: 0, status: thread.status, title: thread.title, updatedAt: 0 }));
 }
+
+// ---------------------------------------------------------------------------
+// Canonical command submission — browser actions submit stable command IDs
+// through the canonical inbox instead of legacy per-type mutations.
+// ---------------------------------------------------------------------------
+
+export const submitCanonicalCommand = makeFunctionReference<
+  "mutation",
+  {
+    commandId: string;
+    correlationId: string;
+    kind: string;
+    payloadJson: string;
+    runId?: string;
+    threadId: string;
+  },
+  string
+>("commands/inbox:submitToInbox");
+
+/** Generate a stable command ID from run and turn context. */
+export function canonicalCommandId(runId: string, kind: string, sequence?: number): string {
+  const seq = sequence ?? Date.now();
+  return `cmd-${kind.replace(".", "-")}-${runId.slice(-8)}-${seq}`;
+}
+
+// ---------------------------------------------------------------------------
+// Projection cursor — tracks the confirmed event sequence per run for
+// ordered reconnect without gaps or duplicates.
+// ---------------------------------------------------------------------------
+
+export type ProjectionCursor = {
+  runId: string;
+  confirmedSequence: number;
+  updatedAt: number;
+};
+
+/**
+ * Reconnect cursor manager — persists confirmed sequence in sessionStorage
+ * so a reconnecting browser can resume without gaps.
+ */
+export class ProjectionCursorManager {
+  #prefix: string;
+
+  constructor(storageKey: string = "relay-projection-cursors") {
+    this.#prefix = storageKey;
+  }
+
+  #key(runId: string): string {
+    return `${this.#prefix}:${runId}`;
+  }
+
+  load(runId: string): ProjectionCursor | null {
+    try {
+      const raw = localStorage.getItem(this.#key(runId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as ProjectionCursor;
+      if (parsed.runId !== runId) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  save(runId: string, confirmedSequence: number): void {
+    const cursor: ProjectionCursor = {
+      runId,
+      confirmedSequence,
+      updatedAt: Date.now(),
+    };
+    localStorage.setItem(this.#key(runId), JSON.stringify(cursor));
+  }
+
+  /**
+   * Validate that reconnection is safe: no gap between the last confirmed
+   * sequence and the next event to fetch.
+   */
+  validateReconnect(runId: string, nextSequence: number): { ok: true } | { ok: false; gap: number; lastConfirmed: number } {
+    const cursor = this.load(runId);
+    if (!cursor) return { ok: true }; // No cursor yet — first connection.
+    if (nextSequence <= cursor.confirmedSequence + 1) return { ok: true };
+    return { ok: false, gap: nextSequence - cursor.confirmedSequence - 1, lastConfirmed: cursor.confirmedSequence };
+  }
+
+  clear(runId: string): void {
+    localStorage.removeItem(this.#key(runId));
+  }
+}

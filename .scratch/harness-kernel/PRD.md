@@ -2,8 +2,8 @@
 
 Status: ready-for-agent
 
-> Binding task-level detail lives in the implementation plan at
-> `docs/plans/2026-07-15-relay-harness-kernel-production-readiness.md` (50 tasks, 11 phases).
+> Binding self-hosted recovery and cutover detail lives in the active implementation plan at
+> `docs/plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md`.
 > This spec is the problem/solution framing and the contract a ready-for-agent works against.
 
 ## Problem Statement
@@ -173,7 +173,7 @@ type CommandEnvelope<TType extends string, TPayload> = {
 
 ## Further Notes
 
-- The **implementation plan** (`docs/plans/2026-07-15-relay-harness-kernel-production-readiness.md`) is the binding task-level detail: 50 tasks across 11 phases, executed in dedicated worktrees by phase with code review at every phase gate. Phases 0–1 (decisions/safety rails + canonical contracts/deep interfaces) precede any Codex adapter work.
+- The **self-hosted recovery implementation plan** (`docs/plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md`) is the active binding detail for reliability, migration, security, live-backend acceptance, and kernel cutover gates. The earlier harness-kernel plan remains historical implementation context.
 - **Three ADRs are part of this effort** and supersede the old own-loop decision while preserving `raw-llm` as a temporary adapter: adapter-first local harness; local authority + Convex projections; canonical command/event model. Each records context, decision, rejected alternatives, migration compatibility, rollback, and consequences.
 - **Canonical lifecycle:** browser mutation → `commandInbox` → daemon sync receives/retries → local receipts reject duplicates → decider validates against run state → one transaction appends events + updates projections + receipt + outbox → reactors perform provider/workspace/checkpoint side effects → results return as internal commands → outbox publishes ordered events/snapshots to Convex → client-runtime applies snapshot then events in sequence → React renders.
 - **Execution dependency:** tasks 1–3 (decisions + safety rails) → 4–8 (contracts + deep interfaces) → 9–13 (local durability + orchestration) → parallel 14–17 (Codex adapter) and 18–21 (workspace/security/history) → 22–27 (Convex widen/sync/migrate) → 28–34 (client migration + kernel cutover) → 35–45 (reliability, security, operations) → 46–50 (performance, conformance, acceptance, narrowing). Task 25 is a multi-deploy production operation, not just a code merge; Task 50 is irreversible cleanup gated on a verified backup/rollback rehearsal.

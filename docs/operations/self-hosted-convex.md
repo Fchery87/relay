@@ -1,10 +1,21 @@
 # Self-hosted Convex backend
 
-Relay's backend runs on a **self-hosted Convex instance** — the same open-source
-code Convex cloud runs, as a single prebuilt binary with SQLite storage. No
-Docker, no cloud account, no usage limits. The deployment serves the web app,
-the daemon, and the Convex CLI exactly like a cloud deployment; the `convex/`
-code is identical either way.
+> [!CAUTION]
+> The current self-hosted deployment is supported for the legacy local-development
+> runtime only. Kernel cutover, schema narrowing, and production self-hosting are
+> **not approved** yet. The ordered remediation work and release gates are tracked
+> in the [Self-Hosted Convex Recovery and Kernel Cutover Implementation Plan](../plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md).
+>
+> Keep `RELAY_RUNTIME_MODE=legacy`. Do not run `narrow:narrowProjections` or delete
+> legacy data until that plan's migration, backup/restore, security, live-backend,
+> canary, and release-window gates have all passed. For the full operator workflow,
+> see the [Relay Manual](../../MANUAL.md).
+
+Relay's local-development backend runs on a **self-hosted Convex instance** — the
+same open-source code Convex cloud runs, as a single prebuilt binary with SQLite
+storage. No Docker or cloud account is required for this local topology. The
+instance serves the web app, daemon, and Convex CLI; the `convex/` application
+code is shared with a hosted deployment.
 
 - Backend API (`CONVEX_URL`): `http://127.0.0.1:3210`
 - HTTP actions (`CONVEX_SITE_URL`): `http://127.0.0.1:3211`

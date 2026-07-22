@@ -1,4 +1,5 @@
 export * from "./database";
+export * from "./backup";
 export * from "./event-store";
 export * from "./outbox";
 export * from "./observability";

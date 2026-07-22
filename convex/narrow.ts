@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import { mutationGeneric } from "convex/server";
-import type { Id } from "./_generated/dataModel";
+import { requireOperator } from "./auth_helpers";
 
 // ---------------------------------------------------------------------------
 // Narrow migration — the final, irreversible contraction.
-// Only callable when ALL NarrowGate conditions are met.
+// Operator-only: only users with an operator role can invoke this mutation.
 // ---------------------------------------------------------------------------
 
 export const narrowProjections = mutationGeneric({
@@ -15,6 +15,7 @@ export const narrowProjections = mutationGeneric({
     rehearsalHash: v.string(),
   },
   handler: async (ctx, args) => {
+    await requireOperator(ctx);
     // Gate check: narrow is irreversible — reject unless dry-run passes first
     if (!args.dryRun) {
       // In production, this check would verify the backup rehearsal happened

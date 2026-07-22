@@ -34,7 +34,7 @@ const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
 const daemonHome = resolveDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform });
 const storedCredentials = await loadDeviceCredentials({ daemonHome });
 const projects = await listProjects({ daemonHome, env: Bun.env });
-const config = loadDaemonConfig({ env: Bun.env, hostname, projects, storedDeploymentUrl: storedCredentials?.deploymentUrl, storedDeviceToken: storedCredentials?.deviceToken });
+const config = loadDaemonConfig({ env: Bun.env, hostname, projects, storedDeploymentUrl: storedCredentials?.deploymentUrl, storedDeviceNonce: storedCredentials?.deviceNonce, storedDeviceToken: storedCredentials?.deviceToken });
 const reporter = new MachineReporter({
   gateway: createConvexMachineGateway({ deploymentUrl: config.deploymentUrl }),
   registration: config.registration,
@@ -51,7 +51,15 @@ console.info(`Relay daemon connected as ${config.registration.name} (mode: ${run
 // (shared by legacy and kernel paths)
 // ---------------------------------------------------------------------------
 
-setInterval(() => {
+// ---------------------------------------------------------------------------
+// Heartbeat — independent liveness signal, not coupled to project changes.
+// Runs on a fixed interval so the machine stays online even when its project
+// list has not changed.
+// ---------------------------------------------------------------------------
+let heartbeatInFlight = false;
+const heartbeatTimer = setInterval(() => {
+  if (heartbeatInFlight) return;
+  heartbeatInFlight = true;
   void reporter.heartbeatOnce().catch((error: unknown) => {
     if (isDeviceTokenRejected(error)) {
       console.error("Relay device token is no longer active; stopping daemon.");
@@ -59,10 +67,24 @@ setInterval(() => {
       return;
     }
     console.error("Relay heartbeat failed", error);
-  });
+  }).finally(() => { heartbeatInFlight = false; });
+}, config.heartbeatIntervalMs);
+
+// ---------------------------------------------------------------------------
+// Project sync — registers or updates project records, but is not a liveness
+// signal. Runs independently from the heartbeat.
+// ---------------------------------------------------------------------------
+let projectSyncInFlight = false;
+const projectSyncTimer = setInterval(() => {
+  if (projectSyncInFlight) return;
+  projectSyncInFlight = true;
   void listProjects({ daemonHome, env: Bun.env }).then((current) => {
-    void reporter.syncProjects(current).catch((error: unknown) => console.error("Relay project sync failed", error));
-  });
+    void reporter.syncProjects(current).catch((error: unknown) => {
+      console.error("Relay project sync failed", error);
+    });
+  }).catch((error: unknown) => {
+    console.error("Relay project list failed", error);
+  }).finally(() => { projectSyncInFlight = false; });
 }, config.heartbeatIntervalMs);
 
 const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
@@ -74,7 +96,7 @@ async function collectOrphanedWorktrees() {
   await worktrees.gc({ activeThreadIds });
 }
 await collectOrphanedWorktrees();
-setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
+const worktreeGcTimer = setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
 const provider = new LocalModelRouter({ env: Bun.env, fallbackProvider: new ScriptedModelProvider({ chunks: ["Relay received your message."] }) });
 const mcp = new McpRegistry({ env: Bun.env, gateway: createConvexMcpServerGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken }), governance });
 
@@ -120,6 +142,9 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(heartbeatTimer);
+  clearInterval(projectSyncTimer);
+  clearInterval(worktreeGcTimer);
   await mcp.close();
   process.exit(0);
 }

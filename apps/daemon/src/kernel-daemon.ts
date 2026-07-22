@@ -18,6 +18,8 @@ import {
   type AppendEventInput,
   type AppendEventResult,
 } from "@relay/harness-runtime";
+import { MutableReactorRegistry } from "@relay/orchestration";
+import type { EffectReactor } from "@relay/contracts";
 import {
   canonicalEventPayloadError,
   canonicalEventRequiresTurn,
@@ -504,15 +506,32 @@ export class KernelDaemon {
   private supervisor!: DaemonSupervisor;
   private firstTokenLatencies: number[] = [];
 
+  // Canary telemetry — collected during command processing, reported via heartbeat.
+  private canaryTelemetry = {
+    activeLeases: 0,
+    duplicateCommands: 0,
+    pendingEffects: 0,
+    projectionBacklog: 0,
+    projectionGaps: 0,
+    authFailures: 0,
+    sandboxViolations: 0,
+    recoverableFailures: 0,
+    unrecoverableFailures: 0,
+  };
+
   constructor(private readonly config: KernelDaemonConfig) {}
 
   async start(): Promise<void> {
     const startSpan = this.tracer.startSpan("daemon.start");
 
-    // 1. Open the local SQLite store
+    // 1. Open the local SQLite store with a reactor registry so the
+    // orchestration engine can drain provider, workspace, checkpoint,
+    // and approval effects through registered reactors.
     const dbPath = join(this.config.daemonHome, "relay-kernel.sqlite");
+    const reactors = new MutableReactorRegistry();
     this.runtime = LocalHarnessRuntime.open(dbPath, {
       maxConcurrentRuns: resolveMaxConcurrentRuns(Bun.env as Record<string, string | undefined>),
+      reactors: reactors.build(),
     });
 
     // 2. Create the provider
@@ -534,6 +553,53 @@ export class KernelDaemon {
         },
       });
       console.info("Kernel daemon: Codex app-server transport enabled");
+    }
+
+    // 2c. Register the provider reactor — bridges the daemon's provider router
+    // and optional Codex adapter into the orchestration engine's effect system.
+    // When the decider emits a provider.send_turn effect, the engine invokes
+    // this reactor to execute the turn and stream canonical events back.
+    const codex = this.codexAdapter;
+    const codexEnabled = codex && Bun.env.RELAY_CODEX_ENABLED === "1";
+    const providerReactor: EffectReactor = {
+      execute: async (effect, _context) => {
+        if (effect.intent.kind !== "provider.send_turn") {
+          throw new Error(`Unexpected effect kind: ${effect.intent.kind}`);
+        }
+        const { runId } = effect;
+        const { turnId, prompt } = effect.intent;
+        if (codexEnabled && codex) {
+          await executeTurnViaCodex({
+            codexAdapter: codex,
+            prompt,
+            runId,
+            runtime: this.runtime,
+            turnId,
+          });
+        } else {
+          await executeTurn({
+            provider: this.provider as unknown as Parameters<typeof executeTurn>[0]["provider"],
+            prompt,
+            runId,
+            runtime: this.runtime,
+            turnId,
+          });
+        }
+        return [];
+      },
+      recover: async () => [],
+    };
+    reactors.register("provider.send_turn", providerReactor);
+
+    // Register no-op reactors for provider lifecycle, workspace, checkpoint,
+    // approval, and tool effects — these are routed through the existing
+    // adapter infrastructure and don't need new side effects in the daemon.
+    const noopReactor: EffectReactor = {
+      execute: async () => [],
+      recover: async () => [],
+    };
+    for (const kind of ["provider.start_session", "provider.resume_session", "provider.steer_turn", "provider.interrupt_turn", "provider.resolve_approval", "provider.stop_session", "workspace.create", "workspace.reconcile", "checkpoint.capture", "checkpoint.restore", "tool.execute"] as const) {
+      reactors.register(kind, noopReactor);
     }
 
     // 3. Create Convex adapters
@@ -685,7 +751,6 @@ export class KernelDaemon {
           const rId = runId ?? (payload.runId as string);
           if (!rId) throw new Error("turn.send requires runId");
           const rawPrompt = (payload.prompt ?? "Hello") as string;
-          const modelId = (payload.modelId as string) ?? DEFAULT_MODEL_ID;
 
           // Security: scan prompt for secrets before sending to provider
           const secretFindings = scanForSecrets(rawPrompt);
@@ -696,50 +761,23 @@ export class KernelDaemon {
           // Sanitize prompt before logging/projection
           const prompt = sanitizeForProjection(rawPrompt);
 
-          const turn = await this.runtime.sendTurn({
+          const turnStart = Date.now();
+
+          // Route through the durable reactor instead of direct execution.
+          // sendTurn creates the effect; drainEffects invokes the registered
+          // provider reactor which executes the turn and streams events back.
+          await this.runtime.sendTurn({
             runId: rId as never,
             prompt,
             commandId: externalCommandId as never,
           });
 
-          let succeeded: boolean;
-          const turnStart = Date.now();
-
-          if (this.codexAdapter) {
-            // Real Codex app-server path
-            succeeded = await executeTurnViaCodex({
-              runId: rId,
-              turnId: turn.turnId as string,
-              prompt,
-              codexAdapter: this.codexAdapter,
-              runtime: this.runtime,
-              threadId: payload.threadId as string | undefined,
-              onFirstToken: (latencyMs) => {
-                this.firstTokenLatencies.push(latencyMs);
-              },
-            });
-          } else {
-            // Catalog LLM provider path (legacy / fake)
-            const turnProvider = this.provider.resolve({
-              modelId,
-              thinkingLevel:
-                (payload.thinkingLevel as "none" | "low" | "medium" | "high") ??
-                "none",
-            });
-
-            succeeded = await executeTurn({
-              runId: rId,
-              turnId: turn.turnId as string,
-              prompt,
-              provider: turnProvider,
-              runtime: this.runtime,
-              onFirstToken: (latencyMs) => {
-                this.firstTokenLatencies.push(latencyMs);
-              },
-            });
-          }
-
+          const drained = await this.runtime.drainEffects();
           const turnLatency = Date.now() - turnStart;
+
+          // Determine success from the canonical run state after draining.
+          const snapshot = this.runtime.getSnapshotByRunId(rId);
+          const succeeded = snapshot?.status === "completed" || snapshot?.status === "ready" || snapshot?.status === "running";
 
           if (succeeded) {
             incrementMetric("completedRuns");
@@ -749,6 +787,7 @@ export class KernelDaemon {
 
           span.tags["turnLatencyMs"] = String(turnLatency);
           span.tags["turnSucceeded"] = String(succeeded);
+          span.tags["effectsDrained"] = String(drained);
           await complete(succeeded ? "completed" : "rejected");
           break;
         }

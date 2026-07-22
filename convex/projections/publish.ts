@@ -133,6 +133,39 @@ export const advanceCursor = mutation({
 });
 
 // ---------------------------------------------------------------------------
+// Flush projection outbox — daemon acknowledges published events.
+// Returns the sequence up to which all events are acknowledged.
+// ---------------------------------------------------------------------------
+
+export const flushOutbox = mutation({
+  args: {
+    deviceToken: v.string(),
+    projectId: v.id("projects"),
+    throughSequence: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const machine = await requireActiveMachine(ctx, args.deviceToken);
+    const project = await ctx.db.get(args.projectId);
+    if (!project || project.machineId !== machine._id) throw new Error("Project does not belong to machine");
+
+    // Verify all events through sequence exist and belong to this machine.
+    for (let seq = 1; seq <= args.throughSequence; seq++) {
+      const ev = await ctx.db.query("projectionEvents").withIndex("by_run_sequence", (q) => q.eq("runId", project.path).eq("sequence", seq)).first();
+      if (!ev || ev.machineId !== machine._id) throw new Error(`Projection gap at ${project.path}:${seq}`);
+    }
+
+    // Advance the outbound cursor to the acknowledged sequence.
+    const existing = await ctx.db.query("projectionCursors").withIndex("by_machine_direction", (q) => q.eq("machineId", machine._id).eq("direction", "outbound")).first();
+    if (existing) {
+      if (args.throughSequence < existing.sequence) throw new Error(`Outbound cursor regression for ${machine._id}`);
+      await ctx.db.patch(existing._id, { sequence: args.throughSequence, updatedAt: Date.now() });
+    } else {
+      await ctx.db.insert("projectionCursors", { direction: "outbound", machineId: machine._id, sequence: args.throughSequence, updatedAt: Date.now() });
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Owner-scoped projection reads — browser data plane.
 // ---------------------------------------------------------------------------
 
@@ -192,5 +225,60 @@ export const listProjectionRuns = query({
         projectId: args.projectId,
         updatedAt: s._creationTime,
       }));
+  },
+});
+
+/** Observable projection metrics — backlog, gaps, retries, cursor lag. */
+export const projectionMetrics = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUser(ctx);
+    const machines = await ctx.db.query("machines").withIndex("by_owner", (q) => q.eq("ownerId", userId)).collect();
+    const now = Date.now();
+
+    let totalEvents = 0;
+    let totalSnapshots = 0;
+    let gapCount = 0;
+    let oldestPendingAge = 0;
+
+    for (const machine of machines) {
+      const events = await ctx.db.query("projectionEvents").withIndex("by_machine_run", (q) => q.eq("machineId", machine._id)).take(1000);
+      totalEvents += events.length;
+
+      const snaps = await ctx.db.query("projectionSnapshots").withIndex("by_machine_run", (q) => q.eq("machineId", machine._id)).take(200);
+      totalSnapshots += snaps.length;
+
+      // Detect sequence gaps
+      const byRun = new Map<string, number[]>();
+      for (const ev of events) {
+        const seqs = byRun.get(ev.runId) ?? [];
+        seqs.push(ev.sequence);
+        byRun.set(ev.runId, seqs);
+      }
+      for (const [, seqs] of byRun) {
+        seqs.sort((a, b) => a - b);
+        for (let i = 1; i < seqs.length; i++) {
+          if (seqs[i]! !== seqs[i - 1]! + 1) gapCount++;
+        }
+      }
+
+      // Oldest pending cursor age
+      const cursor = await ctx.db.query("projectionCursors").withIndex("by_machine_direction", (q) => q.eq("machineId", machine._id).eq("direction", "outbound")).first();
+      if (cursor) {
+        const lastEvent = events.filter(e => e.sequence > cursor.sequence).sort((a, b) => b.sequence - a.sequence)[0];
+        if (lastEvent) {
+          const age = now - lastEvent._creationTime;
+          if (age > oldestPendingAge) oldestPendingAge = age;
+        }
+      }
+    }
+
+    return {
+      totalEvents,
+      totalSnapshots,
+      gapCount,
+      oldestPendingAgeMs: oldestPendingAge,
+      backlogEvents: totalEvents - totalSnapshots > 0 ? totalEvents - totalSnapshots : 0,
+    };
   },
 });

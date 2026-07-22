@@ -6,10 +6,10 @@ import { makeFunctionReference } from "convex/server";
 import { resolveDaemonHome } from "./daemon-home";
 import { saveDeviceCredentials } from "./device-credentials";
 
-const startPairingMutation = makeFunctionReference<"mutation", { code: string; deviceToken: string }, null>("pairing:start");
-const waitForPairingQuery = makeFunctionReference<"query", { code: string }, { status: "waiting" | "claimed" | "expired" }>("pairing:waitForClaim");
+const startPairingMutation = makeFunctionReference<"mutation", { code: string; deviceNonce: string; deviceToken: string }, null>("pairing:start");
+const waitForPairingQuery = makeFunctionReference<"query", { code: string }, { nonce: string; status: "waiting" | "claimed" | "expired" }>("pairing:waitForClaim");
 
-type PairingState = { status: "waiting" | "claimed" | "expired" };
+type PairingState = { nonce: string; status: "waiting" | "claimed" | "expired" };
 
 export function resolveConnectDaemonHome({ env, homeDirectory, platform }: { env: Readonly<Record<string, string | undefined>>; homeDirectory: string; platform: string }): string {
   return resolveDaemonHome({ env, homeDirectory, platform });
@@ -18,24 +18,25 @@ export function resolveConnectDaemonHome({ env, homeDirectory, platform }: { env
 type PairDeviceInput = {
   daemonHome: string;
   deploymentUrl: string;
+  deviceNonce: string;
   deviceToken: string;
   generateCode: () => string;
   output: (line: string) => void;
   pollIntervalMs: number;
-  start: (input: { code: string; deviceToken: string }) => Promise<unknown>;
+  start: (input: { code: string; deviceNonce: string; deviceToken: string }) => Promise<unknown>;
   waitForClaim: (input: { code: string }) => Promise<PairingState>;
-  writeCredentials: (input: { daemonHome: string; deploymentUrl: string; deviceToken: string }) => Promise<void>;
+  writeCredentials: (input: { daemonHome: string; deploymentUrl: string; deviceNonce: string; deviceToken: string }) => Promise<void>;
 };
 
-export async function pairDevice({ daemonHome, deploymentUrl, deviceToken, generateCode, output, pollIntervalMs, start, waitForClaim, writeCredentials }: PairDeviceInput): Promise<void> {
+export async function pairDevice({ daemonHome, deploymentUrl, deviceNonce, deviceToken, generateCode, output, pollIntervalMs, start, waitForClaim, writeCredentials }: PairDeviceInput): Promise<void> {
   const code = generateCode();
-  await start({ code, deviceToken });
+  await start({ code, deviceNonce, deviceToken });
   output(`Pair this daemon in Relay with code: ${code}`);
 
   for (;;) {
     const pairing = await waitForClaim({ code });
     if (pairing.status === "claimed") {
-      await writeCredentials({ daemonHome, deploymentUrl, deviceToken });
+      await writeCredentials({ daemonHome, deploymentUrl, deviceNonce, deviceToken });
       return;
     }
     if (pairing.status === "expired") {
@@ -66,6 +67,7 @@ export async function runConnect({
   await pairDevice({
     daemonHome: daemonHome ?? resolveConnectDaemonHome({ env: Bun.env, homeDirectory: homedir(), platform: process.platform }),
     deploymentUrl,
+    deviceNonce: randomOpaqueValue(32),
     deviceToken: randomOpaqueValue(48),
     generateCode: () => randomOpaqueValue(10),
     output: (line) => console.info(line),

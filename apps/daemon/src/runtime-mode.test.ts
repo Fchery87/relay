@@ -30,6 +30,34 @@ test("rejects empty string", () => {
   );
 });
 
+test("kernel disabled kill-switch blocks shadow mode", () => {
+  expect(() =>
+    resolveRuntimeMode({ RELAY_RUNTIME_MODE: "shadow", RELAY_KERNEL_DISABLED: "1" }),
+  ).toThrow(/RELAY_KERNEL_DISABLED/);
+});
+
+test("kernel disabled kill-switch blocks kernel mode", () => {
+  expect(() =>
+    resolveRuntimeMode({ RELAY_RUNTIME_MODE: "kernel", RELAY_KERNEL_DISABLED: "1" }),
+  ).toThrow(/RELAY_KERNEL_DISABLED/);
+});
+
+test("kernel disabled kill-switch allows legacy", () => {
+  expect(
+    resolveRuntimeMode({ RELAY_RUNTIME_MODE: "legacy", RELAY_KERNEL_DISABLED: "1" }),
+  ).toBe("legacy");
+});
+
+test("kernel disabled not set allows kernel mode", () => {
+  expect(
+    resolveRuntimeMode({ RELAY_RUNTIME_MODE: "kernel", RELAY_KERNEL_DISABLED: "0" }),
+  ).toBe("kernel");
+});
+
+test("kernel disabled allows kernel when absent", () => {
+  expect(resolveRuntimeMode({ RELAY_RUNTIME_MODE: "kernel" })).toBe("kernel");
+});
+
 // RELAY_KERNEL_MAX_CONCURRENT_RUNS
 
 test("defaults max concurrent runs when not set", () => {

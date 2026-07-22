@@ -42,6 +42,18 @@ export type LocalHarnessRuntimeConfig = {
   readonly reactorRetryMaxMs?: number;
   readonly reactorRetryJitterRatio?: number;
   readonly reactorNow?: () => number;
+  /** Enable sandbox enforcement for process and filesystem access. */
+  readonly sandbox?: SandboxConfig;
+};
+
+/** Sandbox configuration — restricts process execution and filesystem access. */
+export type SandboxConfig = {
+  /** Allowed workspace root paths (processes cannot escape these). */
+  readonly workspaceRoots: ReadonlyArray<string>;
+  /** Environment variables allowed through to subprocesses. */
+  readonly envAllowlist?: ReadonlyArray<string>;
+  /** Fail closed — if true, sandbox enforcement failure blocks execution. */
+  readonly failClosed: boolean;
 };
 
 export class LocalHarnessRuntime implements HarnessRuntime {
@@ -51,7 +63,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   constructor(
     private readonly db: StoreDatabase,
-    config?: LocalHarnessRuntimeConfig,
+    private readonly config?: LocalHarnessRuntimeConfig,
   ) {
     this.engine = new OrchestrationEngine(db, {
       maxConcurrentRuns: config?.maxConcurrentRuns ?? 4,
@@ -279,6 +291,63 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   /** Execute one bounded batch of reclaimable durable effects. */
   drainEffects(): Promise<number> {
     return this.engine.drainEffects();
+  }
+
+  // -- Sandbox enforcement ---------------------------------------------------
+
+  /**
+   * Validate that a filesystem path is within an allowed workspace root.
+   * Resolves symlinks before comparison to prevent traversal escapes.
+   * Throws if sandbox enforcement is enabled and the path escapes.
+   */
+  async enforceSandboxPath(requestedPath: string): Promise<string> {
+    const cfg = this.config?.sandbox;
+    if (!cfg) return requestedPath;
+
+    // Resolve symlinks to prevent symlink-traversal escapes.
+    let resolved = requestedPath;
+    try {
+      const fs = await import("node:fs/promises");
+      resolved = await fs.realpath(requestedPath);
+    } catch {
+      // Path doesn't exist yet — validate the parent instead.
+      const parent = requestedPath.split("/").slice(0, -1).join("/") || "/";
+      const fs = await import("node:fs/promises");
+      resolved = await fs.realpath(parent) + "/" + requestedPath.split("/").pop()!;
+    }
+
+    // Verify the resolved path is within an allowed root.
+    const allowed = cfg.workspaceRoots.some((root) =>
+      resolved.startsWith(root.endsWith("/") ? root : root + "/"),
+    );
+
+    if (!allowed) {
+      const message = `Sandbox violation: path "${requestedPath}" (resolved: "${resolved}") escapes workspace roots`;
+      if (cfg.failClosed) throw new Error(message);
+      console.warn(message);
+    }
+
+    return resolved;
+  }
+
+  /**
+   * Filter environment variables to only those on the allowlist.
+   * Returns a sanitized env object when sandbox is configured.
+   */
+  filterSandboxEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+    const cfg = this.config?.sandbox;
+    if (!cfg?.envAllowlist) return env;
+    const allowed = new Set(cfg.envAllowlist);
+    const filtered: Record<string, string | undefined> = {};
+    for (const [key, value] of Object.entries(env)) {
+      if (allowed.has(key)) filtered[key] = value;
+    }
+    return filtered;
+  }
+
+  /** Whether sandbox enforcement is enabled. */
+  get sandboxEnabled(): boolean {
+    return this.config?.sandbox?.failClosed ?? false;
   }
 }
 

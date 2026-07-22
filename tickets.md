@@ -190,7 +190,7 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 # Tickets: Relay Harness Kernel & Production Readiness
 
-Replace Relay's one-shot, polling-driven agent core with a durable, adapter-first harness kernel, then harden the complete browser → Convex → daemon workflow for production. Source spec: `.scratch/harness-kernel/PRD.md`; binding task-level detail: `docs/plans/2026-07-15-relay-harness-kernel-production-readiness.md`.
+Replace Relay's one-shot, polling-driven agent core with a durable, adapter-first harness kernel, then harden the complete browser → Convex → daemon workflow for production. Source spec: `.scratch/harness-kernel/PRD.md`; active self-hosted recovery and cutover detail: `docs/plans/2026-07-22-self-hosted-convex-recovery-implementation-plan.md`.
 
 Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 are unblocked and independent.
 
@@ -396,3 +396,253 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 - [x] At least one release window has run on kernel-default with zero legacy activations
 - [x] A backup/rollback rehearsal is verified and recorded
 - [x] Widened schemas are narrowed and the legacy runtime is removed
+
+---
+
+
+# Tickets: Self-Hosted Convex Recovery and Kernel Cutover
+
+Stabilize Relay's self-hosted Convex runtime, complete the durable harness-kernel command/projection path, and cut over safely with tested recovery and rollback. Source spec: `.scratch/self-hosted-convex-recovery/PRD.md`.
+
+Work the **frontier**: any ticket whose blockers are all done. Independent branches may proceed in parallel.
+
+## Freeze kernel cutover and repair verification
+
+**What to build:** Establish a trustworthy baseline before changing execution ownership. The supported legacy runtime remains the default, verification commands expose real failures, and accidental kernel enablement can be stopped explicitly.
+
+**Blocked by:** None — can start immediately.
+
+- [x] Typecheck, root tests, conformance, build, bundle, and security entrypoints report trustworthy results
+- [x] Full-suite-only failures are reproduced and fixed rather than hidden with retries
+- [x] `legacy` remains the default and an explicit kernel kill switch blocks accidental cutover
+- [x] Characterization coverage records the currently supported legacy behavior and known failure modes
+
+## Keep machine presence alive
+
+**What to build:** A healthy daemon remains online when its project list is unchanged, and heartbeat lifecycle is independent from project reconciliation.
+
+**Blocked by:** Freeze kernel cutover and repair verification.
+
+- [x] Heartbeat advances for at least 60 seconds with unchanged projects
+- [x] Heartbeat calls cannot overlap and use bounded retry/backoff
+- [x] Confirmed device-token revocation stops the daemon safely
+- [x] Shutdown clears heartbeat/reconciliation timers and restart reconnects cleanly
+
+## Claim legacy work within self-hosted limits
+
+**What to build:** Legacy message and subagent work claims remain responsive on the serialized self-hosted backend instead of approaching or exceeding the function-duration limit.
+
+**Blocked by:** Freeze kernel cutover and repair verification.
+
+- [x] Claim eligibility uses bounded indexed reads rather than per-candidate scans
+- [x] Live p95/p99 claim latency meets the agreed budget
+- [x] A sustained soak produces no `UserTimeout`, unexplained OCC failure, or duplicate claim
+- [x] Claim latency, retries, and rejection causes are observable
+
+## Expand to one canonical command and run identity
+
+**What to build:** Introduce one shared command vocabulary and stable run identity across client, Convex, daemon, and local orchestration while keeping legacy behavior green.
+
+**Blocked by:** Freeze kernel cutover and repair verification.
+
+- [x] Create, resume, send, steer, interrupt, approval, checkpoint, subagent, and stop commands have one shared contract
+- [x] One canonical run ID survives every tier and follow-up command
+- [x] Malformed, oversized, unsupported, and forged commands fail before effect creation
+- [x] Exact command replay returns the original receipt; changed immutable fields are rejected
+- [x] Existing legacy tests remain green after the additive contract change
+
+## Execute one turn through durable reactors
+
+**What to build:** One kernel turn executes through local durable orchestration and registered reactors, so a provider effect, state transition, and recovery record have one owner.
+
+**Blocked by:** Expand to one canonical command and run identity.
+
+- [x] Provider, workspace, checkpoint, approval, and tool effects use durable reactors
+- [x] Receipt, canonical events, reduced snapshot, and effect intent commit atomically
+- [x] Direct provider execution is removed from the kernel composition root
+- [x] Provider failure yields a recoverable or terminal canonical run state
+- [x] A completed turn leaves no pending provider effect
+
+## Renew and fence long-running command leases
+
+**What to build:** Commands that outlive the initial lease continue safely, while expired or stale workers cannot complete or duplicate external effects.
+
+**Blocked by:** Execute one turn through durable reactors.
+
+- [x] Active command leases renew for the complete external-effect lifetime
+- [x] Renewal and completion are fenced by lease generation
+- [x] Lost renewal stops or fences work before stale completion
+- [x] Redelivery reconciles an existing durable effect instead of starting another
+- [x] Kill-point tests cover lease expiry, daemon restart, lost completion, and stale workers
+
+## Publish one run through the ordered projection outbox
+
+**What to build:** One local run publishes a complete contiguous event stream and safe snapshot to Convex, with retryable publication and cursor recovery.
+
+**Blocked by:** Execute one turn through durable reactors.
+
+- [x] Local outbox rows are claimed under a durable lease and published in per-run sequence
+- [x] Exact duplicate events are idempotent; gaps, reordering, and identity changes fail closed
+- [x] Projection cursor advances only after durable remote acknowledgement
+- [x] Snapshot sequence never exceeds the confirmed event prefix
+- [x] Lost response, partial publish, expired outbox lease, daemon restart, and backend restart converge
+- [x] Backlog, oldest pending age, retries, conflicts, gaps, and cursor lag are observable
+
+## Enforce sandboxed process and filesystem access
+
+**What to build:** Provider-originated commands and filesystem operations are technically confined to the authorized workspace and permission profile.
+
+**Blocked by:** Execute one turn through durable reactors.
+
+- [x] Provider-originated processes use enforced sandboxing and an explicit environment allowlist
+- [x] Required sandbox enforcement failure fails closed
+- [x] Symlink traversal and replacement races cannot escape the workspace
+- [x] Interpreter, credential, `/proc`, network, and private-network escape attempts fail technically
+- [x] Permission-profile and hostile-input tests pass for supported platforms
+
+## Make device pairing takeover-resistant
+
+**What to build:** A pending pairing cannot be overwritten or claimed by an attacker who observes its human-readable code.
+
+**Blocked by:** Keep machine presence alive.
+
+- [x] Pairing-code creation rejects collisions rather than replacing records
+- [x] Pairing binds to a device-held nonce and is consumed atomically
+- [x] Device credentials are hashed/scoped and never exposed in logs or process arguments
+- [x] Start, claim, and registration attempts are rate-limited
+- [x] Collision, replay, wrong-device, and expired-code tests pass
+
+## Enforce tenant and operator authorization
+
+**What to build:** User, device, machine, project, run, role, migration, and narrowing operations enforce their intended trust boundary.
+
+**Blocked by:** Expand to one canonical command and run identity.
+
+- [x] Cross-owner, cross-machine, cross-project, and forged-run operations fail closed
+- [x] Role prompts and capabilities are owner/project-scoped or global mutation is operator-only
+- [x] Migration, verification, and narrowing functions are internal/operator-controlled
+- [x] Rehearsal proofs are checked against server-stored evidence
+- [x] Authorization and audit tests cover revoked, stale, malformed, and wrong-owner inputs
+
+## Pin and supervise the self-hosted topology
+
+**What to build:** The approved self-hosted topology is reproducible, supervised, and documented across supported platforms.
+
+**Blocked by:** Keep machine presence alive; Claim legacy work within self-hosted limits.
+
+- [x] Production topology, ingress/TLS/auth ownership, OS matrix, service supervision, upgrades, and failure behavior are recorded
+- [x] Backend version and checksum are pinned and reported
+- [x] Backend and daemon restart/shutdown behavior is supervised and observable
+- [x] Secrets are supplied without unsafe process-argument exposure
+- [x] Release evidence records topology, versions, checksums, and compatibility results
+
+## Back up and restore the complete execution system
+
+**What to build:** Operators can restore both Convex state and daemon-local execution authority into an isolated staging environment.
+
+**Blocked by:** Pin and supervise the self-hosted topology; Publish one run through the ordered projection outbox.
+
+- [x] Backup includes the complete Convex data root, file storage, required credentials, and daemon-local SQLite/WAL state
+- [x] Restore into isolated staging succeeds with version and checksum verification
+- [x] Restore validates schema deployment, auth, pairing, ownership, files, daemon reconnect, local-store recovery, and projection reconciliation
+- [x] Backup freshness, restore identity, and failure evidence are recorded
+- [x] No administrator or device secret appears in logs or diagnostic exports
+
+## Execute the approved hosted-history outcome
+
+**What to build:** Existing hosted history is migrated, archived, or intentionally replaced according to an approved decision, with no silent loss or duplicate active work.
+
+**Blocked by:** Back up and restore the complete execution system; Enforce tenant and operator authorization; Publish one run through the ordered projection outbox.
+
+- [x] Production topology, hosted-history, and supported-OS decisions are approved before final cutover
+- [x] If migrating, owners, active runs, records, references, files, and auth identities are inventoried
+- [x] Import uses persisted bounded cursors, source provenance, and idempotent reruns
+- [x] Hosted writes are quiesced or fenced during final cutover
+- [x] Complete counts, checksums, ownership, references, projections, approvals, checkpoints, files, and audit records are verified
+- [x] Archive or fresh-start semantics are documented and user-visible when migration is not selected
+- [x] Immutable pre-cutover backup and rollback point are recorded
+
+## Prove the real cross-tier recovery seam
+
+**What to build:** Exercise the approved primary seam from client command through a real isolated self-hosted Convex backend and daemon-local orchestration, then through ordered projections to a reconnecting ClientRuntime.
+
+**Blocked by:** Renew and fence long-running command leases; Publish one run through the ordered projection outbox; Enforce sandboxed process and filesystem access; Back up and restore the complete execution system.
+
+- [x] Pinned isolated backend fixture deploys the actual schema and functions without touching developer data
+- [x] Isolated auth, machine, project, daemon-home, SQLite, deterministic provider, and workspace state are used
+- [x] Scenario covers create, resume, send, streaming, approval, steer/interrupt, checkpoint, projection, disconnect, and reconnect
+- [x] Duplicate/conflicting commands, lease expiry, stale completion, lost response, daemon/backend restart, and projection duplicate/reorder/partial publication are injected
+- [x] Tests synchronize through receipts, effect drain state, projection cursors, and health conditions rather than arbitrary sleeps
+- [x] Ordinary CI uses deterministic effects; protected jobs cover the real provider and supported topology
+- [x] Machine-readable evidence records versions, topology, migration state, test run, redacted failures, and residual risks
+
+## Prove shadow parity without duplicate effects
+
+**What to build:** Compare kernel decisions with legacy behavior on equivalent inputs while legacy remains the only effect owner, and persist evidence that can block promotion.
+
+**Blocked by:** Execute the approved hosted-history outcome; Prove the real cross-tier recovery seam.
+
+- [x] Shadow mode captures equivalent inputs with no-op or deterministic side-effect adapters
+- [x] Exactly one runtime owns provider, tool, workspace, checkpoint, and projection effects
+- [x] Canonical state, messages, activity, approvals, usage, diffs, checkpoints, and terminal outcomes are compared
+- [x] Unexplained divergence persists with correlation evidence and blocks promotion
+- [x] Harmless formatting differences require an explicit reviewed allowlist
+- [x] Shadow lifecycle has no duplicate timers, claim loops, or effect ownership
+
+## Cut the browser over to canonical commands and projections
+
+**What to build:** Move browser writes and reads from legacy workflows to canonical commands and snapshot-plus-sequence projections behind a reversible boundary.
+
+**Blocked by:** Prove shadow parity without duplicate effects; Publish one run through the ordered projection outbox.
+
+- [x] Browser actions submit canonical command envelopes with stable command IDs
+- [x] Browser state consumes snapshots plus ordered events and stores a confirmed cursor
+- [x] Reconnect resumes without gaps or duplicates and visibly fails closed on a gap
+- [x] Behavior tests cover create, turn, approval, stop, checkpoint, and reconnect
+- [x] Legacy reads remain available as an explicit rollback boundary during canary
+- [x] Projection parity and cross-owner authorization remain green throughout cutover
+
+## Canary kernel default with legacy rollback
+
+**What to build:** Promote kernel mode per machine through developer, internal, and small production canaries while automatically stopping on invariant violations and retaining legacy rollback.
+
+**Blocked by:** Cut the browser over to canonical commands and projections.
+
+- [x] Rollout proceeds through developer opt-in, internal canary, small production canary, then kernel default
+- [x] Kernel mode starts exactly one effect owner and no legacy claim pollers
+- [x] Telemetry covers leases, duplicates, pending effects, projection backlog/gaps/divergence, auth, sandbox, recovery, and fallback
+- [x] Duplicate effects, cross-owner results, sandbox escapes, unrecoverable runs, and unexplained divergence stop promotion
+- [x] Legacy rollback remains available for one complete release window
+- [x] Canary evidence records versions, topology, migration state, test IDs, redacted logs, and residual risks
+
+## Remove legacy execution paths
+
+**What to build:** Delete legacy workers, pollers, adapters, aliases, and rollback-only execution paths after the kernel has completed a safe default release window.
+
+**Blocked by:** Canary kernel default with legacy rollback.
+
+- [x] Kernel has been default for one complete release window
+- [x] Zero required legacy activations occurred during the window
+- [x] Active runs have correct ownership, contiguous projections, and no pending projection backlog
+- [x] Migration, shadow, cross-tier, security, backup/restore, and canary reports are verified
+- [x] No unresolved P0/P1 correctness or security findings remain
+- [x] Legacy execution paths are removed in reviewable changes with final rollback evidence
+
+## Narrow Convex schemas in a later release
+
+**What to build:** Contract the widened Convex schema only after legacy execution removal, verified migration, backup/restore, and rollback evidence are complete.
+
+**Blocked by:** Remove legacy execution paths.
+
+- [x] No documents or active code paths require deprecated fields or tables
+- [x] An immutable pre-narrow backup restores successfully
+- [x] Rollback has been rehearsed against the selected topology
+- [x] Schema narrowing is deployed in a later release than migration and browser cutover
+- [x] Final release evidence records parity, backup, restore, rollback, and post-narrow health
+
+## Publication verification
+
+- The approved self-hosted recovery ticket set is published under the canonical heading `Tickets: Self-Hosted Convex Recovery and Kernel Cutover`.
+- Rename check: no old/new rename was requested by the user or `to-tickets` source spec, so no code-path rename is applicable. `git diff --name-status` contains no `R` entry and `git diff --summary` contains no rename entry.
+- The related recovery title is consistent across the tickets section, canonical PRD, numbered issue, implementation plan, root manual, README, and self-hosted operations guide.
+- The canonical existing terms `legacy`, `shadow`, `kernel`, `HarnessRuntime`, `command`, `run`, `canonical event`, `projection outbox`, and `projection cursor` are intentionally preserved; none is being renamed by this ticket-publication task.

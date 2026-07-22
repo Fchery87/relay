@@ -187,7 +187,10 @@ export const claimQueuedMessage = mutationGeneric({
   handler: async (ctx, args) => {
     const machine = await requireActiveMachine(ctx, args.deviceToken);
 
+    let scanned = 0;
     for await (const message of ctx.db.query("messages").withIndex("by_status", (q) => q.eq("status", "queued"))) {
+      scanned++;
+      if (scanned > 30) break;
       const thread = await ctx.db.get("threads", message.threadId);
       if (!thread) continue;
       if (thread.status === "running" || thread.status === "awaiting-approval" || thread.status === "restoring" || thread.status === "stopped") continue;
