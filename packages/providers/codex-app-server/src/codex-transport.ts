@@ -101,7 +101,9 @@ export type CodexTransport = {
 // ---------------------------------------------------------------------------
 
 function filteredEnvironment(): Record<string, string> {
-  const allowed = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CODEX_HOME"];
+  // The key is passed only to the local Codex child process; it never appears
+  // in argv or Relay's canonical event/projection payloads.
+  const allowed = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CODEX_HOME", "OPENAI_API_KEY"];
   const environment: Record<string, string> = {};
   for (const key of allowed) { const value = Bun.env[key]; if (value) environment[key] = value; }
   return environment;

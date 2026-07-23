@@ -167,11 +167,48 @@ function normalizeCanonicalNotification(
         },
       ];
 
+    case "item/started": {
+      const item = notification.params?.item as Record<string, unknown> | undefined;
+      if (!item || !["commandExecution", "fileChange", "mcpToolCall"].includes(String(item.type))) return [];
+      return [{
+        type: "activity.started",
+        payload: {
+          activityId: (item.id ?? "") as never,
+          kind: String(item.type),
+          toolName: String(item.type),
+        },
+      }];
+    }
+
+    case "item/completed": {
+      const item = notification.params?.item as Record<string, unknown> | undefined;
+      if (!item || !["commandExecution", "fileChange", "mcpToolCall"].includes(String(item.type))) return [];
+      return [{
+        type: "activity.completed",
+        payload: {
+          activityId: (item.id ?? "") as never,
+          summary: String(item.type),
+        },
+      }];
+    }
+
+    case "item/commandExecution/outputDelta":
+    case "command/exec/outputDelta":
+    case "item/fileChange/outputDelta":
+      return [{
+        type: "activity.delta",
+        payload: {
+          activityId: (notification.params?.itemId ?? "") as never,
+          content: notification.params?.delta ?? "",
+        },
+      }];
+
     case "agent/text-delta":
+    case "item/agentMessage/delta":
       return [
         {
           type: "assistant.delta",
-          payload: { text: notification.params?.text ?? "" },
+          payload: { text: notification.params?.text ?? notification.params?.delta ?? "" },
         },
       ];
 

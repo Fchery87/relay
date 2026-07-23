@@ -95,6 +95,50 @@ describe("Codex kernel bridge", () => {
     await runtime.shutdown();
   });
 
+  test("persists a Codex after-checkpoint before the terminal event", async () => {
+    const runtime = LocalHarnessRuntime.memory();
+    const created = await runtime.createRun({ projectId: "codex-checkpoint-order" });
+    await runtime.resumeRun({ runId: created.runId });
+    const turn = await runtime.sendTurn({ runId: created.runId, prompt: "edit" });
+    let handler: ((event: NormalizedEvent) => void) | undefined;
+    const adapter = {
+      activeThreadId: "thread-checkpoint-order",
+      onEvent(next: (event: NormalizedEvent) => void) {
+        handler = next;
+        return () => { handler = undefined; };
+      },
+      async resumeThread() {},
+      async startTurn() {
+        setTimeout(() => {
+          handler?.({ type: "turn.completed", payload: {}, providerThreadId: "thread-checkpoint-order", providerTurnId: "provider-turn-order" });
+        }, 0);
+        return { turn: { id: "provider-turn-order" } };
+      },
+      close() {},
+    } as unknown as CodexSessionAdapter;
+
+    await executeTurnViaCodex({
+      runId: created.runId,
+      turnId: turn.turnId,
+      prompt: "edit",
+      codexAdapter: adapter,
+      runtime,
+      threadId: "thread-checkpoint-order",
+      onBeforeTerminal: async () => {
+        const result = await runtime.appendEvent(created.runId, {
+          eventId: "checkpoint-before-terminal",
+          type: "checkpoint.captured",
+          turnId: turn.turnId,
+          payload: { checkpointId: "checkpoint-order" as never, commit: "abc123", ref: "refs/relay/checkpoint-order" },
+        });
+        expect(result.ok).toBe(true);
+      },
+    });
+
+    expect((await runtime.snapshot({ runId: created.runId })).checkpoint?.checkpointId).toBe("checkpoint-order" as never);
+    await runtime.shutdown();
+  });
+
   test("serializes two runs sharing one Codex adapter", async () => {
     const runtime = LocalHarnessRuntime.memory();
     const first = await runtime.createRun({ projectId: "codex-first" });

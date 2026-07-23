@@ -54,8 +54,9 @@ test("codex smoke test", async () => {
   // Start a simple turn
   await adapter.startTurn(threadId, "say hello world");
 
-  // Poll for events up to 30 seconds
-  const deadline = Date.now() + 30_000;
+  // A real hosted turn can spend tens of seconds in provider startup before
+  // its first delta; keep the protected smoke bounded but above that floor.
+  const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     if (events.some((e) => e.type === "turn.completed")) break;
     await new Promise((r) => setTimeout(r, 100));
@@ -73,4 +74,4 @@ test("codex smoke test", async () => {
 
   // Close cleanly
   adapter.close();
-}, 45_000);
+}, 120_000);

@@ -27,11 +27,19 @@ export type SessionAdapterConfig = {
   onRequest?: (request: { method: string; params: unknown }) => Promise<{ result?: unknown; error?: { code: number; message: string; data?: unknown } }>;
 };
 
+type ThreadOptions = {
+  model?: string;
+  cwd?: string;
+  ephemeral?: boolean;
+  approvalPolicy?: "untrusted" | "on-request" | "never";
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+};
+
 export type CodexSessionAdapter = {
   /** Start a new Codex thread. Returns the thread object. */
-  startThread(params?: { model?: string; cwd?: string; ephemeral?: boolean }): Promise<unknown>;
+  startThread(params?: ThreadOptions): Promise<unknown>;
   /** Resume an existing thread by ID. */
-  resumeThread(threadId: string, params?: { model?: string; cwd?: string }): Promise<unknown>;
+  resumeThread(threadId: string, params?: ThreadOptions): Promise<unknown>;
   /** Fork a thread (branch with copied history). */
   forkThread(threadId: string, params?: { ephemeral?: boolean }): Promise<unknown>;
   /** Begin a turn on the active thread. */
@@ -89,22 +97,25 @@ export function createCodexSessionAdapter(config: SessionAdapterConfig): CodexSe
   });
 
   return {
-    async startThread(params = {}): Promise<unknown> {
+    async startThread(params: ThreadOptions = {}): Promise<unknown> {
       const result = await transport.request("thread/start", {
         model: params.model,
         cwd: params.cwd,
         ephemeral: params.ephemeral ?? false,
+        approvalPolicy: params.approvalPolicy,
+        sandbox: params.sandbox,
       });
       const thread = (result as { thread: { id: string } }).thread;
       if (thread?.id) activeThreadId = thread.id;
       return result;
     },
 
-    async resumeThread(threadId: string, params = {}): Promise<unknown> {
+    async resumeThread(threadId: string, params: ThreadOptions = {}): Promise<unknown> {
       const result = await transport.request("thread/resume", {
         threadId,
         model: params.model,
         cwd: params.cwd,
+        approvalPolicy: params.approvalPolicy,
       });
       activeThreadId = threadId;
       return result;

@@ -86,6 +86,29 @@ code paths only through fakes, never over a real network round-trip:
   true — the protected CI job (`.github/workflows/ci.yml`,
   `cross-tier-recovery`, `workflow_dispatch`-only) covers the real
   self-hosted backend but not a real model provider.
+
+## Update — 2026-07-23: protected Codex harness slice
+
+The real-provider seam now has an explicit opt-in daemon-level harness test at
+`apps/daemon/src/codex-harness.e2e.test.ts` and a protected runner at
+`scripts/smoke-codex-harness.ts`. It uses a temporary Git workspace, the
+persistent local SQLite runtime, canonical projection events, and a second
+daemon instance for native-thread resume. Ordinary CI skips it; manual CI
+installs the pinned Codex app-server and supplies `OPENAI_API_KEY` only to the
+local child process.
+
+The provider adapter also accepts the current `thread/started`,
+`item/agentMessage/delta`, and command/file item lifecycle shapes. Kernel Codex
+turns carry the resolved workspace cwd and persist the before/after checkpoint
+around the terminal event, with deterministic ordering coverage in
+`kernel-daemon.wiring.test.ts`.
+
+The protected end-to-end harness remains an explicit release gate: this
+environment completed the current-provider basic turn smoke, but the full
+file-edit/restart lifecycle was not re-run after the final checkpoint-ordering
+fix because the protected credential-bearing rerun was rejected by the
+execution boundary. The cross-tier ticket therefore remains unchecked until a
+manual protected run records a passing result.
 - The scoped checkpoint proof exercises explicit `checkpoint.restore` against
   a real temporary Git project. `checkpoint.capture` remains a no-op in kernel
   mode and is intentionally excluded with the capability gap above.

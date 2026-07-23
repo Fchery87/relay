@@ -125,6 +125,8 @@ type CodexTurnExecution = {
   codexAdapter: CodexSessionAdapter;
   runtime: LocalHarnessRuntime;
   threadId?: string;
+  cwd?: string;
+  onBeforeTerminal?: () => Promise<void>;
   onFirstToken?: (latencyMs: number) => void;
   onActive?: (threadId: string) => void;
   onInactive?: () => void;
@@ -158,6 +160,8 @@ async function executeTurnViaCodexExclusive({
   codexAdapter,
   runtime,
   threadId,
+  cwd,
+  onBeforeTerminal,
   onFirstToken,
   onActive,
   onInactive,
@@ -195,6 +199,11 @@ async function executeTurnViaCodexExclusive({
           ev,
         );
         if (!input) return;
+        const terminalEvent =
+          ev.type === "turn.completed" ||
+          ev.type === "turn.failed" ||
+          ev.type === "turn.interrupted";
+        if (terminalEvent && onBeforeTerminal) await onBeforeTerminal();
         const result = await persistProviderEvent(runtime, runId, input);
         if (!result.ok) {
           throw new Error(
@@ -209,11 +218,7 @@ async function executeTurnViaCodexExclusive({
           firstTokenEmitted = true;
           onFirstToken(Date.now() - turnStart);
         }
-        if (
-          ev.type === "turn.completed" ||
-          ev.type === "turn.failed" ||
-          ev.type === "turn.interrupted"
-        ) {
+        if (terminalEvent) {
           terminalSettled = true;
           settleTerminal(ev.type === "turn.completed");
         }
@@ -241,9 +246,16 @@ async function executeTurnViaCodexExclusive({
   let terminalTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     if (threadId) {
-      await codexAdapter.resumeThread(threadId);
+      await codexAdapter.resumeThread(threadId, {
+        cwd,
+        approvalPolicy: "never",
+      });
     } else {
-      await codexAdapter.startThread();
+      await codexAdapter.startThread({
+        cwd,
+        approvalPolicy: "never",
+        sandbox: "workspace-write",
+      });
     }
     expectedProviderThreadId = codexAdapter.activeThreadId ?? undefined;
     if (!expectedProviderThreadId) {
@@ -968,12 +980,29 @@ export class KernelDaemon {
           : undefined;
         const beforeCheckpoint = root ? await captureKernelCheckpoint({ root, runId, turnId, phase: "before" }) : undefined;
         if (codexEnabled && codex) {
+          const snapshot = await this.runtime.snapshot({ runId });
+          if (beforeCheckpoint) {
+            const result = await persistProviderEvent(this.runtime, runId, {
+              ...beforeCheckpoint,
+            });
+            if (!result.ok) throw new Error(`Failed to append Codex before checkpoint: ${result.reason}`);
+          }
           await executeTurnViaCodex({
             codexAdapter: codex,
             prompt,
             runId,
             runtime: this.runtime,
             turnId,
+            cwd: root,
+            threadId: snapshot.providerSession?.providerThreadId,
+            onBeforeTerminal: async () => {
+              if (!root) return;
+              const afterCheckpoint = await captureKernelCheckpoint({ root, runId, turnId, phase: "after" });
+              const result = await persistProviderEvent(this.runtime, runId, {
+                ...afterCheckpoint,
+              });
+              if (!result.ok) throw new Error(`Failed to append Codex after checkpoint: ${result.reason}`);
+            },
             onActive: (threadId) => this.activeCodexTurns.set(activeTurnKey(runId, turnId), { threadId }),
             onInactive: () => this.activeCodexTurns.delete(activeTurnKey(runId, turnId)),
           });

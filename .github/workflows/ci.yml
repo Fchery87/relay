@@ -41,3 +41,22 @@ jobs:
           unzip -o convex-local-backend-x86_64-unknown-linux-gnu.zip
           chmod +x convex-local-backend
       - run: bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
+
+  # Protected provider job: the real Codex app-server lifecycle is opt-in and
+  # requires the repository's OPENAI_API_KEY secret. It is intentionally
+  # separate from the isolated-backend job and never runs on PR/push CI.
+  real-codex-harness:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Install pinned Codex app-server
+        run: npm install --global @openai/codex@0.144.3
+      - name: Run real Codex harness lifecycle
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RELAY_CODEX_ENABLED: "1"
+          RELAY_E2E_CODEX: "1"
+        run: bun run scripts/smoke-codex-harness.ts

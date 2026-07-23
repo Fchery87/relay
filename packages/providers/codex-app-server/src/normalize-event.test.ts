@@ -32,6 +32,37 @@ describe("normalizeCodexNotification", () => {
     expect(result[0]!.providerThreadId).toBe("th-current");
   });
 
+  test("item/agentMessage/delta produces assistant.delta from the current item event shape", () => {
+    const result = normalizeCodexNotification(
+      { method: "item/agentMessage/delta", params: { threadId: "th-1", turnId: "turn-1", delta: "OK" } },
+      "run-1",
+      "pi-1" as never,
+    );
+    expect(result[0]!.type).toBe("assistant.delta");
+    expect(result[0]!.payload).toEqual({ text: "OK" });
+  });
+
+  test("current command item lifecycle produces canonical activity events", () => {
+    const started = normalizeCodexNotification(
+      { method: "item/started", params: { threadId: "th-1", turnId: "turn-1", item: { type: "commandExecution", id: "item-1" } } },
+      "run-1",
+      "pi-1" as never,
+    );
+    const delta = normalizeCodexNotification(
+      { method: "item/commandExecution/outputDelta", params: { threadId: "th-1", turnId: "turn-1", itemId: "item-1", delta: "output" } },
+      "run-1",
+      "pi-1" as never,
+    );
+    const completed = normalizeCodexNotification(
+      { method: "item/completed", params: { threadId: "th-1", turnId: "turn-1", item: { type: "commandExecution", id: "item-1" } } },
+      "run-1",
+      "pi-1" as never,
+    );
+    expect(started[0]).toMatchObject({ type: "activity.started", payload: { activityId: "item-1" } });
+    expect(delta[0]).toMatchObject({ type: "activity.delta", payload: { activityId: "item-1", content: "output" } });
+    expect(completed[0]).toMatchObject({ type: "activity.completed", payload: { activityId: "item-1" } });
+  });
+
   test("error notification produces turn.failed", () => {
     const result = normalizeCodexNotification(
       { method: "error", params: { message: "connection lost" } },
