@@ -26,7 +26,7 @@ provider evidence.
 
 - Typecheck: passed for every workspace package.
 - Full package and Convex tests: 341 daemon tests passed, 16 intentional
-  protected skips, 0 failures; 59 Convex tests passed.
+  protected skips, 0 failures; 60 Convex tests passed.
 - Deterministic production acceptance: 59 tests passed across three suites.
 - MCP HTTP and stdio fixture tests: 2 passed.
 - Web production build: passed.
