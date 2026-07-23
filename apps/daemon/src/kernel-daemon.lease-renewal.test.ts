@@ -26,10 +26,14 @@ afterEach(() => {
 
 describe("startLeaseRenewal", () => {
   test("renews the exact lease generation repeatedly for the effect lifetime", async () => {
+    // Keep enough wall-clock margin for the full suite's parallel workers;
+    // sub-30ms leases make this timer-contract test depend on scheduler
+    // luck rather than exercising the renewal behavior.
+    const leaseDurationMs = 300;
     const store = createFakeCommandStore();
     const gateway = createFakeCommandGateway(store);
     gateway.seed({ commandId: "cmd-1", correlationId: "corr-1", kind: "run.create", payloadJson: "{}" });
-    const claimed = await gateway.claimBatch({ deviceToken: "dev-token", leaseDurationMs: 30, limit: 5 });
+    const claimed = await gateway.claimBatch({ deviceToken: "dev-token", leaseDurationMs, limit: 5 });
     expect(claimed).toHaveLength(1);
 
     let lostCount = 0;
@@ -38,17 +42,17 @@ describe("startLeaseRenewal", () => {
       commandId: "cmd-1",
       deviceToken: "dev-token",
       leaseGeneration: claimed[0]!.leaseGeneration,
-      leaseDurationMs: 30,
+      leaseDurationMs,
       onLost: () => { lostCount++; },
     });
 
-    // Outlive the original 30ms lease several times over — renewal must
+    // Outlive the original 300ms lease several times over — renewal must
     // keep it alive so it is never treated as expired/reclaimable.
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
     stop();
 
     expect(lostCount).toBe(0);
-    const reclaimAttempt = await gateway.claimBatch({ deviceToken: "another-worker", leaseDurationMs: 30, limit: 5 });
+    const reclaimAttempt = await gateway.claimBatch({ deviceToken: "another-worker", leaseDurationMs, limit: 5 });
     expect(reclaimAttempt).toHaveLength(0); // still validly leased, not reclaimable
 
     await gateway.completeCommand({ commandId: "cmd-1", deviceToken: "dev-token", leaseGeneration: claimed[0]!.leaseGeneration, status: "completed" });

@@ -68,18 +68,15 @@ on 2026-07-22 and again on 2026-07-23 against this repo's own dev instance:
    **Verified live**: the staging backend started and served the restored
    data; the restored admin key authenticated successfully.
 2. **Deploy schema/functions** against the staging instance.
-   **Verified live** — with a real finding: the first deploy attempt failed
-   schema validation, because two pre-existing `pairings` documents
-   (created before `deviceNonce` became a required field, both already
-   `claimed` and expired 2026-07-20) don't match the current schema. This
-   is not a restore bug — the same two documents were confirmed present on
-   the **live** backend too (read-only check, not modified). It means the
-   **next real `bun run convex:dev` / `npx convex deploy` against the live
-   backend will fail the same way** until those rows are cleaned up.
-   Cleared on the disposable staging copy only (`npx convex import --table
-   pairings --replace` with an empty file) to continue the rehearsal;
-   the live database was left untouched pending an explicit decision to
-   clean it up.
+   **Verified live** — the first rehearsal surfaced two pre-existing
+   `pairings` documents (created before `deviceNonce` became a required field,
+   both already `claimed` and expired 2026-07-20). The compatibility schema
+   now accepts those historical rows without weakening new registration:
+   missing-nonce claimed/expired records are unusable, and the internal
+   `migrations:cleanupLegacyPairings` mutation removes them in bounded batches
+   after the deploy. The live backend was not modified during the original
+   read-only investigation; run the compatibility deploy, then the cleanup
+   mutation when the operator is ready.
 3. **Confirm sign-in, pairing, and project/thread reads work.**
    **Verified live**: after the schema deploy, the restored `users`,
    `machines`, and `projects` tables held the real accounts, the real
@@ -148,10 +145,9 @@ delete it after inspection.
   backup containing real `relay-kernel.sqlite` and projection data still needs
   a release-window rehearsal that reopens the local store and confirms
   reconciliation/backlog behavior against that data.
-- The stale-`pairings`-document finding above is a real, live issue
-  independent of backup/restore — see the note in
-  [self-hosted-convex.md](self-hosted-convex.md) — and should be resolved
-  before the next real schema push to the live backend.
+- The compatibility deploy and bounded cleanup mutation still need to be
+  applied to the live backend and recorded as release evidence; the deploy is
+  no longer blocked by historical missing-nonce rows.
 
 ## What "release evidence" means here
 

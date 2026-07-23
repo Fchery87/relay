@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { KernelDaemon } from "./kernel-daemon";
 import { runCommand } from "./tools";
+import { resolveCodexHarnessHome } from "./codex-harness-home";
 
 const enabled = Bun.env.RELAY_E2E_CODEX === "1";
 
@@ -67,7 +68,11 @@ describe.skipIf(!enabled)("real Codex harness lifecycle", () => {
     const daemonHome = await mkdtemp(join(tmpdir(), "relay-codex-harness-daemon-"));
     const projectRoot = await mkdtemp(join(tmpdir(), "relay-codex-harness-project-"));
     const previousCodexHome = Bun.env.CODEX_HOME;
-    Bun.env.CODEX_HOME = join(daemonHome, "codex-home");
+    // Keep protected CI hermetic by default, but allow an explicit local run
+    // to use a user-authenticated Codex home (for example, ChatGPT login)
+    // without copying or printing its credentials.
+    const codexHome = resolveCodexHarnessHome(daemonHome, Bun.env.RELAY_CODEX_HOME);
+    Bun.env.CODEX_HOME = codexHome.path;
     await mkdir(Bun.env.CODEX_HOME, { recursive: true });
     try {
     const runId = "run-real-codex-harness";

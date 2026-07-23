@@ -17,7 +17,7 @@ irreversible gates; deterministic local coverage is not substituted for them.
 - [x] Normalize Codex thread/turn/item/approval/usage notifications to canonical events (table-driven, unknown→diagnostic) (`normalize-event.ts`, `normalize-request.ts`, 46 provider tests)
 - [x] Implement ProviderDriver + ProviderSessionAdapter (startSession→thread/start, resume→thread/resume, etc.) (`codex-driver.ts`, `codex-session-adapter.ts`)
 - [x] Bridge Relay-owned tools and MCP servers through provider request resolution (`codex-driver.ts` exposes the durable resolver; daemon MCP/governance bridge is covered by kernel wiring tests)
-- [ ] Opt-in real-Codex e2e smoke test (`RELAY_E2E_CODEX=1`, skipped in ordinary CI)
+- [ ] Opt-in real-Codex e2e smoke test (`RELAY_E2E_CODEX=1`, skipped in ordinary CI; local ChatGPT-login runs may set `RELAY_CODEX_HOME=$HOME/.codex`, while protected CI continues using its injected `OPENAI_API_KEY`)
 
 **Files:** `packages/providers/codex-app-server/src/`, `scripts/generate-codex-app-server-schema.ts`
 

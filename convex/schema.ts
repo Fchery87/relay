@@ -35,7 +35,9 @@ export default defineSchema({
   pairings: defineTable({
     codeHash: v.string(),
     deviceTokenHash: v.string(),
-    deviceNonce: v.string(),
+    // Optional only for deploy compatibility with pre-deviceNonce records.
+    // New pairing writes and machine registration still require a match.
+    deviceNonce: v.optional(v.string()),
     expiresAt: v.number(),
     ownerId: v.optional(v.id("users")),
     status: v.union(v.literal("waiting"), v.literal("claimed")),

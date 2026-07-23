@@ -1,7 +1,7 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { digestSecret } from "./auth_helpers";
 import schema from "./schema";
 
@@ -127,6 +127,34 @@ test("registers a claimed daemon after its pairing code expires", async () => {
     platform: "linux",
     projects: [],
   })).resolves.toBeDefined();
+});
+
+test("legacy claimed pairings without a nonce cannot register a new machine", async () => {
+  const t = convexTest(schema, modules);
+  const ownerId = await t.run((ctx) => ctx.db.insert("users", {}));
+  const deviceToken = "l".repeat(32);
+  const code = "legacy-no-nonce";
+
+  await t.run(async (ctx) => {
+    await ctx.db.insert("pairings", {
+      codeHash: await digestSecret(code),
+      deviceTokenHash: await digestSecret(deviceToken),
+      expiresAt: Date.now() + 60_000,
+      ownerId,
+      status: "claimed",
+    });
+  });
+
+  await expect(t.query(api.pairing.waitForClaim, { code })).resolves.toEqual({ nonce: "", status: "expired" });
+  await expect(t.mutation(api.machines.registerMachine, {
+    daemonVersion: "test",
+    deviceNonce: "n".repeat(16),
+    deviceToken,
+    name: "legacy-machine",
+    platform: "linux",
+    projects: [],
+  })).rejects.toThrow("Device nonce mismatch");
+  await expect(t.mutation(internal.migrations.cleanupLegacyPairings, { limit: 100 })).resolves.toMatchObject({ deleted: 1 });
 });
 
 test("rejects registration with wrong device nonce", async () => {

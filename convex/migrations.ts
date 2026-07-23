@@ -1,12 +1,13 @@
 import { internalMutation } from "./_generated/server";
+import { v } from "convex/values";
 
 /**
  * Backfill existing thread/message/event/approval/checkpoint metadata
  * into initial kernel projection snapshots. Idempotent — rerun is safe.
  *
  * Usage:
- *   npx convex run migrations:backfillRunProjection
- *   npx convex run migrations:verifyRunProjection
+ *   Invoke from an authenticated maintenance function; these are private
+ *   internal mutations and are not public CLI endpoints.
  */
 
 export const backfillRunProjection = internalMutation({
@@ -82,5 +83,27 @@ export const verifyRunProjection = internalMutation({
       }
     }
     console.log(`Verified ${snapshots.length} projection snapshots`);
+  },
+});
+
+/**
+ * Remove pre-deviceNonce pairing records after the compatibility schema has
+ * been deployed. Only claimed or expired records are eligible; an unexpired
+ * waiting record is left for a later run after it expires.
+ */
+export const cleanupLegacyPairings = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(100, Math.max(1, Math.floor(args.limit ?? 100)));
+    const now = Date.now();
+    const pairings = await ctx.db.query("pairings").order("asc").take(limit);
+    let deleted = 0;
+    for (const pairing of pairings) {
+      if (!pairing.deviceNonce && (pairing.status === "claimed" || pairing.expiresAt <= now)) {
+        await ctx.db.delete(pairing._id);
+        deleted += 1;
+      }
+    }
+    return { deleted, scanned: pairings.length, mayHaveMore: pairings.length === limit };
   },
 });

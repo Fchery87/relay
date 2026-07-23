@@ -224,19 +224,15 @@ Inspecting data without the dashboard: `npx convex data`, `npx convex run`,
 
 ## Troubleshooting
 
-- **Schema push will fail on the next `bun run convex:dev` / `npx convex
-  deploy`** — confirmed 2026-07-23 (read-only check, not fixed): the live
-  `pairings` table has two documents predating the `deviceNonce` field
-  becoming required, both already `claimed` and expired 2026-07-20. A push
-  that validates the current schema against existing documents will reject
-  them with `Object is missing the required field 'deviceNonce'`. Fix by
-  clearing stale `pairings` rows before the next push, e.g.:
-  `echo -n "" > /tmp/empty-pairings.jsonl && npx convex import --table
-  pairings --replace --format jsonLines -y /tmp/empty-pairings.jsonl`
-  (safe — claimed pairings are historical records with no further use).
-  Rehearsed successfully against a disposable restored copy in
-  [backup-recovery.md](backup-recovery.md); not yet applied to the live
-  instance.
+- **Historical pairing rows predating `deviceNonce`** — the compatibility
+  schema accepts the two `claimed`, expired rows found on 2026-07-23, while
+  new pairing and machine registration still require a nonce match. After
+  deploying the compatibility schema, invoke the operator-approved internal
+  maintenance function `internal.migrations.cleanupLegacyPairings` in a
+  one-off maintenance mutation. Verify its returned `deleted` count and
+  retain it with the release evidence; Convex internal mutations are private,
+  so do not expose this cleanup as an unauthenticated CLI endpoint or use a
+  table-wide replacement import.
 - **`Could not find public function for …`** — deployed functions are stale;
   run `bun run convex:dev`.
 - **Connection refused on 3210** — the backend isn't running; start it with

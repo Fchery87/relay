@@ -43,7 +43,7 @@ export const registerMachine = mutationGeneric({
     if (!existing && (!pairing || pairing.status !== "claimed" || !pairing.ownerId)) throw new Error("Device token has not been paired");
     // Validate the device nonce matches — prevents an attacker from registering
     // a different machine against a pairing they claimed but didn't originate.
-    if (pairing && !existing && args.deviceNonce && args.deviceNonce !== pairing.deviceNonce) {
+    if (pairing && !existing && (!args.deviceNonce || !pairing.deviceNonce || args.deviceNonce !== pairing.deviceNonce)) {
       throw new Error("Device nonce mismatch — pairing was not started by this device");
     }
     const machineId = existing

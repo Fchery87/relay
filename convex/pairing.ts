@@ -46,6 +46,11 @@ export const claim = mutationGeneric({
     const pairing = await ctx.db.query("pairings").withIndex("by_code_hash", (q) => q.eq("codeHash", codeHash)).unique();
     if (!pairing || pairing.expiresAt <= Date.now()) throw new Error("Pairing code expired or invalid");
     if (pairing.status !== "waiting") throw new Error("Pairing code has already been claimed");
+    if (!pairing.deviceNonce) {
+      // A pre-deviceNonce record cannot safely authorize a new machine.
+      await ctx.db.delete(pairing._id);
+      throw new Error("Pairing code expired or invalid");
+    }
     // Atomically consume pairing — first claim wins.
     await ctx.db.patch(pairing._id, { ownerId: userId, status: "claimed" });
   },
@@ -57,6 +62,7 @@ export const waitForClaim = queryGeneric({
     const codeHash = await digestSecret(args.code);
     const pairing = await ctx.db.query("pairings").withIndex("by_code_hash", (q) => q.eq("codeHash", codeHash)).unique();
     if (!pairing || pairing.expiresAt <= Date.now()) return { status: "expired" as const, nonce: "" };
+    if (!pairing.deviceNonce) return { nonce: "", status: "expired" as const };
     if (pairing.status === "claimed") return { nonce: pairing.deviceNonce, status: "claimed" as const };
     return { nonce: "", status: pairing.status };
   },
