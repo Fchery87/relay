@@ -16,6 +16,7 @@ import {
 import type { Policy } from "./policy";
 import { classifyToolCall, evaluatePolicy } from "./policy";
 import type { ToolCall } from "./tool-executor";
+import type { McpModelTool } from "./model-provider";
 import { sanitizeForProjection } from "@relay/local-store";
 
 export type KernelAgenticApprovalContinuation = {
@@ -36,6 +37,11 @@ export type KernelAgenticTurnResult = {
   readonly reviewCommentIds?: readonly string[];
 };
 
+export type KernelTaskResult = {
+  readonly events?: CanonicalEventDraft[];
+  readonly output: string;
+};
+
 type KernelAgenticTurnInput = {
   readonly eventNamespace?: string;
   readonly messages: ChatMessage[];
@@ -47,6 +53,9 @@ type KernelAgenticTurnInput = {
   readonly runId: string;
   readonly signal: AbortSignal;
   readonly turnId: string;
+  readonly tools?: McpModelTool[];
+  readonly onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
+  readonly onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<KernelTaskResult>;
   readonly reviewCommentIds?: readonly string[];
   readonly claimSteering?: () => Promise<string[]>;
   readonly suppressTerminal?: boolean;
@@ -70,6 +79,9 @@ export async function resumeKernelAgenticTurn(input: {
   readonly runId: string;
   readonly signal: AbortSignal;
   readonly turnId: string;
+  readonly tools?: McpModelTool[];
+  readonly onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
+  readonly onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<KernelTaskResult>;
   readonly claimSteering?: () => Promise<string[]>;
 }): Promise<KernelAgenticTurnResult> {
   const continuation = parseContinuation(input.continuationJson);
@@ -127,7 +139,7 @@ async function runKernelAgenticLoop(
     provider: input.provider,
     signal: input.signal,
     system: "",
-    tools: [],
+    tools: input.tools ?? [],
   });
 
   if (result.pending) {
@@ -162,6 +174,9 @@ function createCallbacks(input: {
   readonly runId: string;
   readonly resolution?: "allow" | "deny";
   readonly skipActivityStart?: string;
+  readonly tools?: McpModelTool[];
+  readonly onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
+  readonly onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<KernelTaskResult>;
   readonly turnId: string;
   readonly reviewCommentIds?: readonly string[];
   readonly claimSteering?: () => Promise<string[]>;
@@ -249,6 +264,14 @@ function createCallbacks(input: {
         approvalResolution: input.resolution,
         call,
         governance: input.governance,
+        onMcp: input.onMcp,
+        onTask: input.onTask
+          ? async (call) => {
+              const taskResult = await input.onTask!(call);
+              input.events.push(...(taskResult.events ?? []));
+              return taskResult.output;
+            }
+          : undefined,
         onCompleted: async () => undefined,
         onOutput: async (output) => {
           input.events.push(event({

@@ -7,7 +7,7 @@
 // provider credentials.
 // ---------------------------------------------------------------------------
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -66,6 +66,10 @@ describe.skipIf(!enabled)("real Codex harness lifecycle", () => {
     Bun.env.RELAY_CODEX_ENABLED = "1";
     const daemonHome = await mkdtemp(join(tmpdir(), "relay-codex-harness-daemon-"));
     const projectRoot = await mkdtemp(join(tmpdir(), "relay-codex-harness-project-"));
+    const previousCodexHome = Bun.env.CODEX_HOME;
+    Bun.env.CODEX_HOME = join(daemonHome, "codex-home");
+    await mkdir(Bun.env.CODEX_HOME, { recursive: true });
+    try {
     const runId = "run-real-codex-harness";
     const events: ProjectedEvent[] = [];
     const pending: PendingCommand[] = [
@@ -147,6 +151,10 @@ describe.skipIf(!enabled)("real Codex harness lifecycle", () => {
       expect(await readFile(join(projectRoot, "fixture.txt"), "utf8")).toBe("after\n");
     } finally {
       await daemon2.stop();
+    }
+    } finally {
+      if (previousCodexHome === undefined) delete Bun.env.CODEX_HOME;
+      else Bun.env.CODEX_HOME = previousCodexHome;
       await rm(daemonHome, { force: true, recursive: true });
       await rm(projectRoot, { force: true, recursive: true });
     }

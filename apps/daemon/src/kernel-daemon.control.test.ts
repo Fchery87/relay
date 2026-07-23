@@ -159,6 +159,79 @@ test("daemon captures idempotent before and after checkpoints around a turn", as
   }
 });
 
+test("kernel provider task calls execute through the governed subagent adapter", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-task-daemon-"));
+  const projectRoot = await mkdtemp(join(tmpdir(), "relay-kernel-task-project-"));
+  const runId = "run-task-daemon";
+  const pending = [
+    command("inbox-create-task", "run.create", runId, { projectId: "project-task" }),
+    command("inbox-resume-task", "run.resume", runId, {}),
+  ];
+  const projected: Array<{ payloadJson: string; type: string }> = [];
+  let turnCalls = 0;
+  const turnProvider: TurnModelProvider = {
+    modelId: "task-test",
+    async *streamTurn() {
+      if (turnCalls++ === 0) {
+        yield { kind: "tool_use", call: { capabilities: ["read"], kind: "task", role: "explore", task: "inspect the repository" }, id: "task-1" };
+        yield { kind: "stop", reason: "tool_use" };
+        return;
+      }
+      yield { kind: "text", text: "Subagent finished." };
+      yield { kind: "stop", reason: "end_turn" };
+    },
+  };
+  const subagentProvider: ModelProvider = {
+    modelId: "subagent-test",
+    async *streamReply() { yield { kind: "text", text: "Repository inspected." }; },
+  };
+  const router: ModelProviderRouter = {
+    kind: "model-router",
+    resolve: () => subagentProvider,
+    resolveTurn: () => turnProvider,
+  };
+  const daemon = new KernelDaemon({
+    adapterDeps: { platform: "linux", policy: { rules: [{ capability: "task", decision: "allow", risk: "low" }] }, resolveProjectRoot: async () => projectRoot },
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "task-test",
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async ({ events }) => { projected.push(...events.map((event) => ({ payloadJson: event.payloadJson, type: event.type }))); },
+      upsertSnapshot: async () => undefined,
+      advanceCursor: async () => undefined,
+    },
+    providerRouter: router,
+  });
+
+  try {
+    await runCommand({ command: "git init && git config user.email relay@example.test && git config user.name Relay && git commit --allow-empty -m baseline", platform: "linux", root: projectRoot });
+    await daemon.start();
+    await daemon.pollOnce();
+    pending.push(command("inbox-send-task", "turn.send", runId, { projectPath: projectRoot, prompt: "delegate" }));
+    await daemon.pollOnce();
+    const deadline = Date.now() + 2_000;
+    while (!projected.some((event) => event.type === "activity.completed" && JSON.parse(event.payloadJson).kind === "subagent:explore") && Date.now() < deadline) {
+      await daemon.flushOnce();
+      await Bun.sleep(10);
+    }
+    expect(projected.some((event) => event.type === "activity.completed" && JSON.parse(event.payloadJson).kind === "subagent:explore")).toBe(true);
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+    await rm(projectRoot, { force: true, recursive: true });
+  }
+});
+
 test("daemon routes Git actions through canonical lifecycle events", async () => {
   const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-git-daemon-"));
   const projectRoot = await mkdtemp(join(tmpdir(), "relay-kernel-git-project-"));

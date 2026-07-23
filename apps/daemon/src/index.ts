@@ -149,6 +149,12 @@ if (runtimeMode === "kernel") {
     adapterDeps: {
       resolveProjectRoot: sandboxedResolveProjectRoot,
       governance,
+      mcp: {
+        callTool: (input) => mcp.callTool(input),
+        listTools: () => mcp.listTools(),
+        recordTaskStatus: conversationGateway.recordMcpTaskStatus,
+        requestInput: conversationGateway.requestMcpInput,
+      },
       policy,
       platform: config.registration.platform,
     },

@@ -40,6 +40,14 @@ before `turn.completed`.
 The provider loop now resumes through the provider adapters with the complete
 provider-neutral message history, including tool results.
 
+The daemon now supplies the active MCP catalog to the kernel provider turn and
+routes MCP calls through the configured `McpRegistry` callback. Task calls use
+the existing governed subagent adapter and append the subagent's bounded
+canonical activity events before returning its typed result to the provider.
+MCP elicitation and task-status callbacks still use the legacy conversation
+gateway until those browser detail surfaces receive canonical projection
+contracts; that is a remaining cutover item, not a reason to bypass governance.
+
 ## Completed increment — durable approval suspension and resolution
 
 An `ask` policy decision now inserts a Convex approval with its continuation

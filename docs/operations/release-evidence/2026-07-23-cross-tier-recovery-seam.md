@@ -139,15 +139,19 @@ code paths only through fakes, never over a real network round-trip:
   through policy/governance/sandbox execution and emit canonical activity
   events. Durable approval suspension/resolution now creates a private
   continuation, releases the serialized poller, and resumes only for the
-  matching run/turn/resolution. Provider continuation with tool results,
-  mid-turn steering, and actual interrupt cancellation remain open kernel
-  capability gaps, documented separately in
-  `docs/operations/kernel-mode-capability-gaps.md`.
-- A real LLM provider (as opposed to the scripted/fallback provider) is not
-  exercised; "protected jobs cover the real provider" is only partially
-  true — the protected CI job (`.github/workflows/ci.yml`,
-  `cross-tier-recovery`, `workflow_dispatch`-only) covers the real
-  self-hosted backend but not a real model provider.
+  matching run/turn/resolution. The kernel daemon now passes the active MCP
+  catalog to provider turns, routes MCP calls through `McpRegistry`, and
+  routes task calls through the governed subagent adapter with canonical
+  activity events. MCP elicitation/task-status callbacks and browser detail
+  surfaces remain legacy-backed pending their own projection contracts.
+- A real LLM provider (as opposed to the scripted/fallback provider) has not
+  produced a passing lifecycle record in this environment. The separate
+  protected `real-codex-harness` job exists in `.github/workflows/ci.yml`, but
+  the gate remains unverified until that job records a passing run.
+- A local protected harness attempt reached the installed Codex app-server but
+  could not complete `initialize`: the execution environment denied the
+  provider's HTTPS request and no `OPENAI_API_KEY` was available. This is
+  recorded as an unverified gate, not as provider parity evidence.
 
 ## Update — 2026-07-23: protected Codex harness slice
 
@@ -169,8 +173,10 @@ The protected end-to-end harness remains an explicit release gate: this
 environment completed the current-provider basic turn smoke, but the full
 file-edit/restart lifecycle was not re-run after the final checkpoint-ordering
 fix because the protected credential-bearing rerun was rejected by the
-execution boundary. The cross-tier ticket therefore remains unchecked until a
-manual protected run records a passing result.
+execution boundary. The harness now creates and cleans a writable temporary
+`CODEX_HOME` for protected runs, so CI does not inherit a read-only agent home;
+the cross-tier ticket nevertheless remains unchecked until a manual protected
+run with `OPENAI_API_KEY` records a passing result.
 - The scoped checkpoint proof exercises explicit `checkpoint.restore` against
   a real temporary Git project. `checkpoint.capture` remains a no-op in kernel
   mode and is intentionally excluded with the capability gap above.

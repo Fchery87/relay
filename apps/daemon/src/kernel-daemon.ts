@@ -34,7 +34,7 @@ import {
   createConvexProjectionSink,
 } from "./sync/convex-projection-sink";
 import type { ProjectionSink } from "./sync/convex-projection-sink";
-import type { ModelProvider, ModelProviderRouter } from "./model-provider";
+import type { McpModelTool, ModelProvider, ModelProviderRouter } from "./model-provider";
 import type { GovernanceGateway } from "./governed-tool-executor";
 import { executeGovernedToolCall, summarizeToolCall } from "./governed-tool-executor";
 import type { Policy } from "./policy";
@@ -77,6 +77,7 @@ import { SLO_DEFINITIONS } from "@relay/local-store";
 import type { ToolCall } from "./tool-executor";
 import {
   executeKernelAgenticTurn,
+  type KernelTaskResult,
   resumeKernelAgenticTurn,
 } from "./kernel-agentic-turn";
 import { buildTurnPrompt, type ReviewComment } from "./agent-loop";
@@ -100,6 +101,7 @@ export type KernelDaemonConfig = {
   adapterDeps?: {
     resolveProjectRoot(input: { repoPath: string; threadId: string }): Promise<string>;
     governance?: GovernanceGateway;
+    mcp?: KernelMcpAdapter;
     policy?: Policy;
     platform?: MachinePlatform;
   };
@@ -113,6 +115,19 @@ export type KernelDaemonConfig = {
   providerRouter?: ModelProviderRouter;
   /** Command claim/renewal lease duration — overridable for kill-point tests. Default 30s. */
   commandLeaseDurationMs?: number;
+};
+
+type KernelMcpAdapter = {
+  callTool(input: {
+    arguments: Record<string, unknown>;
+    name: string;
+    onInputRequired?: (input: { prompts: unknown[] }) => Promise<Record<string, unknown>>;
+    onTaskStatus?: (task: { id: string; status: string }) => Promise<void> | void;
+    serverId: string;
+  }): Promise<unknown>;
+  listTools(): Promise<McpModelTool[]>;
+  recordTaskStatus?: (input: { serverId: string; status: string; taskId: string; threadId: string }) => Promise<unknown>;
+  requestInput?: (input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }) => Promise<Record<string, unknown>>;
 };
 
 // ---------------------------------------------------------------------------
@@ -689,6 +704,26 @@ function appendAdapterEvent(
   return persistProviderEvent(runtime, runId, validated);
 }
 
+function canonicalizeSubagentEvents(
+  events: ReadonlyArray<{ eventId: string; payload: Record<string, unknown>; type: string }>,
+  runId: string,
+  turnId: string,
+): CanonicalEventDraft[] {
+  const supported = new Set(["activity.started", "activity.delta", "activity.completed", "activity.failed", "checkpoint.captured", "usage.recorded"]);
+  return events.flatMap((event) => {
+    if (!supported.has(event.type)) return [];
+    return [{
+      causationId: event.eventId as never,
+      correlationId: `corr-subagent-${runId}-${turnId}` as never,
+      eventId: event.eventId as never,
+      payload: event.payload,
+      runId: runId as never,
+      turnId: turnId as never,
+      type: event.type as CanonicalEventDraft["type"],
+    } as CanonicalEventDraft];
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Command lease renewal
 // ---------------------------------------------------------------------------
@@ -934,6 +969,66 @@ export class KernelDaemon {
 
   constructor(private readonly config: KernelDaemonConfig) {}
 
+  private async createKernelToolContext(input: {
+    modelId?: string;
+    projectPath?: string;
+    runId: string;
+    turnId: string;
+  }): Promise<{
+    onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
+    onTask?: (call: Extract<ToolCall, { kind: "task" }>) => Promise<KernelTaskResult>;
+    tools: McpModelTool[];
+  }> {
+    const mcp = this.config.adapterDeps?.mcp;
+    const onMcp = mcp
+      ? async (call: Extract<ToolCall, { kind: "mcp" }>) => mcp.callTool({
+          ...call,
+          onInputRequired: mcp.requestInput
+            ? ({ prompts }) => mcp.requestInput!({ prompts, serverId: call.serverId, threadId: input.runId, toolName: call.name })
+            : undefined,
+          onTaskStatus: mcp.recordTaskStatus
+            ? async (task) => {
+                await mcp.recordTaskStatus!({
+                  serverId: call.serverId,
+                  status: task.status,
+                  taskId: task.id,
+                  threadId: input.runId,
+                });
+              }
+            : undefined,
+        })
+      : undefined;
+    const resolveProjectRoot = this.config.adapterDeps?.resolveProjectRoot;
+    const onTask = resolveProjectRoot && input.projectPath
+      ? async (call: Extract<ToolCall, { kind: "task" }>) => {
+          const events = await executeSubagent(
+            {
+              capabilities: call.capabilities,
+              modelId: input.modelId,
+              projectPath: input.projectPath!,
+              roleName: call.role,
+              task: call.task,
+              threadId: input.runId,
+            },
+            {
+              platform: this.config.adapterDeps?.platform ?? "linux",
+              provider: this.provider,
+              resolveProjectRoot,
+            },
+            `kernel-${input.runId}-${input.turnId}`,
+          );
+          const terminal = [...events].reverse().find((event) => event.type === "activity.completed" || event.type === "activity.failed");
+          const payload = terminal?.payload ?? {};
+          const status = terminal?.type === "activity.completed" ? "success" : "failed";
+          return {
+            events: canonicalizeSubagentEvents(events, input.runId, input.turnId),
+            output: JSON.stringify({ artifacts: [], findings: [], status, summary: String(payload.summary ?? payload.error ?? "Subagent completed") }),
+          };
+        }
+      : undefined;
+    return { onMcp, onTask, tools: mcp ? await mcp.listTools() : [] };
+  }
+
   async start(): Promise<void> {
     const startSpan = this.tracer.startSpan("daemon.start");
 
@@ -987,6 +1082,9 @@ export class KernelDaemon {
         const runSnapshot = await this.runtime.snapshot({ runId });
         const modelId = runSnapshot.modelId ?? DEFAULT_MODEL_ID;
         const thinkingLevel = runSnapshot.thinkingLevel ?? "none";
+        const kernelToolContext = codexEnabled
+          ? undefined
+          : await this.createKernelToolContext({ modelId, projectPath, runId, turnId });
         if (codexEnabled && codex) {
           if (beforeCheckpoint) {
             const result = await persistProviderEvent(this.runtime, runId, {
@@ -1049,6 +1147,9 @@ export class KernelDaemon {
               runId,
               signal: signal.signal,
               turnId,
+              tools: kernelToolContext?.tools,
+              onMcp: kernelToolContext?.onMcp,
+              onTask: kernelToolContext?.onTask,
               reviewCommentIds: providerIntent.reviewCommentIds ?? reviewComments.map((comment) => comment.commentId),
               claimSteering: async () => activeTurn.steering.splice(0),
             });
@@ -1127,6 +1228,12 @@ export class KernelDaemon {
         const approvalSnapshot = await this.runtime.snapshot({ runId: effect.runId });
         const turnProvider = this.provider.resolveTurn?.({ modelId: approvalSnapshot.modelId ?? DEFAULT_MODEL_ID, thinkingLevel: approvalSnapshot.thinkingLevel ?? "none" });
         if (!turnProvider) throw new Error("Kernel provider router does not support agentic turns");
+        const kernelToolContext = await this.createKernelToolContext({
+          modelId: approvalSnapshot.modelId,
+          projectPath,
+          runId: effect.runId,
+          turnId: effect.intent.turnId,
+        });
         const activeTurn = {
           abortController: new AbortController(),
           steering: [],
@@ -1145,6 +1252,9 @@ export class KernelDaemon {
             runId: effect.runId,
             signal: signal.signal,
             turnId: effect.intent.turnId,
+            tools: kernelToolContext.tools,
+            onMcp: kernelToolContext.onMcp,
+            onTask: kernelToolContext.onTask,
             claimSteering: async () => activeTurn.steering.splice(0),
           });
           const afterCheckpoint = await captureKernelCheckpoint({ root, runId: effect.runId, turnId: effect.intent.turnId, phase: "after" });
