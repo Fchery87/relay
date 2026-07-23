@@ -13,8 +13,11 @@ import {
   getEventCommitVersion,
   listRunDiagnostics,
   waitForEventCommit,
+  claimOutboxBatch,
+  acknowledgeOutboxBatch,
+  countPendingOutbox,
 } from "@relay/local-store";
-import type { RunDiagnostic, StoreDatabase } from "@relay/local-store";
+import type { RunDiagnostic, StoreDatabase, OutboxRow } from "@relay/local-store";
 import { OrchestrationEngine } from "@relay/orchestration";
 import {
   type HarnessRuntime,
@@ -286,6 +289,30 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   listRunDiagnostics(runId: string): ReadonlyArray<RunDiagnostic> {
     return listRunDiagnostics(this.db, runId);
+  }
+
+  /**
+   * Claim a bounded batch of unpublished projection-outbox rows under a
+   * durable lease. Rows already leased (and not expired) are skipped, so a
+   * crashed publisher's claim is naturally reclaimable once the lease
+   * expires. Callers must acknowledge only after durable remote confirmation.
+   */
+  claimProjectionOutbox(input: {
+    readonly owner: string;
+    readonly leaseDurationMs: number;
+    readonly limit: number;
+  }): OutboxRow[] {
+    return claimOutboxBatch(this.db, input.owner, input.leaseDurationMs, input.limit);
+  }
+
+  /** Acknowledge outbox rows as durably published; never re-published after this. */
+  acknowledgeProjectionOutbox(ids: readonly number[]): void {
+    acknowledgeOutboxBatch(this.db, ids);
+  }
+
+  /** Backlog observability: count of unpublished outbox rows and the oldest one's age. */
+  countPendingProjectionOutbox(): { count: number; oldestOccurredAt: number | null; maxId: number | null } {
+    return countPendingOutbox(this.db);
   }
 
   /** Execute one bounded batch of reclaimable durable effects. */

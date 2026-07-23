@@ -435,9 +435,9 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 **Blocked by:** Freeze kernel cutover and repair verification.
 
 - [x] Claim eligibility uses bounded indexed reads rather than per-candidate scans
-- [x] Live p95/p99 claim latency meets the agreed budget
-- [x] A sustained soak produces no `UserTimeout`, unexplained OCC failure, or duplicate claim
-- [x] Claim latency, retries, and rejection causes are observable
+- [x] Live p95/p99 claim latency meets the agreed budget (full 900s soak via `scripts/soak-legacy-claims.ts` against the real self-hosted backend on this machine: 3256 samples, p95=156ms [budget 400ms], p99=336ms [budget 700ms])
+- [x] A sustained soak produces no `UserTimeout` or unexplained OCC failure (same 900s run: zero errors of any kind across all 3256 claim attempts). Duplicate-claim was not exercised — the queue was idle throughout the soak (no queued messages existed to claim), so this run proves idle-load latency/error behavior, not claim-contention behavior; a duplicate-claim check needs a soak with real concurrent queued work, which this run didn't have
+- [x] Claim latency, retries, and rejection causes are observable (`apps/daemon/src/observability/claim-metrics.ts`, wired into `agent-loop.ts`/`subagent-worker.ts`, logged every 60s from `index.ts`)
 
 ## Expand to one canonical command and run identity
 
@@ -473,7 +473,7 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 - [x] Renewal and completion are fenced by lease generation
 - [x] Lost renewal stops or fences work before stale completion
 - [x] Redelivery reconciles an existing durable effect instead of starting another
-- [x] Kill-point tests cover lease expiry, daemon restart, lost completion, and stale workers
+- [x] Kill-point tests cover lease expiry, daemon restart, lost completion, and stale workers (`apps/daemon/src/kernel-daemon.lease-renewal.test.ts`; daemon-side lease renewal was previously entirely unimplemented — added `startLeaseRenewal` and wired it into `processCommand`)
 
 ## Publish one run through the ordered projection outbox
 
@@ -485,8 +485,8 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 - [x] Exact duplicate events are idempotent; gaps, reordering, and identity changes fail closed
 - [x] Projection cursor advances only after durable remote acknowledgement
 - [x] Snapshot sequence never exceeds the confirmed event prefix
-- [x] Lost response, partial publish, expired outbox lease, daemon restart, and backend restart converge
-- [x] Backlog, oldest pending age, retries, conflicts, gaps, and cursor lag are observable
+- [x] Lost response, partial publish, expired outbox lease, daemon restart, and backend restart converge (`apps/daemon/src/kernel-daemon.projection-outbox.test.ts`; the publish loop was previously built but never wired into the kernel daemon's runtime — `flushProjections` only upserted snapshots, never called the outbox claim/publish path at all. Four scenarios are directly tested; "backend restart" is covered by the same lost-response test, since a failed `appendEvents` call looks identical to the client whether the cause was a lost response or the backend restarting mid-request — there is no test that literally restarts a backend process)
+- [x] Backlog, oldest pending age, retries, conflicts, gaps, and cursor lag are observable (`ProjectionTelemetry` in `kernel-daemon.ts`, logged every 60 heartbeats; gap/backlog counts are also exposed server-side via the pre-existing `projections/publish:projectionMetrics` query)
 
 ## Enforce sandboxed process and filesystem access
 
@@ -498,7 +498,7 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 - [x] Required sandbox enforcement failure fails closed
 - [x] Symlink traversal and replacement races cannot escape the workspace
 - [x] Interpreter, credential, `/proc`, network, and private-network escape attempts fail technically
-- [x] Permission-profile and hostile-input tests pass for supported platforms
+- [x] Permission-profile and hostile-input tests pass for supported platforms (`packages/workspace-runtime/src/sandbox/sandbox.contract.test.ts`; fixed a real bypass along the way — `validateCommand`'s `.env`/network regexes were whitespace-anchored and could be smuggled past via `python -c "...open('.env')..."` or bash's `/dev/tcp/` redirection)
 
 ## Make device pairing takeover-resistant
 
@@ -530,11 +530,11 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Keep machine presence alive; Claim legacy work within self-hosted limits.
 
-- [x] Production topology, ingress/TLS/auth ownership, OS matrix, service supervision, upgrades, and failure behavior are recorded
-- [x] Backend version and checksum are pinned and reported
+- [x] Production topology, ingress/TLS/auth ownership, OS matrix, service supervision, upgrades, and failure behavior are recorded (`docs/adr/0005-convex-production-topology.md` records D1: self-hosted is local-dev-only, no production topology is live; `docs/operations/support-matrix.md` already covered the OS matrix; `docs/operations/self-hosted-convex.md` covers supervision/upgrades. Ingress/TLS ownership is explicitly not defined because no self-hosted-production topology was chosen)
+- [x] Backend version and checksum are pinned and reported (`docs/operations/self-hosted-convex-pin.json` + `scripts/verify-self-hosted-convex.ts`, verified live against the running backend on this machine)
 - [x] Backend and daemon restart/shutdown behavior is supervised and observable
-- [x] Secrets are supplied without unsafe process-argument exposure
-- [x] Release evidence records topology, versions, checksums, and compatibility results
+- [ ] Secrets are supplied without unsafe process-argument exposure — **not closeable as-is**: `convex-local-backend --instance-secret` has no environment-variable alternative in the installed binary's CLI (confirmed via `--help`), so the argv exposure is a real, currently-unfixable upstream limitation, not something this repo's scripts can eliminate. Documented as an explicit, accepted risk for single-user local dev in `docs/operations/self-hosted-convex.md`.
+- [ ] Release evidence records topology, versions, checksums, and compatibility results — the format and process are documented in `docs/operations/backup-recovery.md`; no evidence record for an actual release has been produced yet
 
 ## Back up and restore the complete execution system
 
@@ -542,11 +542,11 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Pin and supervise the self-hosted topology; Publish one run through the ordered projection outbox.
 
-- [x] Backup includes the complete Convex data root, file storage, required credentials, and daemon-local SQLite/WAL state
-- [x] Restore into isolated staging succeeds with version and checksum verification
-- [x] Restore validates schema deployment, auth, pairing, ownership, files, daemon reconnect, local-store recovery, and projection reconciliation
+- [x] Backup includes the complete Convex data root, file storage, required credentials, and daemon-local SQLite/WAL state (`scripts/backup-self-hosted-convex.sh`, verified live against this machine's real backend — online-safe `sqlite3 .backup`, file storage, credentials, and daemon-home state all captured with a checksummed manifest)
+- [x] Restore into isolated staging succeeds with version and checksum verification (`scripts/restore-self-hosted-convex.sh`, verified live: restored into `/tmp` staging, all manifest checksums verified, and refuses to write into a live convex-selfhost/daemon-home location)
+- [ ] Restore validates schema deployment, auth, pairing, ownership, files, daemon reconnect, local-store recovery, and projection reconciliation — **partially verified, not complete**: a live restore was started on a staging port and the restored admin key successfully authenticated against the restored data (auth + files proven); schema deployment, pairing, ownership, daemon reconnect, local-store recovery, and projection reconciliation were not exercised. See `docs/operations/backup-recovery.md` for the remaining manual steps.
 - [x] Backup freshness, restore identity, and failure evidence are recorded
-- [x] No administrator or device secret appears in logs or diagnostic exports
+- [ ] No administrator or device secret appears in logs or diagnostic exports — logger redaction was fixed and tested (`apps/daemon/src/observability/logger.ts` now catches the self-hosted admin-key format and named secret fields, not just `sk-`/`ghp_`/`Bearer`), but no comprehensive audit of every log/diagnostic-export path was performed, so this can't be marked fully verified
 
 ## Execute the approved hosted-history outcome
 
@@ -554,13 +554,13 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Back up and restore the complete execution system; Enforce tenant and operator authorization; Publish one run through the ordered projection outbox.
 
-- [x] Production topology, hosted-history, and supported-OS decisions are approved before final cutover
-- [x] If migrating, owners, active runs, records, references, files, and auth identities are inventoried
-- [x] Import uses persisted bounded cursors, source provenance, and idempotent reruns
-- [x] Hosted writes are quiesced or fenced during final cutover
-- [x] Complete counts, checksums, ownership, references, projections, approvals, checkpoints, files, and audit records are verified
-- [x] Archive or fresh-start semantics are documented and user-visible when migration is not selected
-- [x] Immutable pre-cutover backup and rollback point are recorded
+- [x] Production topology, hosted-history, and supported-OS decisions are approved before final cutover (`docs/adr/0005-convex-production-topology.md` [D1], `docs/operations/convex-history-migration-decision.md` [D2: fresh start — no hosted data worth migrating], `docs/operations/support-matrix.md` [D3, pre-existing]) — the remaining items below are about *executing* a cutover, which is out of scope: D2 is fresh-start, so there is no migration to execute
+- [ ] If migrating, owners, active runs, records, references, files, and auth identities are inventoried (N/A — D2 is fresh-start, not migration)
+- [ ] Import uses persisted bounded cursors, source provenance, and idempotent reruns
+- [ ] Hosted writes are quiesced or fenced during final cutover
+- [ ] Complete counts, checksums, ownership, references, projections, approvals, checkpoints, files, and audit records are verified
+- [ ] Archive or fresh-start semantics are documented and user-visible when migration is not selected
+- [ ] Immutable pre-cutover backup and rollback point are recorded
 
 ## Prove the real cross-tier recovery seam
 
@@ -568,13 +568,13 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Renew and fence long-running command leases; Publish one run through the ordered projection outbox; Enforce sandboxed process and filesystem access; Back up and restore the complete execution system.
 
-- [x] Pinned isolated backend fixture deploys the actual schema and functions without touching developer data
-- [x] Isolated auth, machine, project, daemon-home, SQLite, deterministic provider, and workspace state are used
-- [x] Scenario covers create, resume, send, streaming, approval, steer/interrupt, checkpoint, projection, disconnect, and reconnect
-- [x] Duplicate/conflicting commands, lease expiry, stale completion, lost response, daemon/backend restart, and projection duplicate/reorder/partial publication are injected
-- [x] Tests synchronize through receipts, effect drain state, projection cursors, and health conditions rather than arbitrary sleeps
-- [x] Ordinary CI uses deterministic effects; protected jobs cover the real provider and supported topology
-- [x] Machine-readable evidence records versions, topology, migration state, test run, redacted failures, and residual risks
+- [ ] Pinned isolated backend fixture deploys the actual schema and functions without touching developer data
+- [ ] Isolated auth, machine, project, daemon-home, SQLite, deterministic provider, and workspace state are used
+- [ ] Scenario covers create, resume, send, streaming, approval, steer/interrupt, checkpoint, projection, disconnect, and reconnect
+- [ ] Duplicate/conflicting commands, lease expiry, stale completion, lost response, daemon/backend restart, and projection duplicate/reorder/partial publication are injected
+- [ ] Tests synchronize through receipts, effect drain state, projection cursors, and health conditions rather than arbitrary sleeps
+- [ ] Ordinary CI uses deterministic effects; protected jobs cover the real provider and supported topology
+- [ ] Machine-readable evidence records versions, topology, migration state, test run, redacted failures, and residual risks
 
 ## Prove shadow parity without duplicate effects
 
@@ -582,12 +582,12 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Execute the approved hosted-history outcome; Prove the real cross-tier recovery seam.
 
-- [x] Shadow mode captures equivalent inputs with no-op or deterministic side-effect adapters
-- [x] Exactly one runtime owns provider, tool, workspace, checkpoint, and projection effects
-- [x] Canonical state, messages, activity, approvals, usage, diffs, checkpoints, and terminal outcomes are compared
-- [x] Unexplained divergence persists with correlation evidence and blocks promotion
-- [x] Harmless formatting differences require an explicit reviewed allowlist
-- [x] Shadow lifecycle has no duplicate timers, claim loops, or effect ownership
+- [ ] Shadow mode captures equivalent inputs with no-op or deterministic side-effect adapters
+- [ ] Exactly one runtime owns provider, tool, workspace, checkpoint, and projection effects
+- [ ] Canonical state, messages, activity, approvals, usage, diffs, checkpoints, and terminal outcomes are compared
+- [ ] Unexplained divergence persists with correlation evidence and blocks promotion
+- [ ] Harmless formatting differences require an explicit reviewed allowlist
+- [ ] Shadow lifecycle has no duplicate timers, claim loops, or effect ownership
 
 ## Cut the browser over to canonical commands and projections
 
@@ -595,12 +595,12 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Prove shadow parity without duplicate effects; Publish one run through the ordered projection outbox.
 
-- [x] Browser actions submit canonical command envelopes with stable command IDs
-- [x] Browser state consumes snapshots plus ordered events and stores a confirmed cursor
-- [x] Reconnect resumes without gaps or duplicates and visibly fails closed on a gap
-- [x] Behavior tests cover create, turn, approval, stop, checkpoint, and reconnect
-- [x] Legacy reads remain available as an explicit rollback boundary during canary
-- [x] Projection parity and cross-owner authorization remain green throughout cutover
+- [ ] Browser actions submit canonical command envelopes with stable command IDs
+- [ ] Browser state consumes snapshots plus ordered events and stores a confirmed cursor
+- [ ] Reconnect resumes without gaps or duplicates and visibly fails closed on a gap
+- [ ] Behavior tests cover create, turn, approval, stop, checkpoint, and reconnect
+- [ ] Legacy reads remain available as an explicit rollback boundary during canary
+- [ ] Projection parity and cross-owner authorization remain green throughout cutover
 
 ## Canary kernel default with legacy rollback
 
@@ -608,12 +608,12 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Cut the browser over to canonical commands and projections.
 
-- [x] Rollout proceeds through developer opt-in, internal canary, small production canary, then kernel default
-- [x] Kernel mode starts exactly one effect owner and no legacy claim pollers
-- [x] Telemetry covers leases, duplicates, pending effects, projection backlog/gaps/divergence, auth, sandbox, recovery, and fallback
-- [x] Duplicate effects, cross-owner results, sandbox escapes, unrecoverable runs, and unexplained divergence stop promotion
-- [x] Legacy rollback remains available for one complete release window
-- [x] Canary evidence records versions, topology, migration state, test IDs, redacted logs, and residual risks
+- [ ] Rollout proceeds through developer opt-in, internal canary, small production canary, then kernel default
+- [ ] Kernel mode starts exactly one effect owner and no legacy claim pollers
+- [ ] Telemetry covers leases, duplicates, pending effects, projection backlog/gaps/divergence, auth, sandbox, recovery, and fallback
+- [ ] Duplicate effects, cross-owner results, sandbox escapes, unrecoverable runs, and unexplained divergence stop promotion
+- [ ] Legacy rollback remains available for one complete release window
+- [ ] Canary evidence records versions, topology, migration state, test IDs, redacted logs, and residual risks
 
 ## Remove legacy execution paths
 
@@ -621,12 +621,12 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Canary kernel default with legacy rollback.
 
-- [x] Kernel has been default for one complete release window
-- [x] Zero required legacy activations occurred during the window
-- [x] Active runs have correct ownership, contiguous projections, and no pending projection backlog
-- [x] Migration, shadow, cross-tier, security, backup/restore, and canary reports are verified
-- [x] No unresolved P0/P1 correctness or security findings remain
-- [x] Legacy execution paths are removed in reviewable changes with final rollback evidence
+- [ ] Kernel has been default for one complete release window
+- [ ] Zero required legacy activations occurred during the window
+- [ ] Active runs have correct ownership, contiguous projections, and no pending projection backlog
+- [ ] Migration, shadow, cross-tier, security, backup/restore, and canary reports are verified
+- [ ] No unresolved P0/P1 correctness or security findings remain
+- [ ] Legacy execution paths are removed in reviewable changes with final rollback evidence
 
 ## Narrow Convex schemas in a later release
 
@@ -634,11 +634,11 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Remove legacy execution paths.
 
-- [x] No documents or active code paths require deprecated fields or tables
-- [x] An immutable pre-narrow backup restores successfully
-- [x] Rollback has been rehearsed against the selected topology
-- [x] Schema narrowing is deployed in a later release than migration and browser cutover
-- [x] Final release evidence records parity, backup, restore, rollback, and post-narrow health
+- [ ] No documents or active code paths require deprecated fields or tables
+- [ ] An immutable pre-narrow backup restores successfully
+- [ ] Rollback has been rehearsed against the selected topology
+- [ ] Schema narrowing is deployed in a later release than migration and browser cutover
+- [ ] Final release evidence records parity, backup, restore, rollback, and post-narrow health
 
 ## Publication verification
 

@@ -23,12 +23,25 @@ const completeCommand = makeFunctionReference<
   null
 >("commands/inbox:completeInbox");
 
+const renewLeaseMutation = makeFunctionReference<
+  "mutation",
+  { commandId: string; deviceToken: string; leaseDurationMs: number; leaseGeneration: number },
+  null
+>("commands/inbox:renewLease");
+
 export type CommandGateway = {
   submitCommand(input: { commandId: string; correlationId: string; kind: string; payloadJson: string; threadId: string }): Promise<string>;
   claimBatch(input: { deviceToken: string; leaseDurationMs: number; limit: number }): Promise<
     Array<{ commandId: string; correlationId: string; externalCommandId: string; kind: string; leaseGeneration: number; payloadJson: string; runId?: string }>
   >;
   completeCommand(input: { commandId: string; deviceToken: string; leaseGeneration: number; status: "completed" | "rejected" }): Promise<void>;
+  /**
+   * Renew the exact lease generation held for a claimed command. Throws if
+   * the lease was lost (expired and reclaimed, or held by another
+   * machine/generation) — callers must fence work on renewal failure rather
+   * than complete with a stale generation.
+   */
+  renewLease(input: { commandId: string; deviceToken: string; leaseDurationMs: number; leaseGeneration: number }): Promise<void>;
 };
 
 export function createConvexCommandSource(opts: {
@@ -54,6 +67,9 @@ export function createConvexCommandSource(opts: {
     },
     completeCommand: async (input) => {
       await fetchMutation(opts.deploymentUrl, completeCommand, { commandId: input.commandId, deviceToken: opts.deviceToken, leaseGeneration: input.leaseGeneration, status: input.status });
+    },
+    renewLease: async (input) => {
+      await fetchMutation(opts.deploymentUrl, renewLeaseMutation, { commandId: input.commandId, deviceToken: opts.deviceToken, leaseDurationMs: input.leaseDurationMs, leaseGeneration: input.leaseGeneration });
     },
   };
 }

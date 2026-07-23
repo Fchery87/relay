@@ -6,7 +6,7 @@ import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, 
 const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: string }>(
   "machines:heartbeat",
 );
-const registerMachineMutation = makeFunctionReference<"mutation", MachineRegistration>(
+const registerMachineMutation = makeFunctionReference<"mutation", MachineRegistration, string>(
   "machines:registerMachine",
 );
 const claimQueuedMessageMutation = makeFunctionReference<"mutation", { deviceToken: string }, unknown>("conversations:claimQueuedMessage");
@@ -56,21 +56,29 @@ const getMcpElicitationQuery = makeFunctionReference<"query", { deviceToken: str
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
-  registerMachine(registration: MachineRegistration): Promise<unknown>;
+  registerMachine(registration: MachineRegistration): Promise<string>;
 }
 
 export class MachineReporter {
   readonly #gateway: MachineGateway;
   readonly #registration: MachineRegistration;
   #lastSyncedProjects: string | null = null;
+  #machineId: string | undefined;
 
   constructor({ gateway, registration }: { gateway: MachineGateway; registration: MachineRegistration }) {
     this.#gateway = gateway;
     this.#registration = registration;
   }
 
-  connect(): Promise<unknown> {
-    return this.#gateway.registerMachine(this.#registration);
+  /** The Convex machine document ID, available after `connect()` resolves. */
+  get machineId(): string {
+    if (!this.#machineId) throw new Error("MachineReporter.machineId read before connect() resolved");
+    return this.#machineId;
+  }
+
+  async connect(): Promise<string> {
+    this.#machineId = await this.#gateway.registerMachine(this.#registration);
+    return this.#machineId;
   }
 
   heartbeatOnce(): Promise<unknown> {

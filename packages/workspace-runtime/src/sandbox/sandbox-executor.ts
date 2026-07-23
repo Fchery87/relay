@@ -57,17 +57,21 @@ export function validateCommand(
   const policy = getPolicy(profile);
 
   if (command.length === 0 || command.length > 128 || command.some((part) => part.length > 16_384 || part.includes("\0"))) return { allowed: false, reason: "malformed_command" };
-  // Defense in depth before OS confinement.
+  // Defense in depth before OS confinement. Patterns are unanchored
+  // substring matches (not whitespace-anchored) so wrapping a sensitive
+  // path in quotes, parens, or an interpreter's inline-code flag
+  // (`python -c "...open('.env')..."`, `bash -c 'cat .env'`) cannot smuggle
+  // it past a naive word-boundary check.
   const cmdStr = command.join(" ");
 
   // These patterns are always blocked for non-full-access profiles
-  if (!policy.allowEnvRead && /(?:^|\s)(\.env|process\.env|\/proc\/\d+\/environ)/.test(cmdStr)) {
+  if (!policy.allowEnvRead && /\.env\b|process\.env|\/proc\/\d+\/environ/.test(cmdStr)) {
     return { allowed: false, reason: "env_read_blocked" };
   }
   if (!policy.allowSymlinkEscape && /readlink.*\.\./.test(cmdStr)) {
     return { allowed: false, reason: "symlink_escape_blocked" };
   }
-  if (!policy.allowNetwork && /\b(curl|wget|nc |netcat|socket)\b/.test(cmdStr)) {
+  if (!policy.allowNetwork && /\b(curl|wget|nc|ncat|netcat|telnet|socket)\b|\/dev\/tcp\//.test(cmdStr)) {
     return { allowed: false, reason: "network_blocked" };
   }
 

@@ -1,0 +1,8 @@
+{
+  "binaryPath": "~/.local/share/convex-selfhost/convex-local-backend",
+  "binarySha256": "c50a5452c08327fc8b8a8ecf410c305b33998e1392dabe4d739968dbcb5f2e5d",
+  "releaseArchivePath": "~/.local/share/convex-selfhost/backend.zip",
+  "releaseArchiveSha256": "fadeb05bf77848220288bd17e1e5c11d1fe1a734677f0c3436b6ee6460bb5ed3",
+  "pinnedAt": "2026-07-22",
+  "notes": "convex-local-backend reports '/version' as 'local_backend unknown' — the binary has no embedded semver, so this checksum pin is the authoritative version identity per docs/operations/self-hosted-convex.md. Recorded from the archive already installed on the primary dev machine (downloaded as 'latest' on 2026-07-19); no upstream release tag was independently re-verified against this checksum. Update both hashes and pinnedAt together whenever the backend is intentionally upgraded, after re-vetting the new archive."
+}

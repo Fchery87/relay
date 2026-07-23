@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { realpath } from "node:fs/promises";
 
 import { loadDaemonConfig } from "./config";
 import { resolveDaemonHome } from "./daemon-home";
@@ -28,6 +29,7 @@ import { BUILTIN_COMMANDS } from "./builtin-commands";
 import { resolveExtensionRoots } from "./extension-paths";
 import { loadSkills } from "./skills";
 import { staggerOffset, startStaggeredPoller } from "./pollers";
+import { getClaimMetrics } from "./observability/claim-metrics";
 
 export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
@@ -42,7 +44,7 @@ const reporter = new MachineReporter({
 
 const yoloMode = yolo || Bun.env.RELAY_YOLO === "1";
 
-await reporter.connect();
+const machineId = await reporter.connect();
 if (yoloMode) console.warn("⚠️  YOLO MODE: all permission checks are bypassed. Every tool call is auto-approved.");
 console.info(`Relay daemon connected as ${config.registration.name} (mode: ${runtimeMode})`);
 
@@ -87,10 +89,43 @@ const projectSyncTimer = setInterval(() => {
   }).finally(() => { projectSyncInFlight = false; });
 }, config.heartbeatIntervalMs);
 
+// ---------------------------------------------------------------------------
+// Claim latency observability — logs p50/p95/p99 claim duration, outcome
+// counts, and error causes for the legacy work-claim pollers, so claim
+// health is observable without a live-trace attach.
+// ---------------------------------------------------------------------------
+const claimMetricsTimer = setInterval(() => {
+  const snapshots = getClaimMetrics();
+  if (snapshots.length > 0) console.info("Relay claim latency:", snapshots);
+}, 60_000);
+
 const conversationGateway = createConvexConversationGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 const governance = createConvexGovernanceGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
 const policy = await loadPolicy({ path: Bun.env.RELAY_POLICY_PATH ?? join(import.meta.dir, "..", "policy.json") });
 const worktrees = new ThreadWorktrees({ daemonHome });
+
+// Sandbox-enforced worktree resolver — prevents symlink traversal escapes.
+// Fails closed if realpath cannot be resolved, and uses a separator-anchored
+// prefix check so a sibling directory like "<daemonHome>-evil" cannot pass.
+const daemonHomePrefix = daemonHome.endsWith("/") ? daemonHome : `${daemonHome}/`;
+const sandboxedResolveProjectRoot = async (input: { repoPath: string; threadId: string }) => {
+  const resolved = await worktrees.resolve(input);
+  let canonical: string;
+  try {
+    canonical = await realpath(resolved);
+  } catch (error) {
+    throw new Error(
+      `Sandbox violation: worktree "${resolved}" could not be resolved for confinement check: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (canonical !== daemonHome && !canonical.startsWith(daemonHomePrefix)) {
+    throw new Error(
+      `Sandbox violation: worktree "${resolved}" escapes daemon home "${daemonHome}"`,
+    );
+  }
+  return resolved;
+};
+
 async function collectOrphanedWorktrees() {
   const activeThreadIds = new Set(await conversationGateway.listThreadIds());
   await worktrees.gc({ activeThreadIds });
@@ -107,9 +142,10 @@ if (runtimeMode === "kernel") {
     deploymentUrl: config.deploymentUrl,
     deviceToken: config.registration.deviceToken,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
+    machineId,
     machineName: config.registration.name,
     adapterDeps: {
-      resolveProjectRoot: (input) => worktrees.resolve(input),
+      resolveProjectRoot: sandboxedResolveProjectRoot,
       governance,
       policy,
       platform: config.registration.platform,
@@ -126,9 +162,10 @@ if (runtimeMode === "shadow") {
     deploymentUrl: config.deploymentUrl,
     deviceToken: config.registration.deviceToken,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
+    machineId,
     machineName: `${config.registration.name}-shadow`,
     adapterDeps: {
-      resolveProjectRoot: (input) => worktrees.resolve(input),
+      resolveProjectRoot: sandboxedResolveProjectRoot,
       governance,
       policy,
       platform: config.registration.platform,
@@ -145,6 +182,7 @@ async function shutdown() {
   clearInterval(heartbeatTimer);
   clearInterval(projectSyncTimer);
   clearInterval(worktreeGcTimer);
+  clearInterval(claimMetricsTimer);
   await mcp.close();
   process.exit(0);
 }
@@ -166,7 +204,7 @@ let subagentRunning = false;
 startClaimPoller(() => {
   if (subagentRunning) return;
   subagentRunning = true;
-  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: subagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: subagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: sandboxedResolveProjectRoot })
     .catch((error: unknown) => console.error("Relay subagent failed", error))
     .finally(() => { subagentRunning = false; });
 });
@@ -174,7 +212,7 @@ let nestedSubagentRunning = false;
 startClaimPoller(() => {
   if (nestedSubagentRunning) return;
   nestedSubagentRunning = true;
-  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: nestedSubagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedSubagent({ artifactRoot: daemonHome, createWriterRoot: (input) => createNestedSubagentWorktree({ daemonHome, ...input }), gateway: nestedSubagentGateway, governance, integrateWriterRoot: (input) => integrateNestedSubagentWorktree({ daemonHome, ...input }), platform: config.registration.platform, policy: subagentPolicy, provider, resolveParentRoot: (input) => resolveSubagentParentRoot({ daemonHome, ...input }), resolveProjectRoot: sandboxedResolveProjectRoot })
     .catch((error: unknown) => console.error("Relay nested subagent failed", error))
     .finally(() => { nestedSubagentRunning = false; });
 });
@@ -191,7 +229,7 @@ startClaimPoller(() => {
     policy: subagentPolicy,
     provider,
     platform: config.registration.platform,
-    resolveProjectRoot: (input) => worktrees.resolve(input),
+    resolveProjectRoot: sandboxedResolveProjectRoot,
     resolveSkills: async ({ projectPath }) => {
       const trustState = await trustStore.get(projectPath);
       const roots = resolveExtensionRoots({ daemonHome, kind: "skills", projectRoot: projectPath, projectTrusted: trustState === "trusted" });
@@ -216,7 +254,7 @@ let checkpointComparisonRunning = false;
 startClaimPoller(() => {
   if (checkpointComparisonRunning) return;
   checkpointComparisonRunning = true;
-  void runQueuedCheckpointComparison({ gateway: checkpointComparisonGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedCheckpointComparison({ gateway: checkpointComparisonGateway, resolveProjectRoot: sandboxedResolveProjectRoot })
     .catch((error: unknown) => console.error("Relay checkpoint comparison failed", error))
     .finally(() => { checkpointComparisonRunning = false; });
 });
@@ -225,7 +263,7 @@ let gitActionRunning = false;
 startClaimPoller(() => {
   if (gitActionRunning) return;
   gitActionRunning = true;
-  void runQueuedGitAction({ gateway: gitGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedGitAction({ gateway: gitGateway, resolveProjectRoot: sandboxedResolveProjectRoot })
     .catch((error: unknown) => console.error("Relay git action failed", error))
     .finally(() => { gitActionRunning = false; });
 });
@@ -235,7 +273,7 @@ let checkpointRestoreRunning = false;
 startClaimPoller(() => {
   if (checkpointRestoreRunning) return;
   checkpointRestoreRunning = true;
-  void runQueuedCheckpointRestore({ gateway: checkpointGateway, resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedCheckpointRestore({ gateway: checkpointGateway, resolveProjectRoot: sandboxedResolveProjectRoot })
     .catch((error: unknown) => console.error("Relay checkpoint restore failed", error))
     .finally(() => { checkpointRestoreRunning = false; });
 });
@@ -245,7 +283,7 @@ let commandRunning = false;
 startClaimPoller(() => {
   if (commandRunning) return;
   commandRunning = true;
-  void runQueuedCommand({ gateway: commandGateway, governance, platform: config.registration.platform, policy: subagentPolicy, resolveProjectRoot: (input) => worktrees.resolve(input) })
+  void runQueuedCommand({ gateway: commandGateway, governance, platform: config.registration.platform, policy: subagentPolicy, resolveProjectRoot: sandboxedResolveProjectRoot })
     .catch((error: unknown) => console.error("Relay command failed", error))
     .finally(() => { commandRunning = false; });
 });

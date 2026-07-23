@@ -21,21 +21,42 @@ code is shared with a hosted deployment.
 - HTTP actions (`CONVEX_SITE_URL`): `http://127.0.0.1:3211`
 - Install root: `~/.local/share/convex-selfhost/`
 - Data: SQLite + file storage under `~/.local/share/convex-selfhost/relay-data/`
-  (back this directory up; it is the entire database)
+  (back this directory up; it is the entire database). Use
+  `scripts/backup-self-hosted-convex.sh` — see
+  [backup-recovery.md](backup-recovery.md) — rather than an ad hoc copy; the
+  SQLite files are backed up online-safely and daemon-local state is
+  included too.
 
 ## One-time setup on a new machine
 
 ### 1. Download the binary
 
-Grab the latest `convex-local-backend-<arch>.zip` from the
-[convex-backend releases](https://github.com/get-convex/convex-backend/releases):
+Do not install from a floating `latest` URL without recording what you got.
+Download a **specific release tag**, verify it, and pin it:
 
 ```bash
 mkdir -p ~/.local/share/convex-selfhost/relay-data
 cd ~/.local/share/convex-selfhost
-curl -sLO https://github.com/get-convex/convex-backend/releases/latest/download/convex-local-backend-x86_64-unknown-linux-gnu.zip
+curl -sLO https://github.com/get-convex/convex-backend/releases/download/<TAG>/convex-local-backend-x86_64-unknown-linux-gnu.zip
+sha256sum convex-local-backend-x86_64-unknown-linux-gnu.zip  # record this before unzipping
 unzip convex-local-backend-x86_64-unknown-linux-gnu.zip && chmod +x convex-local-backend
+sha256sum convex-local-backend
 ```
+
+Record both checksums, the release tag, and the date in
+[`self-hosted-convex-pin.json`](self-hosted-convex-pin.json) (update
+`binarySha256`, `releaseArchiveSha256`, and `pinnedAt` together). The binary
+has no embedded semver — `convex-local-backend --version` reports
+`local_backend unknown` — so the checksum pin is the only reliable version
+identity. Verify an install (or after every upgrade) with:
+
+```bash
+bun run convex:verify
+```
+
+which checks the running backend's `/version` responds *and* the installed
+binary's checksum matches the pin — refusing to treat an unvetted binary as
+trustworthy just because a backend answered on port 3210.
 
 ### 2. Generate instance credentials
 
@@ -80,9 +101,21 @@ setsid nohup ~/.local/share/convex-selfhost/start-relay-backend.sh \
   >> ~/.local/share/convex-selfhost/backend.log 2>&1 < /dev/null &
 ```
 
-Health check: `curl http://127.0.0.1:3210/version` should respond. Stop a
+Health check: `curl http://127.0.0.1:3210/version` should respond (or run
+`bun run convex:verify`, which also checks the binary checksum). Stop a
 detached backend with `pkill -f convex-local-backend`; data persists across
 restarts.
+
+> [!WARNING]
+> `convex-local-backend --instance-secret` has no environment-variable
+> alternative in the current upstream CLI (unlike `--disable-beacon`, which
+> does). The secret is therefore visible in this process's argv to any other
+> process running as the same local user (e.g. via `ps` or
+> `/proc/<pid>/cmdline`) for the life of the backend. This is a known,
+> accepted limitation for a single-user local-dev machine, not something
+> this repo's scripts can fully close today — do not run this topology on a
+> shared or multi-tenant host. `instance-secret.txt` and `admin-key.txt`
+> stay `chmod 600` regardless.
 
 > Optional: to start it automatically at boot instead, wrap the script in a
 > systemd user service (`ExecStart=%h/.local/share/convex-selfhost/start-relay-backend.sh`,

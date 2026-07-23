@@ -59,6 +59,7 @@ import {
   getMetrics,
   getHealth,
 } from "@relay/local-store";
+import type { TraceSpan } from "@relay/local-store";
 import {
   scanForSecrets,
   sanitizeForProjection,
@@ -80,6 +81,8 @@ export type KernelDaemonConfig = {
   deploymentUrl: string;
   deviceToken: string;
   heartbeatIntervalMs: number;
+  /** Convex machine document ID — required to advance the outbound projection cursor. */
+  machineId: string;
   machineName: string;
   pollIntervalMs?: number;
   /** Adapter deps — required for checkpoint and subagent commands. */
@@ -91,6 +94,12 @@ export type KernelDaemonConfig = {
   };
   /** Opt-in Codex app-server transport config (requires RELAY_CODEX_ENABLED=1). */
   codexTransport?: CodexTransportConfig & { enabled: boolean };
+  /** Test-injection seam — overrides the real Convex-backed command source. */
+  commandGateway?: CommandGateway;
+  /** Test-injection seam — overrides the real Convex-backed projection sink. */
+  projectionSink?: ProjectionSink;
+  /** Command claim/renewal lease duration — overridable for kill-point tests. Default 30s. */
+  commandLeaseDurationMs?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -460,21 +469,177 @@ function appendAdapterEvent(
 }
 
 // ---------------------------------------------------------------------------
+// Command lease renewal
+// ---------------------------------------------------------------------------
+
+/**
+ * Start renewing a claimed command's lease at roughly a third of its
+ * duration, for the lifetime of an external effect. Returns a stop function
+ * that must be called once the effect finishes (success or failure) to
+ * release the timer. `onLost` fires whenever a renewal attempt fails —
+ * because the lease expired and was reclaimed by another worker, or is held
+ * by a different generation — and the caller must treat that as fencing:
+ * any in-flight completion for this command is no longer safe to commit.
+ */
+export function startLeaseRenewal(input: {
+  commandGateway: CommandGateway;
+  commandId: string;
+  deviceToken: string;
+  leaseGeneration: number;
+  leaseDurationMs: number;
+  onLost: (error: unknown) => void;
+}): () => void {
+  const renewalIntervalMs = Math.max(1, Math.floor(input.leaseDurationMs / 3));
+  const timer = setInterval(() => {
+    void input.commandGateway
+      .renewLease({
+        commandId: input.commandId,
+        deviceToken: input.deviceToken,
+        leaseDurationMs: input.leaseDurationMs,
+        leaseGeneration: input.leaseGeneration,
+      })
+      .catch(input.onLost);
+  }, renewalIntervalMs);
+  return () => clearInterval(timer);
+}
+
+// ---------------------------------------------------------------------------
 // Projection publisher
 // ---------------------------------------------------------------------------
 
-async function flushProjections({
+export type ProjectionTelemetry = {
+  backlog: number;
+  oldestPendingAgeMs: number;
+  retries: number;
+  conflicts: number;
+  cursorLag: number;
+};
+
+/**
+ * Publish the durable local outbox to Convex in per-run sequence order.
+ * Rows are claimed under a lease so a crashed publisher's claim is
+ * reclaimable once the lease expires; local rows are acknowledged only
+ * after Convex durably confirms the batch, and the outbound cursor
+ * advances only after that acknowledgement. A batch failure (lost
+ * response, network error, backend restart) leaves the batch leased and
+ * unacknowledged — it converges on the next flush once the lease expires,
+ * and exact-duplicate republication is a no-op on the Convex side.
+ */
+export async function publishProjectionOutbox({
   deviceToken,
   runtime,
   projectionSink,
+  machineId,
+  telemetry,
+  leaseDurationMs = 60_000,
+  limit = 100,
 }: {
   deviceToken: string;
   runtime: LocalHarnessRuntime;
   projectionSink: ProjectionSink;
+  machineId: string;
+  telemetry: ProjectionTelemetry;
+  /** Outbox claim lease duration — overridable for kill-point/expiry tests. */
+  leaseDurationMs?: number;
+  limit?: number;
+}): Promise<void> {
+  const batch = runtime.claimProjectionOutbox({
+    owner: machineId,
+    leaseDurationMs,
+    limit,
+  });
+
+  if (batch.length > 0) {
+    const events: Array<{
+      eventId: string;
+      occurredAt: number;
+      payloadJson: string;
+      projectId: string;
+      runId: string;
+      sequence: number;
+      type: string;
+    }> = [];
+    const publishableIds: number[] = [];
+    const projectIdByRun = new Map<string, string | null>();
+
+    for (const row of batch) {
+      let projectId = projectIdByRun.get(row.runId);
+      if (projectId === undefined) {
+        const snapshot = runtime.getSnapshotByRunId(row.runId);
+        projectId = (snapshot?.projectId as string | undefined) ?? null;
+        projectIdByRun.set(row.runId, projectId);
+      }
+      if (!projectId) {
+        // No resolvable run snapshot yet — leave unacknowledged; the lease
+        // expires and this row is reclaimed once the run snapshot exists.
+        continue;
+      }
+      events.push({
+        eventId: row.eventId,
+        occurredAt: row.occurredAt,
+        payloadJson: row.payloadJson,
+        projectId,
+        runId: row.runId,
+        sequence: row.sequence,
+        type: row.type,
+      });
+      publishableIds.push(row.id);
+    }
+
+    if (events.length > 0) {
+      try {
+        await projectionSink.appendEvents({ events, deviceToken });
+        runtime.acknowledgeProjectionOutbox(publishableIds);
+        const maxId = Math.max(...publishableIds);
+        try {
+          await projectionSink.advanceCursor({
+            direction: "outbound",
+            machineId,
+            sequence: maxId,
+            deviceToken,
+          });
+        } catch (cursorError) {
+          // Cursor advance is best-effort observability; local rows are
+          // already durably acknowledged, so this never re-publishes.
+          console.error("Kernel daemon: projection cursor advance failed", cursorError);
+        }
+      } catch (error) {
+        telemetry.retries++;
+        const message = error instanceof Error ? error.message : String(error);
+        if (/conflict/i.test(message) || /gap/i.test(message)) telemetry.conflicts++;
+        console.error("Kernel daemon: projection outbox publish failed; retrying after lease expiry", message);
+      }
+    }
+  }
+
+  const pending = runtime.countPendingProjectionOutbox();
+  telemetry.backlog = pending.count;
+  telemetry.oldestPendingAgeMs = pending.oldestOccurredAt ? Date.now() - pending.oldestOccurredAt : 0;
+  telemetry.cursorLag = pending.count;
+}
+
+export async function flushProjections({
+  deviceToken,
+  runtime,
+  projectionSink,
+  machineId,
+  telemetry,
+}: {
+  deviceToken: string;
+  runtime: LocalHarnessRuntime;
+  projectionSink: ProjectionSink;
+  machineId: string;
+  telemetry: ProjectionTelemetry;
 }): Promise<void> {
   try {
-    const runs = runtime.listRuns();
-    for (const run of runs) {
+    await publishProjectionOutbox({ deviceToken, runtime, projectionSink, machineId, telemetry });
+  } catch (error) {
+    console.error("Kernel daemon: projection outbox flush failed", error);
+  }
+
+  const runs = runtime.listRuns();
+  for (const run of runs) {
+    try {
       const snapshot = runtime.getSnapshotByRunId(run.runId);
       if (!snapshot) continue;
 
@@ -485,9 +650,12 @@ async function flushProjections({
         snapshotJson: JSON.stringify(snapshot),
         deviceToken,
       });
+    } catch (error) {
+      // Convex rejects a snapshot sequence whose events haven't published
+      // yet — expected when this run's outbox publish above failed. One
+      // run's rejection must not block other runs' snapshots from flushing.
+      console.error("Kernel daemon: snapshot flush failed for run", run.runId, error instanceof Error ? error.message : error);
     }
-  } catch (error) {
-    console.error("Kernel daemon: projection flush failed", error);
   }
 }
 
@@ -518,6 +686,21 @@ export class KernelDaemon {
     recoverableFailures: 0,
     unrecoverableFailures: 0,
   };
+
+  // Outbox publish observability — backlog, oldest pending age, retries,
+  // conflicts, and cursor lag, per the ordered-projection ticket.
+  private projectionTelemetry: ProjectionTelemetry = {
+    backlog: 0,
+    oldestPendingAgeMs: 0,
+    retries: 0,
+    conflicts: 0,
+    cursorLag: 0,
+  };
+
+  /** Outbox publish observability snapshot, for heartbeat reporting and tests. */
+  getProjectionTelemetry(): Readonly<ProjectionTelemetry> {
+    return { ...this.projectionTelemetry };
+  }
 
   constructor(private readonly config: KernelDaemonConfig) {}
 
@@ -602,12 +785,12 @@ export class KernelDaemon {
       reactors.register(kind, noopReactor);
     }
 
-    // 3. Create Convex adapters
-    this.commandGateway = createConvexCommandSource({
+    // 3. Create Convex adapters (or use test-injected fakes)
+    this.commandGateway = this.config.commandGateway ?? createConvexCommandSource({
       deploymentUrl: this.config.deploymentUrl,
       deviceToken: this.config.deviceToken,
     });
-    this.projectionSink = createConvexProjectionSink({
+    this.projectionSink = this.config.projectionSink ?? createConvexProjectionSink({
       deploymentUrl: this.config.deploymentUrl,
       deviceToken: this.config.deviceToken,
     });
@@ -634,37 +817,63 @@ export class KernelDaemon {
       `Relay kernel daemon starting as ${this.config.machineName} (mode: kernel)`,
     );
 
-    const heartbeatInterval = setInterval(() => {
+    this.heartbeatTimer = setInterval(() => {
       void this.heartbeat();
     }, this.config.heartbeatIntervalMs);
 
-    const pollInterval = setInterval(() => {
+    this.pollTimer = setInterval(() => {
       void this.poll();
     }, this.config.pollIntervalMs ?? 1_000);
+    this.startupSpan = startSpan;
 
-    // Graceful shutdown via supervisor
-    const shutdown = async () => {
-      if (this.shuttingDown) return;
-      this.shuttingDown = true;
-      clearInterval(heartbeatInterval);
-      clearInterval(pollInterval);
-      this.codexAdapter?.close();
-      await this.flush();
-      await this.runtime.shutdown();
-      this.tracer.endSpan(startSpan);
-      const spans = this.tracer.getSpans();
-      console.info(
-        `Kernel daemon shutting down. ${spans.length} traces recorded.`,
-      );
-      process.exit(0);
-    };
-    process.once("SIGINT", () => void shutdown());
-    process.once("SIGTERM", () => void shutdown());
+    process.once("SIGINT", () => void this.shutdownAndExit());
+    process.once("SIGTERM", () => void this.shutdownAndExit());
 
     this.tracer.endSpan(startSpan);
   }
 
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private pollTimer?: ReturnType<typeof setInterval>;
+  private startupSpan?: TraceSpan;
+
+  /**
+   * Graceful shutdown without terminating the process — safe for tests and
+   * for a supervisor-driven restart. Clears timers, drains the codex
+   * adapter, flushes projections, and closes the local store.
+   */
+  async stop(): Promise<void> {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.codexAdapter?.close();
+    await this.flush();
+    await this.runtime.shutdown();
+    if (this.startupSpan) this.tracer.endSpan(this.startupSpan);
+    const spans = this.tracer.getSpans();
+    console.info(`Kernel daemon shutting down. ${spans.length} traces recorded.`);
+  }
+
+  /** SIGINT/SIGTERM handler — graceful stop, then terminate the process. */
+  private async shutdownAndExit(): Promise<void> {
+    await this.stop();
+    process.exit(0);
+  }
+
+  /** Run one poll/claim/dispatch cycle immediately — for tests and manual triggers. */
+  async pollOnce(): Promise<void> {
+    await this.poll();
+  }
+
   private pollInFlight = false;
+
+  // Command lease lifetime — long enough to cover a normal turn between
+  // polls, short enough that a crashed worker's claim is reclaimable
+  // quickly. Renewal (see processCommand) keeps genuinely long-running
+  // effects alive well past this window. Overridable for kill-point tests.
+  private get commandLeaseDurationMs(): number {
+    return this.config.commandLeaseDurationMs ?? 30_000;
+  }
 
   private async poll(): Promise<void> {
     if (this.shuttingDown || this.pollInFlight) return;
@@ -673,7 +882,7 @@ export class KernelDaemon {
     try {
       const batch = await this.commandGateway.claimBatch({
         deviceToken: this.config.deviceToken,
-        leaseDurationMs: 30_000,
+        leaseDurationMs: this.commandLeaseDurationMs,
         limit: 5,
       });
 
@@ -715,13 +924,58 @@ export class KernelDaemon {
     const span = this.tracer.startSpan(`command.${kind}`);
     span.tags["commandId"] = commandId;
 
-    const complete = (status: "completed" | "rejected") =>
-      this.commandGateway.completeCommand({
-        commandId,
-        deviceToken: this.config.deviceToken,
-        leaseGeneration: leaseGeneration ?? 0,
-        status,
-      });
+    // Renew the exact lease generation for the full external-effect
+    // lifetime — a claim's initial lease only covers the gap between polls,
+    // not a genuinely long-running provider turn. Renewal failure means the
+    // lease was lost (expired and reclaimed, or taken by another worker):
+    // fence completion so a stale worker never commits a result another
+    // owner may already be producing.
+    let leaseLost = false;
+    this.canaryTelemetry.activeLeases++;
+    const stopRenewal = leaseGeneration === undefined ? undefined : startLeaseRenewal({
+      commandGateway: this.commandGateway,
+      commandId,
+      deviceToken: this.config.deviceToken,
+      leaseGeneration,
+      leaseDurationMs: this.commandLeaseDurationMs,
+      onLost: (error) => {
+        leaseLost = true;
+        console.error(
+          "Kernel daemon: lease renewal failed — fencing completion",
+          commandId,
+          error instanceof Error ? error.message : error,
+        );
+      },
+    });
+
+    const complete = async (status: "completed" | "rejected") => {
+      if (leaseLost) {
+        this.canaryTelemetry.recoverableFailures++;
+        console.error("Kernel daemon: skipping completion — lease was lost mid-execution", commandId);
+        return;
+      }
+      try {
+        await this.commandGateway.completeCommand({
+          commandId,
+          deviceToken: this.config.deviceToken,
+          leaseGeneration: leaseGeneration ?? 0,
+          status,
+        });
+      } catch (error) {
+        // The completion report itself failed (lost response, network
+        // partition) — the command's local work already ran. Do not
+        // compound this with a second completion attempt, which could
+        // silently overwrite a real success with "rejected". Leave the
+        // command claimed; it becomes reclaimable after lease expiry and
+        // is safely redelivered (engine-level operations are idempotent).
+        console.error(
+          "Kernel daemon: completion report failed — command remains claimed for redelivery",
+          commandId,
+          status,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    };
 
     try {
       switch (kind) {
@@ -891,6 +1145,9 @@ export class KernelDaemon {
       const message = error instanceof Error ? error.message : String(error);
       console.error("Kernel daemon: command failed", commandId, kind, message);
       await complete("rejected");
+    } finally {
+      stopRenewal?.();
+      this.canaryTelemetry.activeLeases--;
     }
 
     this.tracer.endSpan(span);
@@ -901,7 +1158,10 @@ export class KernelDaemon {
       deviceToken: this.config.deviceToken,
       runtime: this.runtime,
       projectionSink: this.projectionSink,
+      machineId: this.config.machineId,
+      telemetry: this.projectionTelemetry,
     });
+    this.canaryTelemetry.projectionBacklog = this.projectionTelemetry.backlog;
   }
 
   private heartbeatCount = 0;
@@ -924,6 +1184,7 @@ export class KernelDaemon {
           eventsProcessed: metrics.eventsProcessed,
           uptimeMinutes: Math.round(metrics.uptimeMs / 60000),
         });
+        console.info("Kernel daemon projection outbox:", this.projectionTelemetry);
         // SLO tracking: log prompt-to-first-token stats
         if (this.firstTokenLatencies.length > 0) {
           const sorted = [...this.firstTokenLatencies].sort((a, b) => a - b);

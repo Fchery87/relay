@@ -22,6 +22,7 @@ describe("MachineReporter", () => {
         },
         async registerMachine(machine) {
           calls.push(`register:${machine.name}`);
+          return "machine-id-1";
         },
       },
       registration,
@@ -44,7 +45,7 @@ describe("MachineReporter", () => {
           heartbeatCalls.push(`heartbeat:${deviceToken}`);
         },
         async registerMachine(_machine) {
-          // no-op
+          return "machine-id-1";
         },
       },
       registration,

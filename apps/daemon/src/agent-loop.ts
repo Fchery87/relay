@@ -14,6 +14,7 @@ import { parseSlashInvocation, expandCommand } from "./slash-commands";
 import { getBuiltinCommand, BUILTIN_COMMANDS } from "./builtin-commands";
 import { buildSystemPrompt } from "./system-prompt";
 import type { Skill } from "./skills";
+import { timedClaim } from "./observability/claim-metrics";
 
 export interface ConversationGateway {
   acknowledgeStop(input: { deviceToken: string; messageId: string; threadId: string }): Promise<unknown>;
@@ -202,7 +203,11 @@ export async function runQueuedTurn({
   trustStore?: TrustStore;
   yolo?: boolean;
 }): Promise<boolean> {
-  const queued = await gateway.claimQueuedMessage({ deviceToken });
+  const queued = await timedClaim(
+    "conversations.claimQueuedMessage",
+    () => gateway.claimQueuedMessage({ deviceToken }),
+    (result) => (result ? "claimed" : "empty"),
+  );
   if (!queued) return false;
   const turnProvider = isModelProviderRouter(provider)
     ? provider.resolve({ modelId: queued.modelId ?? DEFAULT_MODEL_ID, thinkingLevel: queued.thinkingLevel ?? "none" })

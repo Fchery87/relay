@@ -81,3 +81,16 @@ export function acknowledgeOutboxBatch(
     [...ids],
   );
 }
+
+/** Count unacknowledged outbox rows and the age of the oldest one, for backlog observability. */
+export function countPendingOutbox(
+  db: StoreDatabase,
+): { count: number; oldestOccurredAt: number | null; maxId: number | null } {
+  const row = db
+    .query(
+      `SELECT COUNT(*) as count, MIN(occurred_at) as oldest, MAX(id) as maxId
+       FROM projection_outbox WHERE acknowledged = 0`,
+    )
+    .get() as { count: number; oldest: number | null; maxId: number | null };
+  return { count: row.count, oldestOccurredAt: row.oldest, maxId: row.maxId };
+}

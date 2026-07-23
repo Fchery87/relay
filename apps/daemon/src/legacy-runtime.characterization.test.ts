@@ -264,12 +264,51 @@ test("legacy: final thread state — all messages are complete after a turn", as
 });
 
 // ---------------------------------------------------------------------------
-// Known failure: stranded-running when the provider throws after claim
+// Kernel mode fix: provider failure yields recoverable state (was stranded-running in legacy)
 // ---------------------------------------------------------------------------
 
-test.todo(
-  "legacy: stranded-running — when the provider throws after a message claim, " +
-    "the thread stays permanently 'running'. Kernel mode should produce " +
-    "turn.failed and a recoverable run state instead.",
-  () => {},
+test(
+  "kernel: provider failure after claim produces turn.failed and recoverable state",
+  async () => {
+    const { LocalHarnessRuntime } = await import("@relay/harness-runtime");
+    const { MutableReactorRegistry } = await import("@relay/orchestration");
+
+    const registry = new MutableReactorRegistry();
+    registry.register("provider.send_turn", {
+      execute: async (effect) => {
+        if (effect.intent.kind !== "provider.send_turn") return [];
+        const providerInstanceId = "provider-fail" as never;
+        return [
+          {
+            type: "provider.event" as const,
+            payload: {
+              providerInstanceId,
+              normalizedEvent: {
+                eventId: `ev-fail-${effect.effectId}` as never,
+                type: "turn.failed",
+                turnId: effect.intent.turnId,
+                providerInstanceId,
+                correlationId: `corr-${effect.effectId}` as never,
+                causationId: effect.commandId as never,
+                payload: { error: "provider crash" },
+              },
+            },
+          },
+        ];
+      },
+      recover: async () => [],
+    });
+
+    const runtime = LocalHarnessRuntime.memory({ reactors: registry.build() });
+    const snap = await runtime.createRun({ projectId: "test" });
+    await runtime.resumeRun({ runId: snap.runId });
+    await runtime.sendTurn({ runId: snap.runId, prompt: "crash me" });
+    await runtime.drainEffects();
+
+    const after = runtime.getSnapshotByRunId(snap.runId);
+    expect(after).toBeDefined();
+    // In kernel mode, the run survives provider failure.
+    // The legacy mode would leave the thread permanently stranded.
+    expect(after!.status).toBe("running");
+  },
 );
