@@ -31,6 +31,8 @@ export type IsolatedFixture = {
   readonly projectId: string;
   readonly threadId: string;
   call(kind: ConvexCallKind, path: string, args: unknown, asUser?: boolean): Promise<unknown>;
+  /** Perform a real call, then discard its successful response for fault injection. */
+  callAndDropResponse(kind: ConvexCallKind, path: string, args: unknown, asUser?: boolean): Promise<never>;
 };
 
 /**
@@ -89,5 +91,9 @@ export async function buildIsolatedFixture(backend: IsolatedConvexBackend, optio
     projectId,
     threadId,
     call: (kind, path, args, asUser = false) => call(backend, kind, path, args, asUser ? userToken : undefined),
+    callAndDropResponse: async (kind, path, args, asUser = false) => {
+      await call(backend, kind, path, args, asUser ? userToken : undefined);
+      throw new Error("simulated lost response");
+    },
   };
 }

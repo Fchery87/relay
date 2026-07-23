@@ -15,7 +15,7 @@
 // Run explicitly with: bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
 // ---------------------------------------------------------------------------
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -28,6 +28,9 @@ import {
 } from "../../../scripts/lib/isolated-self-hosted-convex";
 import { buildIsolatedFixture, type IsolatedFixture } from "../../../scripts/lib/isolated-convex-fixture";
 import { KernelDaemon } from "./kernel-daemon";
+import { runCommand } from "./tools";
+import { createCheckpoint } from "./checkpoints";
+import { createConvexProjectionSink } from "./sync/convex-projection-sink";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 const binaryAvailable = (await findSelfHostedBackendBinary()) !== null;
@@ -52,8 +55,33 @@ async function fetchSnapshot(fixture: IsolatedFixture, runId: string): Promise<{
   return fixture.call("query", "projections/publish:getRunSnapshot", { runId }, true) as Promise<{ sequence: number; snapshotJson: string } | null>;
 }
 
-async function fetchEvents(fixture: IsolatedFixture, runId: string, afterSequence: number): Promise<Array<{ sequence: number; type: string }>> {
-  return fixture.call("query", "projections/publish:listRunEvents", { runId, afterSequence, limit: 200 }, true) as Promise<Array<{ sequence: number; type: string }>>;
+async function fetchEvents(fixture: IsolatedFixture, runId: string, afterSequence: number): Promise<Array<{
+  eventId: string;
+  occurredAt: number;
+  payloadJson: string;
+  projectId: string;
+  runId: string;
+  sequence: number;
+  type: string;
+}>> {
+  return fixture.call("query", "projections/publish:listRunEvents", { runId, afterSequence, limit: 200 }, true) as Promise<Array<{
+    eventId: string;
+    occurredAt: number;
+    payloadJson: string;
+    projectId: string;
+    runId: string;
+    sequence: number;
+    type: string;
+  }>>;
+}
+
+async function createGitProject(): Promise<{ root: string; baselineCommit: string }> {
+  const root = await mkdtemp(join(tmpdir(), "relay-cross-tier-project-"));
+  await runCommand({ command: "git init && git config user.email relay@example.test && git config user.name Relay", platform: "linux", root });
+  await writeFile(join(root, "state.txt"), "baseline\n");
+  await runCommand({ command: "git add state.txt && git commit -m baseline", platform: "linux", root });
+  const commit = await runCommand({ command: "git rev-parse HEAD", platform: "linux", root });
+  return { root, baselineCommit: commit.stdout.trim() };
 }
 
 /** Submit one canonical command through the real inbox, the way the browser will once cut over. */
@@ -72,6 +100,7 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
   let backend: IsolatedConvexBackend;
   let fixture: IsolatedFixture;
   const daemonHomes: string[] = [];
+  const projectHomes: string[] = [];
 
   beforeAll(async () => {
     backend = (await startIsolatedSelfHostedConvex())!;
@@ -90,6 +119,7 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
 
   afterAll(async () => {
     for (const dir of daemonHomes) await rm(dir, { recursive: true, force: true });
+    for (const dir of projectHomes) await rm(dir, { recursive: true, force: true });
     await backend?.stop();
   });
 
@@ -100,7 +130,7 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
   }
 
   /** A real KernelDaemon against the real isolated backend — no fakes/overrides. */
-  async function startDaemon(deviceToken: string, machineId: string, machineName: string): Promise<KernelDaemon> {
+  async function startDaemon(deviceToken: string, machineId: string, machineName: string, projectRoot?: string): Promise<KernelDaemon> {
     const daemon = new KernelDaemon({
       daemonHome: await tempDaemonHome(),
       deploymentUrl: backend.url,
@@ -109,6 +139,12 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
       machineId,
       machineName,
       pollIntervalMs: 200,
+      ...(projectRoot ? {
+        adapterDeps: {
+          platform: "linux" as const,
+          resolveProjectRoot: async () => projectRoot,
+        },
+      } : {}),
     });
     await daemon.start();
     return daemon;
@@ -350,6 +386,110 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
       submitCommand(fixture6, { commandId, kind: "run.create", payload: { projectId: fixture6.projectId, extra: "conflicting" } }),
     ).rejects.toThrow(/Conflicting/i);
   }, 30_000);
+
+  test("a committed command whose response is lost can be retried without duplicating the real effect", async () => {
+    const fixture10 = await buildIsolatedFixture(backend);
+    const runId = fixture10.threadId;
+    const commandId = `cmd-run-create-${runId.slice(-8)}-lost-response`;
+    const args = {
+      commandId,
+      correlationId: `corr-${fixture10.threadId}`,
+      kind: "run.create",
+      payloadJson: JSON.stringify({ projectId: fixture10.projectId }),
+      threadId: fixture10.threadId,
+    };
+
+    // The HTTP mutation has committed, but the caller deliberately discards
+    // the successful response and experiences a transport error.
+    await expect(
+      fixture10.callAndDropResponse("mutation", "commands/inbox:submitToInbox", args, true),
+    ).rejects.toThrow("simulated lost response");
+
+    // Retrying the exact immutable envelope returns the original Convex
+    // receipt. The daemon then executes one canonical run.create effect.
+    const retryReceipt = await submitCommand(fixture10, { commandId, kind: "run.create", payload: { projectId: fixture10.projectId } });
+    expect(typeof retryReceipt).toBe("string");
+
+    const daemon = await startDaemon(fixture10.deviceToken, fixture10.machineId, "e2e-lost-response-machine");
+    try {
+      await waitUntilProjected(daemon, async () => {
+        const events = await fetchEvents(fixture10, runId, -1);
+        return events.some((event) => event.type === "run.created");
+      }, 20_000, "run.created to be projected after lost-response retry");
+      const events = await fetchEvents(fixture10, runId, -1);
+      expect(events.filter((event) => event.type === "run.created")).toHaveLength(1);
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
+
+  test("real workspace state restores a Git checkpoint through the command seam", async () => {
+    const project = await createGitProject();
+    projectHomes.push(project.root);
+    const fixture11 = await buildIsolatedFixture(backend, { projectPath: project.root });
+    const runId = fixture11.threadId;
+    const daemon = await startDaemon(fixture11.deviceToken, fixture11.machineId, "e2e-checkpoint-machine", project.root);
+
+    try {
+      await createAndResumeRun(fixture11, runId, daemon);
+      await writeFile(join(project.root, "state.txt"), "checkpointed change\n");
+      const checkpoint = await createCheckpoint({ root: project.root, threadId: fixture11.threadId, turnId: "turn-1" });
+      expect(checkpoint.commit).not.toBe(project.baselineCommit);
+      expect(checkpoint.ref).toContain(`refs/relay/checkpoints/${fixture11.threadId}`);
+
+      await writeFile(join(project.root, "state.txt"), "post-checkpoint mutation\n");
+      await submitCommand(fixture11, {
+        commandId: `cmd-checkpoint-restore-${runId.slice(-8)}-3`,
+        kind: "checkpoint.restore",
+        payload: { commit: checkpoint.commit, projectPath: project.root, threadId: fixture11.threadId },
+        runId,
+      });
+      await waitUntilProjected(daemon, async () => {
+        const events = await fetchEvents(fixture11, runId, -1);
+        return events.some((event) => event.type === "checkpoint.restored");
+      }, 20_000, "checkpoint.restored to be projected");
+      expect(await readFile(join(project.root, "state.txt"), "utf8")).toBe("checkpointed change\n");
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
+
+  test("the real projection sink accepts exact duplicates and rejects reordered or partial batches atomically", async () => {
+    const { fixture: fixture12, runId, daemon } = await setupScenario("e2e-projection-fault-machine");
+    const sink = createConvexProjectionSink({ deploymentUrl: backend.url, deviceToken: fixture12.deviceToken });
+    try {
+      await createAndResumeRun(fixture12, runId, daemon);
+      const existing = await fetchEvents(fixture12, runId, -1);
+      expect(existing.length).toBeGreaterThanOrEqual(2);
+
+      await sink.appendEvents({ events: existing.map(({ eventId, occurredAt, payloadJson, projectId, runId: projectedRunId, sequence, type }) => ({ eventId, occurredAt, payloadJson, projectId, runId: projectedRunId, sequence, type })), deviceToken: fixture12.deviceToken });
+      expect((await fetchEvents(fixture12, runId, -1)).map((event) => event.sequence)).toEqual(existing.map((event) => event.sequence));
+
+      const probeRunId = `projection-probe-${runId.slice(-8)}`;
+      const event = (sequence: number) => ({
+        eventId: `${probeRunId}-${sequence}`,
+        occurredAt: sequence,
+        payloadJson: JSON.stringify({ sequence }),
+        projectId: fixture12.projectId,
+        runId: probeRunId,
+        sequence,
+        type: "activity.delta",
+      });
+
+      // A reordered batch cannot create sequence 2 before sequence 1.
+      await expect(sink.appendEvents({ events: [event(2), event(1)], deviceToken: fixture12.deviceToken })).rejects.toThrow(/Gap/i);
+      expect(await fetchEvents(fixture12, probeRunId, -1)).toHaveLength(0);
+
+      // If a later event in one mutation is invalid, Convex rolls back the
+      // earlier insert too; the retry can then publish the contiguous prefix.
+      await expect(sink.appendEvents({ events: [event(1), event(3)], deviceToken: fixture12.deviceToken })).rejects.toThrow(/Gap/i);
+      expect(await fetchEvents(fixture12, probeRunId, -1)).toHaveLength(0);
+      await sink.appendEvents({ events: [event(1), event(2)], deviceToken: fixture12.deviceToken });
+      expect((await fetchEvents(fixture12, probeRunId, -1)).map((item) => item.sequence)).toEqual([1, 2]);
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
 
   test("a command claimed by a crashed worker is reclaimed after lease expiry and completed exactly once", async () => {
     const fixture7 = await buildIsolatedFixture(backend);

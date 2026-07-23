@@ -20,6 +20,12 @@ client resuming from a mid-stream cursor without gaps or duplicates, and a
 daemon restart (fresh `KernelDaemon` instance, same local SQLite, same
 backend) converging without duplicating the `run.create` effect.
 
+The remaining live additions cover a real temporary Git project wired through
+the daemon's project-root adapter and explicit checkpoint restore, a command
+mutation whose committed response is deliberately discarded before an exact
+retry, and the production projection sink's exact-duplicate, reordered, and
+partial-batch behavior against the real Convex server.
+
 ## Two real, previously-undetected bugs found and fixed
 
 Both existed in code shipped and "complete" per prior sessions' ticket
@@ -65,23 +71,19 @@ code paths only through fakes, never over a real network round-trip:
   and [convex-history-migration-decision.md](../convex-history-migration-decision.md)
   — local development only, no live production
 
-## Residual risks / not yet covered (as of 2026-07-22)
+## Residual risks / not yet covered (as of 2026-07-23)
 
-- Approval, steer/interrupt, and checkpoint scenarios are not yet exercised
-  against the real seam (only create/resume/send/streaming/reconnect/restart).
-- The fault-injection matrix this ticket also asks for — duplicate/
-  conflicting commands, lease expiry, stale completion, lost response, and
-  projection duplicate/reorder/partial publication, **injected against the
-  real seam** — is not yet built. Equivalent scenarios exist against fakes
-  (`kernel-daemon.lease-renewal.test.ts`, `kernel-daemon.projection-outbox.test.ts`).
+- Real approval creation, governance/tool execution, mid-turn steering, and
+  actual interrupt cancellation remain open kernel capability gaps, documented
+  separately in `docs/operations/kernel-mode-capability-gaps.md`.
 - A real LLM provider (as opposed to the scripted/fallback provider) is not
   exercised; "protected jobs cover the real provider" is only partially
   true — the protected CI job (`.github/workflows/ci.yml`,
   `cross-tier-recovery`, `workflow_dispatch`-only) covers the real
   self-hosted backend but not a real model provider.
-- No workspace/git-worktree path was exercised (`adapterDeps.resolveProjectRoot`
-  wasn't configured for this test's `KernelDaemon`) — checkpoint and
-  subagent commands, which require it, are untested against the real seam.
+- The scoped checkpoint proof exercises explicit `checkpoint.restore` against
+  a real temporary Git project. `checkpoint.capture` remains a no-op in kernel
+  mode and is intentionally excluded with the capability gap above.
 
 ## Update — 2026-07-23: three more real bugs, most of the fault-injection matrix
 
@@ -120,14 +122,15 @@ direction, this is tracked as separate follow-up work, not blocking this
 ticket — the seam-proving tests below cover the command-routing and
 precondition-rejection behavior that exists today, not full semantics.
 
-**Fault-injection matrix — now covers 5 of 7 scenarios against the real seam**
-(previously 1 of 7 — daemon restart only): duplicate/conflicting commands,
-lease-expiry redelivery, stale-worker fencing (lease-generation gated), and
-a real backend *process* restart (kill + respawn, not just the daemon) all
-converge correctly. Still open: lost response (client-side timeout while a
-server-side mutation may have committed) and projection duplicate/reorder/
-partial-publication against the real seam specifically (both remain
-covered only against fakes).
+**Fault-injection matrix — all requested recovery transport cases are now
+covered against the real seam:** duplicate/conflicting commands, lease-expiry
+redelivery, stale-worker fencing (lease-generation gated), daemon restart,
+backend process restart, a committed-but-lost command response, and real
+projection duplicate/reorder/partial publication all converge or fail closed
+as expected. The production Convex source/sink now parse HTTP-200 error
+envelopes, which the real projection fault test exposed.
 
-Test count: 2 → 9 passing tests in
-`apps/daemon/src/cross-tier-recovery.e2e.test.ts` (all live, ~30s total).
+Test count: 9 → 12 passing tests in
+`apps/daemon/src/cross-tier-recovery.e2e.test.ts` (all live, with the focused
+additions run against the isolated backend; the full file remains the
+protected live profile).

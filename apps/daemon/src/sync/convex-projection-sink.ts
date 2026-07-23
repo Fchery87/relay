@@ -60,7 +60,13 @@ async function fetchMutation(
     body,
   });
 
-  if (!res.ok) {
-    throw new Error(`Convex mutation failed: ${res.status} ${await res.text()}`);
+  const responseText = await res.text();
+  if (!res.ok) throw new Error(`Convex mutation failed: ${res.status} ${responseText}`);
+  let response: { status?: "success" | "error"; errorMessage?: string };
+  try {
+    response = JSON.parse(responseText) as { status?: "success" | "error"; errorMessage?: string };
+  } catch {
+    throw new Error(`Convex mutation returned invalid JSON: ${responseText}`);
   }
+  if (response.status === "error") throw new Error(`Convex mutation rejected: ${response.errorMessage ?? "unknown error"}`);
 }

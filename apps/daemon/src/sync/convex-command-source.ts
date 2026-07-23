@@ -96,10 +96,14 @@ async function fetchMutation(
     body,
   });
 
-  if (!res.ok) {
-    throw new Error(`Convex mutation failed: ${res.status} ${await res.text()}`);
+  const responseText = await res.text();
+  if (!res.ok) throw new Error(`Convex mutation failed: ${res.status} ${responseText}`);
+  let json: { status?: "success" | "error"; value?: unknown; errorMessage?: string };
+  try {
+    json = JSON.parse(responseText) as { status?: "success" | "error"; value?: unknown; errorMessage?: string };
+  } catch {
+    throw new Error(`Convex mutation returned invalid JSON: ${responseText}`);
   }
-
-  const json = (await res.json()) as { value?: unknown };
+  if (json.status === "error") throw new Error(`Convex mutation rejected: ${json.errorMessage ?? "unknown error"}`);
   return json.value;
 }

@@ -651,10 +651,13 @@ export async function flushProjections({
         deviceToken,
       });
     } catch (error) {
-      // Convex rejects a snapshot sequence whose events haven't published
-      // yet — expected when this run's outbox publish above failed. One
-      // run's rejection must not block other runs' snapshots from flushing.
-      console.error("Kernel daemon: snapshot flush failed for run", run.runId, error instanceof Error ? error.message : error);
+      // A run can advance locally after the outbox batch is claimed, so
+      // Convex may reject the snapshot until the next flush publishes the
+      // newly-created event. One run's rejection must not block others.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/has not been published/.test(message)) {
+        console.error("Kernel daemon: snapshot flush failed for run", run.runId, message);
+      }
     }
   }
 }
