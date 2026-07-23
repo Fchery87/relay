@@ -71,9 +71,9 @@ irreversible gates; deterministic local coverage is not substituted for them.
 
 - [x] Establish service-level objectives and load profiles
 - [x] Optimize from measured signals: bounded batches, lean projections, no hot pollers
-- [ ] Run supported OS conformance matrix (Linux/macOS/Windows) — the matrix is wired in `.github/workflows/ci.yml`; hosted CI execution remains required
-- [ ] Run provider conformance matrix (Codex app-server + deterministic fake) — fake provider passes locally; credentialed Codex remains protected
-- [ ] Execute the production acceptance scenario on the supported OS matrix — deterministic Linux acceptance passes locally; hosted OS rows remain required
+- [ ] Run supported OS conformance matrix (Linux/macOS/Windows) — the matrix is wired in `.github/workflows/ci.yml` and now includes deterministic production-acceptance suites; hosted CI execution remains required
+- [ ] Run provider conformance matrix (Codex app-server + deterministic fake) — fake provider and deterministic acceptance pass locally; credentialed Codex remains protected
+- [ ] Execute the production acceptance scenario on the supported OS matrix — `bun run conformance:matrix` now runs the deterministic browser-to-kernel acceptance on each hosted OS; hosted OS results remain required
 
 ---
 

@@ -1,6 +1,7 @@
 const commands = [
   ["bun", "run", "typecheck"],
   ["bun", "run", "test"],
+  ["bun", "run", "test:e2e:harness"],
   ["bun", "run", "build"],
   ["bun", "run", "bundle:check"],
   ["bun", "run", "codex:schema:check"],
