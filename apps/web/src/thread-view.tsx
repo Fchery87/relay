@@ -24,7 +24,7 @@ import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
-import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMcpElicitations, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
+import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMcpElicitations, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSlashCommands, projectionEventsToSubagentRuns, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
 
 const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -140,7 +140,7 @@ export function ThreadView({
   const subagentRuns = useQuery(listSubagentTree, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const plan = useQuery(getPlan, isPlanRun && activeThreadId ? { threadId: activeThreadId } : "skip");
   const mcpElicitations = useQuery(listMcpElicitations, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
-  const slashCommands = useQuery(listSlashCommands, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const slashCommands = useQuery(listSlashCommands, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const scrollBottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setShowComparison(false);
@@ -247,6 +247,7 @@ export function ThreadView({
   const visibleGitActions = projectionCutoverEnabled ? projectionEventsToGitActions(projectionEvents) : gitActions ?? [];
   const visibleSubagentRuns = projectionCutoverEnabled ? projectionEventsToSubagentRuns(projectionEvents) : subagentRuns ?? [];
   const visibleMcpElicitations = projectionCutoverEnabled ? projectionEventsToMcpElicitations(projectionEvents) : mcpElicitations ?? [];
+  const visibleSlashCommands = projectionCutoverEnabled ? projectionEventsToSlashCommands(projectionEvents) : slashCommands ?? [];
   function canonicalReviewFeedback(): Record<string, unknown> {
     if (!projectionCutoverEnabled) return {};
     const pending = visibleReviewComments.filter((comment) => !comment.resolved);
@@ -330,7 +331,7 @@ export function ThreadView({
             <Composer
               attachmentError={attachmentError}
               attachments={attachments}
-              commands={slashCommands ?? []}
+              commands={visibleSlashCommands}
               content={content}
               isPlanRun={isPlanRun}
               isSubmitting={isSubmittingDirective}

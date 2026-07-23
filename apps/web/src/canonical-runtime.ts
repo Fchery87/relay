@@ -11,6 +11,7 @@ import type { UsageSummary } from "./usage-panel";
 import type { DiffComment } from "./diff-utils";
 import type { SubagentRun } from "./subagent-panel";
 import type { McpElicitation } from "./mcp-elicitation-card";
+import type { SlashCommandEntry } from "./composer";
 
 export type ProjectionRunState = {
   readonly error?: string;
@@ -154,6 +155,27 @@ export function projectionEventsToMcpElicitations(events: ReadonlyArray<EventEnv
     elicitations.set(elicitationId, existing);
   }
   return [...elicitations.values()];
+}
+
+/** Convert the latest canonical run configuration into composer commands. */
+export function projectionEventsToSlashCommands(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): Array<SlashCommandEntry & { projectPath?: string }> {
+  const latest = [...events].sort((left, right) => left.sequence - right.sequence).reverse().find((event) => event.type === "run.configuration.updated");
+  if (!latest || !latest.payload || typeof latest.payload !== "object") return [];
+  const commands = (latest.payload as { slashCommands?: unknown }).slashCommands;
+  if (!Array.isArray(commands)) return [];
+  return commands.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const value = candidate as Record<string, unknown>;
+    if (typeof value.name !== "string" || typeof value.description !== "string") return [];
+    if (value.scope !== "builtin" && value.scope !== "project" && value.scope !== "user" && value.scope !== "skill") return [];
+    return [{
+      ...(typeof value.argumentHint === "string" ? { argumentHint: value.argumentHint.slice(0, 200) } : {}),
+      description: value.description.slice(0, 2_000),
+      name: value.name.slice(0, 200),
+      ...(typeof value.projectPath === "string" ? { projectPath: value.projectPath.slice(0, 2_000) } : {}),
+      scope: value.scope,
+    } as SlashCommandEntry & { projectPath?: string }];
+  });
 }
 
 export function projectionEventsToCheckpoints(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ThreadCheckpoint[] {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMcpElicitations, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToUsage } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMcpElicitations, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSlashCommands, projectionEventsToSubagentRuns, projectionEventsToUsage } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -210,4 +210,27 @@ test("canonical activity tails project MCP elicitation cards without legacy read
     event(1, "activity.started", { activityId: "cancelled-activity", elicitationId: "elicitation-2", kind: "mcp:elicitation", promptsJson: "[]", serverId: "travel", toolName: "book" }),
     event(2, "activity.failed", { activityId: "cancelled-activity", elicitationId: "elicitation-2", error: "MCP elicitation was cancelled", kind: "mcp:elicitation" }),
   ])).toEqual([{ _id: "elicitation-2", promptsJson: "[]", serverId: "travel", status: "cancelled", toolName: "book" }]);
+});
+
+test("canonical configuration tails project a bounded slash catalog without legacy reads", () => {
+  const event = (sequence: number, payload: Record<string, unknown>) => ({
+    eventId: `event-${sequence}` as never,
+    sequence,
+    streamVersion: sequence,
+    type: "run.configuration.updated" as never,
+    runId: "run-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: sequence,
+    payload,
+  });
+  expect(projectionEventsToSlashCommands([event(1, {
+    slashCommands: [
+      { description: "Ship changes", name: "ship", scope: "builtin" },
+      { description: "Inspect", name: "inspect", scope: "project", projectPath: "/repo" },
+      { description: "ignore malformed", name: 7, scope: "user" },
+    ],
+  })])).toEqual([
+    { description: "Ship changes", name: "ship", scope: "builtin" },
+    { description: "Inspect", name: "inspect", projectPath: "/repo", scope: "project" },
+  ]);
 });

@@ -53,6 +53,11 @@ The browser inspector derives subagent runs from the canonical activity tail,
 so the subagent detail surface no longer needs the legacy tree query in
 projection mode.
 
+Kernel run creation also publishes the trusted built-in, user, and project
+slash-command catalog as a bounded configuration event. The composer consumes
+that event in projection mode, so slash discovery no longer needs its legacy
+Convex query during cutover.
+
 ## Completed increment — durable approval suspension and resolution
 
 An `ask` policy decision now inserts a Convex approval with its continuation

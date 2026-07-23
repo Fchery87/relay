@@ -100,6 +100,7 @@ export type KernelDaemonConfig = {
   /** Adapter deps — required for checkpoint and subagent commands. */
   adapterDeps?: {
     resolveProjectRoot(input: { repoPath: string; threadId: string }): Promise<string>;
+    resolveSlashCommands?: (input: { projectPath: string }) => Promise<KernelSlashCommand[]>;
     governance?: GovernanceGateway;
     mcp?: KernelMcpAdapter;
     policy?: Policy;
@@ -130,6 +131,14 @@ type KernelMcpAdapter = {
   requestInput?: (input: { onCreated?: (elicitationId: string) => Promise<void> | void; prompts: unknown[]; serverId: string; threadId: string; toolName: string }) => Promise<Record<string, unknown>>;
   resolveMcpInput?: (input: { elicitationId: string; responseJson: string }) => Promise<unknown>;
   cancelMcpInput?: (elicitationId: string) => Promise<unknown>;
+};
+
+type KernelSlashCommand = {
+  argumentHint?: string;
+  description: string;
+  name: string;
+  projectPath?: string;
+  scope: "builtin" | "project" | "user" | "skill";
 };
 
 // ---------------------------------------------------------------------------
@@ -1619,6 +1628,21 @@ export class KernelDaemon {
           // about can never be found by a later run.resume/turn.send that
           // references the same canonical ID.
           await this.runtime.createRun({ mode, permissionProfile, projectId, runId: runId as never, title });
+          if (this.config.adapterDeps?.resolveSlashCommands && projectPath) {
+            const slashCommands = (await this.config.adapterDeps.resolveSlashCommands({ projectPath })).slice(0, 200).map((entry) => ({
+              ...(entry.argumentHint ? { argumentHint: entry.argumentHint.slice(0, 200) } : {}),
+              description: entry.description.slice(0, 2_000),
+              name: entry.name.slice(0, 200),
+              ...(entry.projectPath ? { projectPath: entry.projectPath.slice(0, 2_000) } : {}),
+              scope: entry.scope,
+            }));
+            const catalog = await appendAdapterEvent(this.runtime, runId as string, {
+              eventId: `ev-run-slash-catalog-${externalCommandId}`,
+              type: "run.configuration.updated",
+              payload: { slashCommands },
+            });
+            if (!catalog.ok) throw new Error(`Failed to append slash-command catalog: ${catalog.reason}`);
+          }
           incrementMetric("activeRuns");
           await complete("completed");
           break;

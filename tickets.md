@@ -635,6 +635,9 @@ MCP elicitation cards now derive their lifecycle from canonical activity events,
 with submit/cancel routed through canonical inbox commands and the
 device-authorized daemon adapter; they no longer use legacy reads or browser
 mutations during cutover.
+The kernel also publishes the trusted slash-command catalog in a bounded run
+configuration event, and the projected composer consumes it without the legacy
+catalog query.
 remaining checklist stays open until all detail panels and workflow behavior
 tests leave their legacy Convex reads/writes behind the explicit rollback
 adapter.

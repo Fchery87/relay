@@ -288,11 +288,15 @@ test("daemon persists run configuration through a canonical lifecycle event", as
   const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-config-daemon-"));
   const runId = "run-config-daemon";
   const pending = [
-    command("inbox-create-config", "run.create", runId, { mode: "plan", projectId: "project-config", title: "Configured plan" }),
+    command("inbox-create-config", "run.create", runId, { mode: "plan", projectId: "project-config", title: "Configured plan" }, "/repo"),
     command("inbox-resume-config", "run.resume", runId, {}),
   ];
   const projected: Array<{ payloadJson: string; type: string }> = [];
   const daemon = new KernelDaemon({
+    adapterDeps: {
+      resolveProjectRoot: async () => ".",
+      resolveSlashCommands: async () => [{ description: "Ship changes", name: "ship", scope: "builtin" }],
+    },
     commandGateway: {
       submitCommand: async () => "inbox-id",
       claimBatch: async () => pending.splice(0, 5),
@@ -319,13 +323,15 @@ test("daemon persists run configuration through a canonical lifecycle event", as
     pending.push(command("inbox-configure", "run.configure", runId, { budgetUsd: 7, modelId: "configured-model", permissionProfile: "read-only", thinkingLevel: "high" }));
     await daemon.pollOnce();
     const deadline = Date.now() + 2_000;
-    while (!projected.some((event) => event.type === "run.configuration.updated") && Date.now() < deadline) {
+    while ((!projected.some((event) => event.type === "run.configuration.updated" && JSON.parse(event.payloadJson).budgetUsd !== undefined) || !projected.some((event) => event.type === "run.configuration.updated" && JSON.parse(event.payloadJson).slashCommands)) && Date.now() < deadline) {
       await daemon.flushOnce();
       await Bun.sleep(10);
     }
     expect(projected.map((event) => event.type)).toContain("run.configuration.updated");
-    const configuration = projected.find((event) => event.type === "run.configuration.updated");
+    const configuration = projected.find((event) => event.type === "run.configuration.updated" && JSON.parse(event.payloadJson).budgetUsd !== undefined);
     expect(configuration ? JSON.parse(configuration.payloadJson) : undefined).toEqual({ budgetUsd: 7, modelId: "configured-model", permissionProfile: "read-only", thinkingLevel: "high" });
+    const catalog = projected.find((event) => event.type === "run.configuration.updated" && JSON.parse(event.payloadJson).slashCommands);
+    expect(catalog ? JSON.parse(catalog.payloadJson) : undefined).toEqual({ slashCommands: [{ description: "Ship changes", name: "ship", scope: "builtin" }] });
     const created = projected.find((event) => event.type === "run.created");
     expect(created ? JSON.parse(created.payloadJson) : undefined).toMatchObject({ mode: "plan", projectId: "project-config", title: "Configured plan" });
   } finally {
@@ -380,7 +386,7 @@ test("daemon routes canonical MCP elicitation commands through the device adapte
   }
 });
 
-function command(commandId: string, kind: string, runId: string, payload: unknown) {
+function command(commandId: string, kind: string, runId: string, payload: unknown, projectPath?: string) {
   return {
     commandId,
     correlationId: `corr-${commandId}`,
@@ -388,6 +394,7 @@ function command(commandId: string, kind: string, runId: string, payload: unknow
     kind,
     leaseGeneration: 1,
     payloadJson: JSON.stringify(payload),
+    ...(projectPath ? { projectPath } : {}),
     runId,
   };
 }

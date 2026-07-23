@@ -80,10 +80,12 @@ Projection read authorization now has direct Convex coverage: a second owner
 cannot read another owner's snapshot, event stream, run list, or cursor, and
 canonical command ingress rejects another owner's thread. Full detail-panel
 migration and end-to-end browser behavior coverage remain open before this flag
-can be promoted beyond canary. The remaining legacy-backed detail surfaces are
-plan artifacts and slash-command discovery. MCP elicitation cards now derive
-pending/submitted/cancelled state from canonical `activity.*` events, while
-submit/cancel enter through canonical inbox commands and the
+can be promoted beyond canary. The remaining legacy-backed detail surface is
+the plan artifact workflow. Slash-command discovery now derives its bounded
+catalog from a canonical run-configuration event emitted during kernel run
+creation. MCP elicitation cards now derive pending/submitted/cancelled state
+from canonical `activity.*` events, while submit/cancel enter through
+canonical inbox commands and the
 device-authorized daemon adapter. The projected inspector also derives
 subagent runs from canonical `activity.*` events, including role, task, status,
 and a bounded result summary, so those detail surfaces no longer issue legacy

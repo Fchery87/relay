@@ -135,6 +135,7 @@ await collectOrphanedWorktrees();
 const worktreeGcTimer = setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
 const provider = new LocalModelRouter({ env: Bun.env, fallbackProvider: new ScriptedModelProvider({ chunks: ["Relay received your message."] }) });
 const mcp = new McpRegistry({ env: Bun.env, gateway: createConvexMcpServerGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken }), governance });
+const trustStore = new TrustStore({ daemonHome });
 let shadowRuntime: ShadowRuntime | undefined;
 
 // -- Runtime mode branch ----------------------------------------------------
@@ -148,6 +149,17 @@ if (runtimeMode === "kernel") {
     machineName: config.registration.name,
     adapterDeps: {
       resolveProjectRoot: sandboxedResolveProjectRoot,
+      resolveSlashCommands: async ({ projectPath }) => {
+        const userCommands = await loadSlashCommands([{ root: join(daemonHome, "commands"), scope: "user" }]);
+        const projectCommands = (await trustStore.get(projectPath)) === "trusted"
+          ? await loadSlashCommands([{ root: join(projectPath, ".relay", "commands"), scope: "project" }])
+          : [];
+        return [
+          ...BUILTIN_COMMANDS.map(({ argumentHint, description, name }) => ({ argumentHint, description, name, scope: "builtin" as const })),
+          ...projectCommands.map(({ argumentHint, description, name, scope }) => ({ argumentHint, description, name, scope })),
+          ...userCommands.map(({ argumentHint, description, name, scope }) => ({ argumentHint, description, name, scope })),
+        ];
+      },
       governance,
       mcp: {
         callTool: (input) => mcp.callTool(input),
@@ -291,7 +303,6 @@ startClaimPoller(() => {
 });
 
 const projectRequestGateway = createConvexProjectRequestGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken });
-const trustStore = new TrustStore({ daemonHome });
 
 async function publishCatalog() {
   try {
