@@ -1,6 +1,13 @@
-const commands = ["bun run typecheck", "bun run test", "bun run build", "bun run bundle:check", "bun run codex:schema:check", "bun run security:gate"];
+const commands = [
+  ["bun", "run", "typecheck"],
+  ["bun", "run", "test"],
+  ["bun", "run", "build"],
+  ["bun", "run", "bundle:check"],
+  ["bun", "run", "codex:schema:check"],
+  ["bun", "run", "security:gate"],
+] as const;
 for (const command of commands) {
-  const proc = Bun.spawnSync(["bash", "-lc", command], { stdout: "inherit", stderr: "inherit", env: Bun.env });
-  if (proc.exitCode !== 0) { console.error(`Conformance failed: ${command}`); process.exit(proc.exitCode); }
+  const proc = Bun.spawnSync([...command], { stdout: "inherit", stderr: "inherit", env: Bun.env });
+  if (proc.exitCode !== 0) { console.error(`Conformance failed: ${command.join(" ")}`); process.exit(proc.exitCode); }
 }
-console.log(JSON.stringify({ platform: process.platform, arch: process.arch, runtime: Bun.version, status: "pass", commands }, null, 2));
+console.log(JSON.stringify({ platform: process.platform, arch: process.arch, runtime: Bun.version, status: "pass", commands: commands.map((command) => command.join(" ")) }, null, 2));
