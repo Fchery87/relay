@@ -47,6 +47,9 @@ canonical activity events before returning its typed result to the provider.
 MCP elicitation and task-status callbacks still use the legacy conversation
 gateway until those browser detail surfaces receive canonical projection
 contracts; that is a remaining cutover item, not a reason to bypass governance.
+The browser inspector derives subagent runs from the canonical activity tail,
+so the subagent detail surface no longer needs the legacy tree query in
+projection mode.
 
 ## Completed increment — durable approval suspension and resolution
 

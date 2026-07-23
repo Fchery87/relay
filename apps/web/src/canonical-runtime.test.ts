@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToUsage } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToUsage } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -162,4 +162,30 @@ test("canonical event tails project the durable usage budget", () => {
     payload: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 2, modelId: "test", outputTokens: 3, thinkingTokens: 1 },
   };
   expect(projectionEventsToUsage([event], 7).budgetUsd).toBe(7);
+});
+
+test("canonical activity tails project subagent runs without legacy reads", () => {
+  const event = (sequence: number, type: string, payload: Record<string, unknown>) => ({
+    eventId: `event-${sequence}` as never,
+    sequence,
+    streamVersion: sequence,
+    type: type as never,
+    runId: "run-1" as never,
+    turnId: "turn-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: sequence,
+    payload,
+  });
+  expect(projectionEventsToSubagentRuns([
+    event(3, "activity.completed", { activityId: "subagent-1", kind: "subagent:explore", summary: "Mapped the repository" }),
+    event(1, "activity.started", { activityId: "subagent-1", kind: "subagent:explore", task: "Inspect the repository" }),
+  ])).toEqual([{
+    _id: "subagent-1",
+    capabilities: [],
+    depth: 1,
+    result: { artifacts: [], findings: [], status: "success", summary: "Mapped the repository" },
+    roleId: "explore",
+    status: "complete",
+    task: "Inspect the repository",
+  }]);
 });

@@ -50,6 +50,7 @@ export async function executeSubagent(
     payload: {
       activityId,
       kind: `subagent:${input.roleName}`,
+      task: input.task,
     },
   });
 

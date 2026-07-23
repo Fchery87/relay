@@ -24,7 +24,7 @@ import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
-import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
+import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
 
 const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -137,7 +137,7 @@ export function ThreadView({
   const usage = useQuery(getThreadUsage, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const checkpoints = useQuery(listCheckpoints, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const comparison = useQuery(latestCheckpointComparison, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
-  const subagentRuns = useQuery(listSubagentTree, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const subagentRuns = useQuery(listSubagentTree, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const plan = useQuery(getPlan, isPlanRun && activeThreadId ? { threadId: activeThreadId } : "skip");
   const mcpElicitations = useQuery(listMcpElicitations, activeThreadId ? { threadId: activeThreadId } : "skip");
   const slashCommands = useQuery(listSlashCommands, activeThreadId ? { threadId: activeThreadId } : "skip");
@@ -245,6 +245,7 @@ export function ThreadView({
   const visibleUsage = projectionCutoverEnabled ? projectionEventsToUsage(projectionEvents, effectiveBudgetUsd) : usage ?? EMPTY_USAGE_SUMMARY;
   const visibleReviewComments = projectionCutoverEnabled ? projectionEventsToReviewComments(projectionEvents) : diffComments ?? [];
   const visibleGitActions = projectionCutoverEnabled ? projectionEventsToGitActions(projectionEvents) : gitActions ?? [];
+  const visibleSubagentRuns = projectionCutoverEnabled ? projectionEventsToSubagentRuns(projectionEvents) : subagentRuns ?? [];
   function canonicalReviewFeedback(): Record<string, unknown> {
     if (!projectionCutoverEnabled) return {};
     const pending = visibleReviewComments.filter((comment) => !comment.resolved);
@@ -280,7 +281,7 @@ export function ThreadView({
       pendingApprovalCount={pendingApprovalCount}
       permissionProfile={permissionProfile}
       projectName={projectName}
-      subagentRuns={subagentRuns ?? []}
+      subagentRuns={visibleSubagentRuns}
       usage={visibleUsage}
     />
   ) : null;

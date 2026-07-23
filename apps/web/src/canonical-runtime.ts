@@ -9,6 +9,7 @@ import type { ThreadEvent } from "./thread-activity";
 import type { Approval, AuditEntry } from "./governance-panel";
 import type { UsageSummary } from "./usage-panel";
 import type { DiffComment } from "./diff-utils";
+import type { SubagentRun } from "./subagent-panel";
 
 export type ProjectionRunState = {
   readonly error?: string;
@@ -94,6 +95,39 @@ export function projectionEventsToThreadEvents(events: ReadonlyArray<EventEnvelo
     if (event.type === "checkpoint.restored") return [{ _id: event.eventId as string, kind: "checkpoint.reverted", summary: "Checkpoint restored" }];
     return [];
   });
+}
+
+/** Convert canonical subagent activity lifecycles into the inspector shape. */
+export function projectionEventsToSubagentRuns(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): SubagentRun[] {
+  const runs = new Map<string, SubagentRun>();
+  for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    if (event.type !== "activity.started" && event.type !== "activity.delta" && event.type !== "activity.completed" && event.type !== "activity.failed") continue;
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    const kind = typeof payload.kind === "string" ? payload.kind : "";
+    if (!kind.startsWith("subagent:")) continue;
+    const activityId = typeof payload.activityId === "string" ? payload.activityId : String(event.eventId);
+    const roleId = kind.slice("subagent:".length) || "worker";
+    const existing = runs.get(activityId) ?? {
+      _id: activityId,
+      capabilities: [],
+      depth: 1,
+      roleId,
+      status: "queued" as const,
+      task: typeof payload.task === "string" ? payload.task : `Delegated ${roleId} task`,
+    };
+    if (typeof payload.task === "string") existing.task = payload.task;
+    if (event.type === "activity.started" || event.type === "activity.delta") existing.status = "running";
+    if (event.type === "activity.completed") {
+      existing.status = "complete";
+      existing.result = { artifacts: [], findings: [], status: "success", summary: String(payload.summary ?? "Subagent completed") };
+    }
+    if (event.type === "activity.failed") {
+      existing.status = "failed";
+      existing.result = { artifacts: [], findings: [], status: "failed", summary: String(payload.error ?? "Subagent failed") };
+    }
+    runs.set(activityId, existing);
+  }
+  return [...runs.values()];
 }
 
 export function projectionEventsToCheckpoints(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ThreadCheckpoint[] {

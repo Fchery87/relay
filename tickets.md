@@ -629,6 +629,8 @@ Run model, thinking level, permission profile, and usage budget controls now sub
 Projection-backed messages, activity, governance, usage, checkpoint, comparison, and
 Git panels now skip their redundant legacy reads when projection mode is enabled.
 Canonical run creation preserves projected titles and chat/plan mode for run discovery.
+The projected inspector also derives subagent runs from canonical activity events,
+so that detail surface no longer performs a legacy tree read during cutover.
 remaining checklist stays open until all detail panels and workflow behavior
 tests leave their legacy Convex reads/writes behind the explicit rollback
 adapter.
