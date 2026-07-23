@@ -1,6 +1,7 @@
 import { expect, test, describe } from "bun:test";
 import {
   ShadowRunner,
+  ShadowEffectFence,
   defaultSnapshotComparator,
   defaultEventComparator,
 } from "./shadow-runner";
@@ -62,5 +63,49 @@ describe("ShadowRunner", () => {
     );
     expect(report.ok).toBe(false);
     expect(report.divergences.some((d) => d.includes("Sequence"))).toBe(true);
+  });
+
+  test("compares activity, approval, usage, checkpoint, and terminal projections", () => {
+    const event = (type: string, payload: Record<string, unknown>) => ({
+      eventId: `${type}-1` as never,
+      sequence: 1,
+      streamVersion: 1,
+      type: type as never,
+      runId: "run-1" as never,
+      turnId: "turn-1" as never,
+      correlationId: "corr-1" as never,
+      occurredAt: 1,
+      payload,
+    }) as EventEnvelope<never, unknown>;
+    const divergences = defaultEventComparator(
+      [event("activity.completed", { activityId: "a", summary: "done" }), event("usage.recorded", { inputTokens: 1, outputTokens: 2 })],
+      [event("activity.failed", { activityId: "a", error: "failed" }), event("usage.recorded", { inputTokens: 1, outputTokens: 3 })],
+    );
+    expect(divergences.some((item) => item.includes("activity.completed"))).toBe(true);
+    expect(divergences.some((item) => item.includes("usage.recorded"))).toBe(true);
+  });
+
+  test("requires an explicit allowlist for harmless text formatting", () => {
+    const event = (text: string) => ({
+      eventId: text as never,
+      sequence: 1,
+      streamVersion: 1,
+      type: "assistant.delta" as never,
+      runId: "run-1" as never,
+      turnId: "turn-1" as never,
+      correlationId: "corr-1" as never,
+      occurredAt: 1,
+      payload: { text },
+    }) as EventEnvelope<never, unknown>;
+    expect(defaultEventComparator([event("hello")], [event("hello ")])).toHaveLength(1);
+    expect(defaultEventComparator([event("hello")], [event("hello ")], { allowFormatting: true })).toHaveLength(0);
+  });
+
+  test("keeps shadow effects legacy-owned and idempotent", () => {
+    const fence = new ShadowEffectFence();
+    fence.record({ effectId: "effect-1", kind: "provider.send_turn", owner: "legacy" });
+    fence.record({ effectId: "effect-1", kind: "provider.send_turn", owner: "legacy" });
+    expect(() => fence.record({ effectId: "effect-1", kind: "workspace.write", owner: "shadow" })).toThrow(/legacy-owned/);
+    expect(fence.effects).toHaveLength(1);
   });
 });
