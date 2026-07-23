@@ -1,4 +1,4 @@
-import { makeFunctionReference } from "convex/server";
+import { getFunctionName, makeFunctionReference } from "convex/server";
 
 // ---------------------------------------------------------------------------
 // Convex projection sink — publishes local outbox rows to cloud projections.
@@ -44,12 +44,12 @@ export function createConvexProjectionSink(opts: { deploymentUrl: string; device
 
 async function fetchMutation(
   deploymentUrl: string,
-  ref: unknown,
+  ref: Parameters<typeof getFunctionName>[0],
   args: Record<string, unknown>,
 ): Promise<void> {
   const url = `${deploymentUrl}/api/mutation`;
   const body = JSON.stringify({
-    path: (ref as { _name: string })._name,
+    path: getFunctionName(ref),
     args: [args],
     format: "json",
   });

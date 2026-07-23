@@ -556,11 +556,11 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 - [x] Production topology, hosted-history, and supported-OS decisions are approved before final cutover (`docs/adr/0005-convex-production-topology.md` [D1], `docs/operations/convex-history-migration-decision.md` [D2: fresh start — no hosted data worth migrating], `docs/operations/support-matrix.md` [D3, pre-existing]) — the remaining items below are about *executing* a cutover, which is out of scope: D2 is fresh-start, so there is no migration to execute
 - [ ] If migrating, owners, active runs, records, references, files, and auth identities are inventoried (N/A — D2 is fresh-start, not migration)
-- [ ] Import uses persisted bounded cursors, source provenance, and idempotent reruns
-- [ ] Hosted writes are quiesced or fenced during final cutover
-- [ ] Complete counts, checksums, ownership, references, projections, approvals, checkpoints, files, and audit records are verified
-- [ ] Archive or fresh-start semantics are documented and user-visible when migration is not selected
-- [ ] Immutable pre-cutover backup and rollback point are recorded
+- [ ] Import uses persisted bounded cursors, source provenance, and idempotent reruns (N/A — D2 is fresh-start, not migration)
+- [ ] Hosted writes are quiesced or fenced during final cutover (N/A — D2 is fresh-start, not migration)
+- [ ] Complete counts, checksums, ownership, references, projections, approvals, checkpoints, files, and audit records are verified (N/A — D2 is fresh-start, not migration)
+- [x] Archive or fresh-start semantics are documented and user-visible when migration is not selected (`docs/operations/convex-history-migration-decision.md` — confirmed no product surface implies continuity from a prior hosted deployment; nothing needed correcting)
+- [x] Immutable pre-cutover backup and rollback point are recorded (`docs/operations/convex-history-migration-decision.md` — real backup taken, checksum-verified, locked to `go-rwx` off, manifest sha256 recorded)
 
 ## Prove the real cross-tier recovery seam
 
@@ -568,13 +568,13 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Renew and fence long-running command leases; Publish one run through the ordered projection outbox; Enforce sandboxed process and filesystem access; Back up and restore the complete execution system.
 
-- [ ] Pinned isolated backend fixture deploys the actual schema and functions without touching developer data
-- [ ] Isolated auth, machine, project, daemon-home, SQLite, deterministic provider, and workspace state are used
-- [ ] Scenario covers create, resume, send, streaming, approval, steer/interrupt, checkpoint, projection, disconnect, and reconnect
-- [ ] Duplicate/conflicting commands, lease expiry, stale completion, lost response, daemon/backend restart, and projection duplicate/reorder/partial publication are injected
-- [ ] Tests synchronize through receipts, effect drain state, projection cursors, and health conditions rather than arbitrary sleeps
-- [ ] Ordinary CI uses deterministic effects; protected jobs cover the real provider and supported topology
-- [ ] Machine-readable evidence records versions, topology, migration state, test run, redacted failures, and residual risks
+- [x] Pinned isolated backend fixture deploys the actual schema and functions without touching developer data (`scripts/lib/isolated-self-hosted-convex.ts` + `isolated-convex-fixture.ts`: fresh temp data dir, fresh instance credentials on a random free port, real `bunx convex deploy`, real RS256 auth-key setup — proven live, never touches `~/.local/share/convex-selfhost`)
+- [ ] Isolated auth, machine, project, daemon-home, SQLite, deterministic provider, and workspace state are used — real signUp + pairing + machine + project + thread + temp daemonHome/SQLite + `ScriptedModelProvider` fallback are proven live (`apps/daemon/src/cross-tier-recovery.e2e.test.ts`), but workspace/git-worktree state specifically is not: no `adapterDeps.resolveProjectRoot` is configured for this test's `KernelDaemon`, so checkpoint/subagent commands (which require it) remain untested against the real seam
+- [ ] Scenario covers create, resume, send, streaming, approval, steer/interrupt, checkpoint, projection, disconnect, and reconnect — create/resume/send/streaming/projection/disconnect/reconnect are proven live (`apps/daemon/src/cross-tier-recovery.e2e.test.ts`); approval, steer/interrupt, and checkpoint are not yet covered
+- [ ] Duplicate/conflicting commands, lease expiry, stale completion, lost response, daemon/backend restart, and projection duplicate/reorder/partial publication are injected — only daemon restart is covered against the *real* seam (test 2). The rest exist only against fakes (`kernel-daemon.lease-renewal.test.ts`, `kernel-daemon.projection-outbox.test.ts`) — real live fault injection for the others is not yet built
+- [x] Tests synchronize through receipts, effect drain state, projection cursors, and health conditions rather than arbitrary sleeps (`waitUntil` polls real projected-event conditions)
+- [ ] Ordinary CI uses deterministic effects; protected jobs cover the real provider and supported topology — ordinary CI is unaffected and proven so (the test auto-skips via `describe.skipIf` wherever the backend binary isn't installed); a new protected `cross-tier-recovery` job exists (`.github/workflows/ci.yml`, `workflow_dispatch`-only) but only covers the real self-hosted *backend* — "the real provider" in this item means the LLM/model provider per the PRD, which this job does not exercise (it uses `ScriptedModelProvider`, same as the deterministic tier)
+- [x] Machine-readable evidence records versions, topology, migration state, test run, redacted failures, and residual risks (`docs/operations/release-evidence/2026-07-23-cross-tier-recovery-seam.md`, including the two bugs this test found and fixed)
 
 ## Prove shadow parity without duplicate effects
 

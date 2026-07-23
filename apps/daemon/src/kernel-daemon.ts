@@ -865,6 +865,11 @@ export class KernelDaemon {
     await this.poll();
   }
 
+  /** Publish the projection outbox and run snapshots immediately — for tests and manual triggers. */
+  async flushOnce(): Promise<void> {
+    await this.flush();
+  }
+
   private pollInFlight = false;
 
   // Command lease lifetime — long enough to cover a normal turn between
@@ -981,7 +986,13 @@ export class KernelDaemon {
       switch (kind) {
         case "run.create": {
           const projectId = (payload.projectId ?? "default") as string;
-          await this.runtime.createRun({ projectId });
+          // `runId` is the canonical ID assigned at command ingress
+          // (submitToInbox defaults it to the thread ID). The local run
+          // must be created under this exact ID — otherwise the
+          // client-visible run identity a browser/projection reader knows
+          // about can never be found by a later run.resume/turn.send that
+          // references the same canonical ID.
+          await this.runtime.createRun({ projectId, runId: runId as never });
           incrementMetric("activeRuns");
           await complete("completed");
           break;

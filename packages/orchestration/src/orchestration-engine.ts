@@ -329,8 +329,9 @@ export class OrchestrationEngine {
   async createRun(input: {
     readonly projectId: string;
     readonly permissionProfile?: "read-only" | "workspace-write" | "full-access";
+    readonly runId?: string;
   }): Promise<RunSnapshot> {
-    const runId = `run-${crypto.randomUUID()}` as never;
+    const runId = (input.runId ?? `run-${crypto.randomUUID()}`) as never;
     const initialSnapshot: RunSnapshot = {
       runId,
       projectId: input.projectId as never,

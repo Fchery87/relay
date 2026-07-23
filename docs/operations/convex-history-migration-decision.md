@@ -30,6 +30,27 @@ period, verification) for no data actually worth preserving. Archiving it
 read-only (D2-B) is moot for the same reason — there is nothing meaningful
 to preserve access to.
 
+## Fresh-start semantics are already user-visible
+
+No product surface (sign-up flow, onboarding copy, machine pairing UI)
+implies continuity from a prior hosted deployment — checked
+`apps/web/src/` for any such messaging on 2026-07-23; there is none to
+correct. A new account today is, correctly, a genuinely fresh account.
+
+## Immutable pre-cutover backup and rollback point
+
+Recorded 2026-07-23 (self-hosted `pre-cutover-backups/2026-07-23-fresh-start`,
+outside the repo per `docs/operations/backup-recovery.md` — backups
+containing live credentials are never committed):
+
+- Taken with `scripts/backup-self-hosted-convex.sh`, checksum-verified with
+  `scripts/restore-self-hosted-convex.sh --verify-only`, `chmod -R go-rwx`.
+- Manifest sha256: `402c7f91606a9019820b20a833cbbf6268e59465e163f34da5783b9704e96361`
+- Rollback point: since D2 is fresh-start (no migration), this backup's
+  purpose is to preserve current state before any future kernel/browser
+  cutover work — not to preserve pre-migration hosted history, since none
+  exists.
+
 ## Consequences
 
 - No export/import migration tooling (Milestone 7's D2-A path) needs to be

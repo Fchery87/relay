@@ -3,6 +3,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 permissions: { contents: read }
 jobs:
   test:
@@ -18,3 +19,25 @@ jobs:
       - run: bun run bundle:check
       - run: bun run daemon:build:native
       - run: bun run release:smoke
+
+  # Protected job: exercises the real cross-tier recovery seam against a
+  # real (isolated, throwaway) self-hosted Convex backend — not the
+  # deterministic fakes the `test` job above uses. Manual trigger only
+  # (workflow_dispatch); ordinary PR/push CI never depends on this, and the
+  # `test` job's own copy of this test auto-skips wherever the backend
+  # binary isn't installed (see apps/daemon/src/cross-tier-recovery.e2e.test.ts).
+  cross-tier-recovery:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Install self-hosted Convex backend
+        run: |
+          mkdir -p "$HOME/.local/share/convex-selfhost"
+          cd "$HOME/.local/share/convex-selfhost"
+          curl -sLO https://github.com/get-convex/convex-backend/releases/latest/download/convex-local-backend-x86_64-unknown-linux-gnu.zip
+          unzip -o convex-local-backend-x86_64-unknown-linux-gnu.zip
+          chmod +x convex-local-backend
+      - run: bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts

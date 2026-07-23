@@ -13,6 +13,15 @@ import type {
 export type CreateRunInput = {
   readonly projectId: string;
   readonly permissionProfile?: "read-only" | "workspace-write" | "full-access";
+  /**
+   * The canonical run ID assigned at the command-ingress boundary (browser
+   * command / commandInbox — defaults to the thread ID when omitted). When
+   * provided, the local run is created under this exact ID instead of a
+   * randomly generated one, so `run.resume`/`turn.send` commands that
+   * reference the same canonical ID can find it. Omit only for callers
+   * (tests, internal tooling) that have no external identity to preserve.
+   */
+  readonly runId?: RunId;
 };
 
 export type ResumeRunInput = {
