@@ -11,4 +11,5 @@ export * from "./effect-store";
 export * from "./artifact-store";
 export * from "./history-store";
 export * from "./retention";
+export * from "./diagnostics";
 export * from "./task-store";

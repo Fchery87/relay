@@ -68,5 +68,8 @@ export function sanitizeForProjection(value: string): string {
     .replace(/sk-[a-zA-Z0-9-]{20,}/g, "[REDACTED:api-key]")
     .replace(/sk-ant-[a-zA-Z0-9-]{20,}/g, "[REDACTED:api-key]")
     .replace(/ghp_[a-zA-Z0-9]{36}/g, "[REDACTED:github-token]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED:token]")
+    .replace(/convex-self-hosted\|[A-Za-z0-9._|-]+/gi, "convex-self-hosted|[REDACTED:admin-key]")
+    .replace(/((?:device[_-]?token|instance[_-]?secret|admin[_-]?key|api[_-]?key)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, "$1[REDACTED:secret]")
     .replace(/-----BEGIN (RSA |EC )?PRIVATE KEY-----[^-]*-----END (RSA |EC )?PRIVATE KEY-----/gs, "[REDACTED:private-key]");
 }

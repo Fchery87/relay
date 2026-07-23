@@ -10,7 +10,7 @@
 
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, statfs, writeFile } from "node:fs/promises";
 
 import { isDeviceTokenRejected } from "./device-auth";
 import { createCodexSessionAdapter, type CodexSessionAdapter, type CodexTransportConfig, type NormalizedEvent } from "@relay/codex-app-server";
@@ -75,6 +75,7 @@ import {
   parseVersion,
 } from "@relay/local-store";
 import { SLO_DEFINITIONS } from "@relay/local-store";
+import { storageAdmission } from "./storage-pressure";
 import type { ToolCall } from "./tool-executor";
 import {
   executeKernelAgenticTurn,
@@ -1593,6 +1594,11 @@ export class KernelDaemon {
     this.pollInFlight = true;
     const span = this.tracer.startSpan("daemon.poll");
     try {
+      const admission = await this.storageAdmission();
+      if (!admission.allowMutation) {
+        console.warn("Kernel daemon: mutation admission paused", admission.reason);
+        return;
+      }
       const batch = await this.commandGateway.claimBatch({
         deviceToken: this.config.deviceToken,
         leaseDurationMs: this.commandLeaseDurationMs,
@@ -1625,6 +1631,21 @@ export class KernelDaemon {
     }
     this.pollInFlight = false;
     this.tracer.endSpan(span);
+  }
+
+  private async storageAdmission(): Promise<{ allowMutation: boolean; reason?: string }> {
+    try {
+      const filesystem = await statfs(this.config.daemonHome);
+      const blockSize = Number(filesystem.bsize);
+      return storageAdmission({
+        freeBytes: Number(filesystem.bavail) * blockSize,
+        totalBytes: Number(filesystem.blocks) * blockSize,
+        activeRecoveryBytes: 64 * 1024 * 1024,
+      });
+    } catch (error) {
+      this.canaryTelemetry.unrecoverableFailures++;
+      return { allowMutation: false, reason: `storage_probe_failed:${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 
   private async processCommand(
@@ -2130,6 +2151,7 @@ export class KernelDaemon {
       if (rollbackReason) await this.triggerCanaryRollback(rollbackReason, telemetry);
       // Log health/metrics every 60 heartbeats (~30s at default 500ms interval)
       if (this.heartbeatCount % 60 === 0) {
+        const retention = this.runtime.maintain();
         const metrics = getMetrics();
         const health = getHealth();
         console.info("Kernel daemon health:", {
@@ -2141,6 +2163,12 @@ export class KernelDaemon {
           uptimeMinutes: Math.round(metrics.uptimeMs / 60000),
         });
         console.info("Kernel daemon projection outbox:", this.projectionTelemetry);
+        console.info("Kernel daemon local-store maintenance:", {
+          pressure: retention.pressure,
+          databaseBytes: retention.after.databaseBytes,
+          deletedEvents: retention.deletedEvents,
+          deletedCheckpoints: retention.deletedCheckpoints,
+        });
         // SLO tracking: log prompt-to-first-token stats
         if (this.firstTokenLatencies.length > 0) {
           const sorted = [...this.firstTokenLatencies].sort((a, b) => a - b);

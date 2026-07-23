@@ -5,13 +5,15 @@ import { tmpdir, homedir } from "node:os";
 import { resolveDaemonHome } from "./daemon-home";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
+import { exportDaemonDiagnostics } from "./diagnostics";
 
 export type RelayCommand =
   | { command: "connect"; deploymentUrl?: string }
   | { command: "start"; yolo: boolean }
   | { command: "project"; subcommand: "add" | "remove" | "list"; path?: string; name?: string }
   | { command: "help" }
-  | { command: "doctor" };
+  | { command: "doctor" }
+  | { command: "diagnostics"; subcommand: "export"; path?: string };
 
 const usage = `Relay daemon
 
@@ -21,7 +23,8 @@ Usage:
   relay project add [path] [--name <name>]
   relay project remove <path>
   relay project list
-  relay doctor`;
+  relay doctor
+  relay diagnostics export [path]`;
 
 export function parseCli(args: readonly string[]): RelayCommand {
   if (args.length === 0 || args[0] === "start") {
@@ -35,6 +38,10 @@ export function parseCli(args: readonly string[]): RelayCommand {
   }
   if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") return { command: "help" };
   if (args[0] === "doctor") return { command: "doctor" };
+  if (args[0] === "diagnostics") {
+    if (args[1] !== "export" || args.length > 3) throw new Error("Usage: relay diagnostics export [path]");
+    return { command: "diagnostics", subcommand: "export", path: args[2] };
+  }
   if (args[0] === "project") {
     const subcommand = args[1];
     if (subcommand === "add") {
@@ -68,10 +75,11 @@ export function parseCli(args: readonly string[]): RelayCommand {
   throw new Error("Usage: relay connect --url <convex-url>");
 }
 
-export async function runCli(args: readonly string[], dependencies: { runConnect?: typeof runConnect; runDaemon?: (input?: { yolo?: boolean }) => Promise<void> } = {}): Promise<void> {
+export async function runCli(args: readonly string[], dependencies: { runConnect?: typeof runConnect; runDaemon?: (input?: { yolo?: boolean }) => Promise<void>; runDiagnostics?: (path?: string) => Promise<void> } = {}): Promise<void> {
   const command = parseCli(args);
   if (command.command === "help") { console.info(usage); return; }
   if (command.command === "doctor") { console.info(JSON.stringify({ ok: true, runtime: "kernel", platform: process.platform, bun: Bun.version })); return; }
+  if (command.command === "diagnostics") { await (dependencies.runDiagnostics ?? exportDaemonDiagnostics)(command.path); return; }
   if (command.command === "connect") {
     await (dependencies.runConnect ?? runConnect)({ deploymentUrl: command.deploymentUrl });
     return;

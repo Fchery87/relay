@@ -47,3 +47,10 @@ test("parses project subcommands", () => {
   expect(() => parseCli(["project", "remove"])).toThrow("requires a path");
   expect(() => parseCli(["project", "unknown"])).toThrow("Unknown project subcommand");
 });
+
+test("parses and dispatches diagnostic export", async () => {
+  expect(parseCli(["diagnostics", "export", "/tmp/relay-diagnostics.json"])).toEqual({ command: "diagnostics", subcommand: "export", path: "/tmp/relay-diagnostics.json" });
+  let path: string | undefined;
+  await runCli(["diagnostics", "export", "/tmp/relay-diagnostics.json"], { runDiagnostics: async (value) => { path = value; } });
+  expect(path).toBe("/tmp/relay-diagnostics.json");
+});

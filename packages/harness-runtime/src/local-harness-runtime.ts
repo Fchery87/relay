@@ -16,6 +16,8 @@ import {
   claimOutboxBatch,
   acknowledgeOutboxBatch,
   countPendingOutbox,
+  enforceRetention,
+  type RetentionResult,
 } from "@relay/local-store";
 import type { RunDiagnostic, StoreDatabase, OutboxRow } from "@relay/local-store";
 import { OrchestrationEngine } from "@relay/orchestration";
@@ -194,6 +196,11 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const snap = getSnapshot(this.db, input.runId as string);
     if (!snap) throw new Error(`Run not found: ${input.runId}`);
     return snap;
+  }
+
+  /** Run bounded local-store maintenance without exposing the SQLite handle. */
+  maintain(options?: { readonly now?: number; readonly vacuum?: boolean }): RetentionResult {
+    return enforceRetention(this.db, options);
   }
 
   async *observe(input: ObserveInput): AsyncIterable<EventEnvelope<CanonicalEventType, unknown>> {
