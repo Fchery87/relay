@@ -19,7 +19,7 @@ RELAY_RELEASE_VERSION=vX.Y.Z \
 bun run release:build
 ```
 
-The installers verify `checksums.txt.sig` before accepting the platform binary. Keep the private key out of CI logs, argv, and the repository.
+The installers verify `checksums.txt.sig` before accepting the platform binary. Keep the private key out of CI logs, argv, and the repository. The Windows PowerShell installer requires `openssl` on `PATH` for this verification step.
 
 Linux/macOS:
 ```bash

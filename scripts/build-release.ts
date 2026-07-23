@@ -35,7 +35,7 @@ const commit = Bun.spawnSync(["git", "rev-parse", "HEAD"], { stderr: "ignore" })
 await writeFile(join(outputDir, "release.json"), `${JSON.stringify({
   artifactSet: "relay-daemon",
   commit: new TextDecoder().decode(commit.stdout).trim(),
-  signature: "RSA/ECDSA/Ed25519-SHA256 checksums.txt.sig",
+  signature: "OpenSSL SHA-256 detached signature (checksums.txt.sig)",
   version: Bun.env.RELAY_RELEASE_VERSION ?? packageJson.version ?? "unknown",
   builtAt: new Date().toISOString(),
 }, null, 2)}\n`);
