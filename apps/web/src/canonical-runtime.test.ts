@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToUsage } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -36,6 +36,7 @@ test("core browser actions all use the canonical command vocabulary", () => {
     ["checkpoint.restore", { checkpointId: "checkpoint-1" }],
     ["checkpoint.compare", { fromCheckpointId: "checkpoint-1", fromCommit: "abc", toCheckpointId: "checkpoint-2", toCommit: "def" }],
     ["git.action", { action: "stage" }],
+    ["run.configure", { modelId: "test-model", thinkingLevel: "low", permissionProfile: "workspace-write", budgetUsd: 5 }],
   ] as const;
   const envelopes = commands.map(([kind, payload]) => canonicalCommandEnvelope({ kind, payload, runId: "run-1", threadId: "run-1" }));
   expect(envelopes.map((envelope) => envelope.kind)).toEqual(commands.map(([kind]) => kind));
@@ -147,4 +148,18 @@ test("canonical event tails project Git action lifecycle", () => {
     payload: { action: "commit", actionId: "git-1", status },
   });
   expect(projectionEventsToGitActions([event(1, "running"), event(2, "complete")])).toEqual([{ _id: "git-1", action: "commit", status: "complete" }]);
+});
+
+test("canonical event tails project the durable usage budget", () => {
+  const event = {
+    eventId: "event-1" as never,
+    sequence: 1,
+    streamVersion: 1,
+    type: "usage.recorded" as never,
+    runId: "run-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: 1,
+    payload: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 2, modelId: "test", outputTokens: 3, thinkingTokens: 1 },
+  };
+  expect(projectionEventsToUsage([event], 7).budgetUsd).toBe(7);
 });

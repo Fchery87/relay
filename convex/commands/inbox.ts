@@ -13,6 +13,7 @@ import { requireActiveMachine, requireOwnedThread, requireUser } from "../auth_h
 // Unsupported kinds fail at ingress with a clear rejection message.
 const SUPPORTED_COMMAND_KINDS = new Set([
   "run.create",
+  "run.configure",
   "run.resume",
   "run.stop",
   "turn.send",

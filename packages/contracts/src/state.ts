@@ -43,6 +43,9 @@ export type RunSnapshot = {
   /** The provider currently serving this run, if one has been selected. */
   readonly providerInstanceId?: ProviderInstanceId;
   readonly permissionProfile?: PermissionProfile;
+  readonly modelId?: string;
+  readonly thinkingLevel?: "none" | "low" | "medium" | "high";
+  readonly budgetUsd?: number | null;
   readonly workspace?: WorkspaceRecord;
   readonly providerSession?: {
     readonly providerInstanceId: ProviderInstanceId;
@@ -256,6 +259,15 @@ export function reduceRun(
     case "checkpoint.compared":
     case "workspace.diff.updated":
     case "git.action.updated":
+      return null;
+    case "run.configuration.updated":
+      return {
+        ...(event.payload.modelId === undefined ? {} : { modelId: event.payload.modelId }),
+        ...(event.payload.thinkingLevel === undefined ? {} : { thinkingLevel: event.payload.thinkingLevel }),
+        ...(event.payload.permissionProfile === undefined ? {} : { permissionProfile: event.payload.permissionProfile }),
+        ...(event.payload.budgetUsd === undefined ? {} : { budgetUsd: event.payload.budgetUsd }),
+        updatedAt: now,
+      };
     case "review.comment.created":
     case "review.comment.resolved":
     case "projection.published":

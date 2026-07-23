@@ -16,6 +16,7 @@ export type PermissionProfile = "read-only" | "workspace-write" | "full-access";
 
 export type LegacyRunSummary = {
   _id: string;
+  budgetUsd?: number | null;
   buildModelId?: string;
   mode?: "chat" | "plan";
   modelId?: string;
@@ -63,9 +64,13 @@ export const requestAddProjectRef = makeFunctionReference<
 >("projects:requestAdd");
 
 export type ProjectionRunSummary = {
+  budgetUsd?: number | null;
+  modelId?: string;
+  permissionProfile?: PermissionProfile;
   runId: string;
   sequence: number;
   status: string;
+  thinkingLevel?: ThinkingLevel;
   title: string;
   projectId: string;
   updatedAt: number;
@@ -147,7 +152,7 @@ export function toRunSummaries(threads: ReadonlyArray<LegacyRunSummary | Project
 /** Normalize projection summaries for detail surfaces that still read legacy panels during canary. */
 export function toLegacyRunSummaries(threads: ReadonlyArray<LegacyRunSummary | ProjectionRunSummary> | undefined): LegacyRunSummary[] | undefined {
   return threads?.map((thread) => "runId" in thread
-    ? ({ _id: thread.runId, status: thread.status as LegacyRunSummary["status"], title: thread.title, mode: "chat" })
+    ? ({ _id: thread.runId, budgetUsd: thread.budgetUsd, modelId: thread.modelId, permissionProfile: thread.permissionProfile, status: thread.status as LegacyRunSummary["status"], thinkingLevel: thread.thinkingLevel, title: thread.title, mode: "chat" })
     : thread);
 }
 

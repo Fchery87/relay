@@ -46,6 +46,7 @@ const CANONICAL_EVENT_TYPES = new Set<CanonicalEventType>([
   "checkpoint.compared",
   "workspace.diff.updated",
   "git.action.updated",
+  "run.configuration.updated",
   "review.comment.created",
   "review.comment.resolved",
   "projection.published",
@@ -377,6 +378,12 @@ export function canonicalEventPayloadError(
   if (type === "git.action.updated") {
     if (!isNonEmptyString(payload.actionId) || (payload.action !== "stage" && payload.action !== "commit" && payload.action !== "push") || (payload.status !== "running" && payload.status !== "complete" && payload.status !== "failed")) return "git.action.updated fields are invalid";
     for (const field of ["commit", "error", "message"] as const) if (payload[field] !== undefined && typeof payload[field] !== "string") return `git.action.updated.${field} must be a string`;
+  }
+  if (type === "run.configuration.updated") {
+    if (payload.modelId !== undefined && !isNonEmptyString(payload.modelId)) return "run.configuration.updated.modelId must be a non-empty string";
+    if (payload.thinkingLevel !== undefined && payload.thinkingLevel !== "none" && payload.thinkingLevel !== "low" && payload.thinkingLevel !== "medium" && payload.thinkingLevel !== "high") return "run.configuration.updated.thinkingLevel is invalid";
+    if (payload.permissionProfile !== undefined && payload.permissionProfile !== "read-only" && payload.permissionProfile !== "workspace-write" && payload.permissionProfile !== "full-access") return "run.configuration.updated.permissionProfile is invalid";
+    if (payload.budgetUsd !== undefined && payload.budgetUsd !== null && (typeof payload.budgetUsd !== "number" || !Number.isFinite(payload.budgetUsd) || payload.budgetUsd < 0)) return "run.configuration.updated.budgetUsd is invalid";
   }
   if (type === "review.comment.created") {
     if (!isNonEmptyString(payload.commentId) || !isNonEmptyString(payload.content) || !isNonEmptyString(payload.filePath)) return "review.comment.created fields must be non-empty strings";

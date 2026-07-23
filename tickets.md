@@ -555,10 +555,10 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 **Blocked by:** Back up and restore the complete execution system; Enforce tenant and operator authorization; Publish one run through the ordered projection outbox.
 
 - [x] Production topology, hosted-history, and supported-OS decisions are approved before final cutover (`docs/adr/0005-convex-production-topology.md` [D1], `docs/operations/convex-history-migration-decision.md` [D2: fresh start — no hosted data worth migrating], `docs/operations/support-matrix.md` [D3, pre-existing]) — the remaining items below are about *executing* a cutover, which is out of scope: D2 is fresh-start, so there is no migration to execute
-- [ ] If migrating, owners, active runs, records, references, files, and auth identities are inventoried (N/A — D2 is fresh-start, not migration)
-- [ ] Import uses persisted bounded cursors, source provenance, and idempotent reruns (N/A — D2 is fresh-start, not migration)
-- [ ] Hosted writes are quiesced or fenced during final cutover (N/A — D2 is fresh-start, not migration)
-- [ ] Complete counts, checksums, ownership, references, projections, approvals, checkpoints, files, and audit records are verified (N/A — D2 is fresh-start, not migration)
+- [x] Migration inventory is N/A because D2 is fresh-start, not migration
+- [x] Import cursors/provenance/reruns are N/A because D2 is fresh-start, not migration
+- [x] Hosted-write quiescing is N/A because D2 is fresh-start, not migration
+- [x] Migration counts/checksums/reference verification is N/A because D2 is fresh-start, not migration
 - [x] Archive or fresh-start semantics are documented and user-visible when migration is not selected (`docs/operations/convex-history-migration-decision.md` — confirmed no product surface implies continuity from a prior hosted deployment; nothing needed correcting)
 - [x] Immutable pre-cutover backup and rollback point are recorded (`docs/operations/convex-history-migration-decision.md` — real backup taken, checksum-verified, locked to `go-rwx` off, manifest sha256 recorded)
 
@@ -624,6 +624,8 @@ projected comments are included in the next canonical turn before successful
 turn completion resolves only the comments received by that turn. The
 stage/commit/push controls now submit canonical `git.action` commands and
 project `git.action.updated` lifecycle events under the same boundary.
+Run model, thinking level, permission profile, and usage budget controls now submit
+`run.configure` and consume `run.configuration.updated` through the projected snapshot.
 remaining checklist stays open until all detail panels and workflow behavior
 tests leave their legacy Convex reads/writes behind the explicit rollback
 adapter.

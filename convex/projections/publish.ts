@@ -217,14 +217,33 @@ export const listProjectionRuns = query({
     const snaps = await ctx.db.query("projectionSnapshots").withIndex("by_project", (q) => q.eq("projectId", projectId)).take(200);
     return snaps
       .filter((s) => s.ownerId === userId && s.machineId === project.machineId)
-      .map((s) => ({
-        runId: s.runId,
-        sequence: s.sequence,
-        status: (() => { try { return (JSON.parse(s.snapshotJson) as { status?: string }).status ?? "active"; } catch { return "active"; } })(),
-        title: (() => { try { return (JSON.parse(s.snapshotJson) as { title?: string }).title ?? `Run ${s.runId.slice(-8)}`; } catch { return `Run ${s.runId.slice(-8)}`; } })(),
-        projectId: args.projectId,
-        updatedAt: s._creationTime,
-      }));
+      .map((s) => {
+        let snapshot: {
+          budgetUsd?: unknown;
+          modelId?: unknown;
+          permissionProfile?: unknown;
+          status?: unknown;
+          thinkingLevel?: unknown;
+          title?: unknown;
+        } = {};
+        try { snapshot = JSON.parse(s.snapshotJson) as typeof snapshot; } catch { /* use bounded defaults */ }
+        const modelId = typeof snapshot.modelId === "string" ? snapshot.modelId : undefined;
+        const thinkingLevel = snapshot.thinkingLevel === "none" || snapshot.thinkingLevel === "low" || snapshot.thinkingLevel === "medium" || snapshot.thinkingLevel === "high" ? snapshot.thinkingLevel : undefined;
+        const permissionProfile = snapshot.permissionProfile === "read-only" || snapshot.permissionProfile === "workspace-write" || snapshot.permissionProfile === "full-access" ? snapshot.permissionProfile : undefined;
+        const budgetUsd = snapshot.budgetUsd === null || (typeof snapshot.budgetUsd === "number" && Number.isFinite(snapshot.budgetUsd)) ? snapshot.budgetUsd : undefined;
+        return {
+          ...(budgetUsd === undefined ? {} : { budgetUsd }),
+          ...(modelId === undefined ? {} : { modelId }),
+          ...(permissionProfile === undefined ? {} : { permissionProfile }),
+          ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+          runId: s.runId,
+          sequence: s.sequence,
+          status: typeof snapshot.status === "string" ? snapshot.status : "active",
+          title: typeof snapshot.title === "string" ? snapshot.title : `Run ${s.runId.slice(-8)}`,
+          projectId: args.projectId,
+          updatedAt: s.updatedAt,
+        };
+      });
   },
 });
 

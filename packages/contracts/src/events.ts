@@ -75,6 +75,7 @@ export type CanonicalEvent =
   | CheckpointComparedEvent
   | WorkspaceDiffUpdatedEvent
   | GitActionUpdatedEvent
+  | RunConfigurationUpdatedEvent
   | ReviewCommentCreatedEvent
   | ReviewCommentResolvedEvent
   // --- projection synchronisation ---
@@ -314,6 +315,15 @@ export type GitActionUpdatedPayload = {
 };
 
 export type GitActionUpdatedEvent = EventEnvelope<"git.action.updated", GitActionUpdatedPayload>;
+
+export type RunConfigurationUpdatedPayload = {
+  readonly budgetUsd?: number | null;
+  readonly modelId?: string;
+  readonly permissionProfile?: PermissionProfile;
+  readonly thinkingLevel?: "none" | "low" | "medium" | "high";
+};
+
+export type RunConfigurationUpdatedEvent = EventEnvelope<"run.configuration.updated", RunConfigurationUpdatedPayload>;
 
 export type ReviewCommentCreatedPayload = {
   readonly commentId: string;

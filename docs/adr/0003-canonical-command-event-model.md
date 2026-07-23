@@ -19,7 +19,7 @@ A decision is needed on the canonical shape of commands, events, and state trans
 
 **Adopt an append-only canonical event model with a pure run-state reducer, and a typed command envelope with exactly-once semantics.**
 
-- **Every accepted command** (external: create/resume/send/steer/interrupt/approve/stop/restore/git action; internal: provider events, workspace results, checkpoint results, projection acknowledgements) is wrapped in a `CommandEnvelope` with a globally unique `commandId`, a typed `actor` ("user" | "device" | "provider" | "system"), and an optional `expectedStreamVersion` for optimistic concurrency.
+- **Every accepted command** (external: create/resume/send/steer/interrupt/approve/stop/restore/configure/git action; internal: provider events, workspace results, checkpoint results, projection acknowledgements) is wrapped in a `CommandEnvelope` with a globally unique `commandId`, a typed `actor` ("user" | "device" | "provider" | "system"), and an optional `expectedStreamVersion` for optimistic concurrency.
 - **A pure `reduceRun(state, event)` reducer** is the only function that defines run-status semantics. It accepts an immutable `RunSnapshot` and a parsed command and returns `{ events, effects }` — canonical events to append plus side-effect intents to dispatch. It performs no I/O and is the only code path allowed to change run status.
 - **Canonical events are append-only with a strictly increasing per-run `sequence`.** Every accepted command produces zero or more ordered events in the same local transaction as its receipt and projection updates. Provider-native events are normalized at the adapter seam; unknown notifications become bounded diagnostic records, never crashes. The canonical event union is:
 
@@ -34,6 +34,7 @@ A decision is needed on the canonical shape of commands, events, and state trans
   checkpoint.captured | checkpoint.restored | checkpoint.compared
   workspace.diff.updated
   git.action.updated
+  run.configuration.updated
   review.comment.created | review.comment.resolved
   projection.published
   ```

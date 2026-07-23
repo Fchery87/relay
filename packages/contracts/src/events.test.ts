@@ -51,12 +51,13 @@ test("all canonical event type strings exist", () => {
     "checkpoint.compared",
     "workspace.diff.updated",
     "git.action.updated",
+    "run.configuration.updated",
     "review.comment.created",
     "review.comment.resolved",
     "projection.published",
   ];
-  // All 30 canonical event types
-  expect(types).toHaveLength(30);
+  // All 31 canonical event types
+  expect(types).toHaveLength(31);
   // No duplicates
-  expect(new Set(types).size).toBe(30);
+  expect(new Set(types).size).toBe(31);
 });

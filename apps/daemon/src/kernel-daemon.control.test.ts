@@ -211,6 +211,54 @@ test("daemon routes Git actions through canonical lifecycle events", async () =>
   }
 });
 
+test("daemon persists run configuration through a canonical lifecycle event", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-config-daemon-"));
+  const runId = "run-config-daemon";
+  const pending = [
+    command("inbox-create-config", "run.create", runId, { projectId: "project-config" }),
+    command("inbox-resume-config", "run.resume", runId, {}),
+  ];
+  const projected: Array<{ payloadJson: string; type: string }> = [];
+  const daemon = new KernelDaemon({
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "config-test",
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async ({ events }) => { projected.push(...events.map((event) => ({ payloadJson: event.payloadJson, type: event.type }))); },
+      upsertSnapshot: async () => undefined,
+      advanceCursor: async () => undefined,
+    },
+  });
+
+  try {
+    await daemon.start();
+    await daemon.pollOnce();
+    pending.push(command("inbox-configure", "run.configure", runId, { budgetUsd: 7, modelId: "configured-model", permissionProfile: "read-only", thinkingLevel: "high" }));
+    await daemon.pollOnce();
+    const deadline = Date.now() + 2_000;
+    while (!projected.some((event) => event.type === "run.configuration.updated") && Date.now() < deadline) {
+      await daemon.flushOnce();
+      await Bun.sleep(10);
+    }
+    expect(projected.map((event) => event.type)).toContain("run.configuration.updated");
+    const configuration = projected.find((event) => event.type === "run.configuration.updated");
+    expect(configuration ? JSON.parse(configuration.payloadJson) : undefined).toEqual({ budgetUsd: 7, modelId: "configured-model", permissionProfile: "read-only", thinkingLevel: "high" });
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+  }
+});
+
 function command(commandId: string, kind: string, runId: string, payload: unknown) {
   return {
     commandId,

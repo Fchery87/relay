@@ -197,14 +197,14 @@ export function projectionEventsToAudit(events: ReadonlyArray<EventEnvelope<Cano
     .map((approval) => ({ _id: `audit:${approval._id}`, capability: approval.capability, decision: approval.decision === "allow" ? "allow" : "deny", risk: approval.risk, summary: approval.summary }));
 }
 
-export function projectionEventsToUsage(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): UsageSummary {
+export function projectionEventsToUsage(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>, budgetUsd: number | null | undefined = null): UsageSummary {
   const records = events.flatMap((event) => {
     if (event.type !== "usage.recorded") return [];
     const payload = event.payload as { cacheReadTokens: number; cacheWriteTokens: number; inputTokens: number; modelId: string; outputTokens: number; thinkingTokens: number };
     return [{ _creationTime: event.occurredAt, _id: event.eventId as string, cacheReadTokens: payload.cacheReadTokens, cacheWriteTokens: payload.cacheWriteTokens, callId: event.eventId as string, costUsd: 0, inputTokens: payload.inputTokens, messageId: event.turnId as string ?? event.eventId as string, modelId: payload.modelId, outputTokens: payload.outputTokens, role: "assistant", thinkingTokens: payload.thinkingTokens, threadId: event.runId as string }];
   });
   return {
-    budgetUsd: null,
+    budgetUsd: budgetUsd ?? null,
     records,
     totals: {
       cacheReadTokens: records.reduce((sum, record) => sum + record.cacheReadTokens, 0),

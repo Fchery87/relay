@@ -69,6 +69,9 @@ canonical checkpoint comparison, bounded current-worktree diff projection, and
 canonical review-comment creation/resolution projection. Git stage/commit/push
 controls now use the same canonical command boundary and project bounded
 `git.action.updated` lifecycle events.
+Run model, thinking level, permission profile, and usage budget controls now use the
+same `run.configure` inbox command and `run.configuration.updated` projection event;
+the browser reads those settings from the projected snapshot when the cutover flag is enabled.
 Full detail-panel migration and end-to-end browser behavior coverage remain
 open before this flag can be promoted beyond canary; the projection hook still
 uses a bounded event tail, so historical comments outside that tail require a

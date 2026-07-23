@@ -193,15 +193,25 @@ describe("non-status events", () => {
     { type: "projection.published" },
   ];
 
-  for (const { type } of noStatusChange) {
+  for (const { type, payload } of noStatusChange) {
     test(`${type} does not change run status`, () => {
-      expect(reduceRun(baseSnapshot({ status: "running" }), { type } as never)).toBeNull();
-      expect(reduceRun(baseSnapshot({ status: "ready" }), { type } as never)).toBeNull();
+      const event = payload === undefined ? { type } : { type, payload };
+      expect(reduceRun(baseSnapshot({ status: "running" }), event as never)).toBeNull();
+      expect(reduceRun(baseSnapshot({ status: "ready" }), event as never)).toBeNull();
     });
   }
 });
 
 describe("run metadata", () => {
+  test("run configuration updates durable provider and budget settings", () => {
+    const result = reduceRun(baseSnapshot({ status: "ready" }), {
+      occurredAt: 2,
+      type: "run.configuration.updated",
+      payload: { budgetUsd: 5, modelId: "model-1", permissionProfile: "read-only", thinkingLevel: "high" },
+    } as never);
+    expect(result).toMatchObject({ budgetUsd: 5, modelId: "model-1", permissionProfile: "read-only", thinkingLevel: "high", updatedAt: 2 });
+  });
+
   test("turn lifecycle owns activeTurnId", () => {
     const started = reduceRun(baseSnapshot({ status: "running" }), {
       type: "turn.started",

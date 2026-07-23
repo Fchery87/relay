@@ -239,7 +239,9 @@ export function ThreadView({
   const projectionComparison = projectionCutoverEnabled ? projectionEventsToCheckpointComparison(projectionEvents) : null;
   const activeProjectionComparison = projectionCutoverEnabled ? projectionComparison : (comparison?._id === requestedComparisonId ? comparison : null);
   const visibleDiff = projectionCutoverEnabled ? projectionEventsToDiff(projectionEvents) : diff?.content ?? "No changes.";
-  const visibleUsage = projectionCutoverEnabled ? projectionEventsToUsage(projectionEvents) : usage ?? EMPTY_USAGE_SUMMARY;
+  const projectedBudgetUsd = projectionRun.state?.snapshot?.budgetUsd;
+  const effectiveBudgetUsd = projectedBudgetUsd !== undefined ? projectedBudgetUsd : activeThread?.budgetUsd;
+  const visibleUsage = projectionCutoverEnabled ? projectionEventsToUsage(projectionEvents, effectiveBudgetUsd) : usage ?? EMPTY_USAGE_SUMMARY;
   const visibleReviewComments = projectionCutoverEnabled ? projectionEventsToReviewComments(projectionEvents) : diffComments ?? [];
   const visibleGitActions = projectionCutoverEnabled ? projectionEventsToGitActions(projectionEvents) : gitActions ?? [];
   function canonicalReviewFeedback(): Record<string, unknown> {
@@ -261,7 +263,9 @@ export function ThreadView({
   const diffSummary = summarizeFiles(splitFiles(visibleDiff));
   const gitActionRunning = latestGitAction?.status === "queued" || latestGitAction?.status === "running";
   const needsOperator = activeStatus === "awaiting-approval" || (isPlanRun && activeThread?.planPhase === "review");
-  const permissionProfile: PermissionProfile = activeThread?.permissionProfile ?? "workspace-write";
+  const permissionProfile: PermissionProfile = projectionRun.state?.snapshot?.permissionProfile ?? activeThread?.permissionProfile ?? "workspace-write";
+  const modelId = projectionRun.state?.snapshot?.modelId ?? activeThread?.modelId ?? DEFAULT_MODEL_ID;
+  const thinkingLevel = projectionRun.state?.snapshot?.thinkingLevel ?? activeThread?.thinkingLevel ?? "none";
 
   if (requestedThreadMissing) return <section className="task-empty-state" role="status"><span aria-hidden="true" className="empty-contact">◇</span><h2>Run not available</h2><p>This run is unavailable or does not belong to the selected project.</p><button onClick={() => void navigate({ to: "/projects/$projectId", params: { projectId }, search: {} })} type="button">View project runs</button></section>;
 
@@ -270,7 +274,7 @@ export function ThreadView({
       capabilityCeiling={capabilityCeiling}
       currentStage={currentStage}
       machineName={machineName}
-      onBudgetChange={activeThreadId ? (budgetUsd) => setBudget({ budgetUsd, threadId: activeThreadId }) : undefined}
+      onBudgetChange={activeThreadId ? (budgetUsd) => projectionCutoverEnabled ? submitRunCommand("run.configure", { budgetUsd }) : setBudget({ budgetUsd, threadId: activeThreadId }) : undefined}
       onShowApprovals={() => setToolSurface("session")}
       pendingApprovalCount={pendingApprovalCount}
       permissionProfile={permissionProfile}
@@ -327,17 +331,17 @@ export function ThreadView({
               content={content}
               isPlanRun={isPlanRun}
               isSubmitting={isSubmittingDirective}
-              modelId={activeThread?.modelId ?? DEFAULT_MODEL_ID}
+              modelId={modelId}
               onAttachFiles={attachFiles}
               onContentChange={setContent}
-              onModelChange={(selection) => activeThreadId ? updateSelection({ ...selection, threadId: activeThreadId }) : Promise.resolve(null)}
-              onPermissionChange={(profile) => activeThreadId ? updatePermission({ permissionProfile: profile, threadId: activeThreadId }) : Promise.resolve(null)}
+              onModelChange={(selection) => activeThreadId ? projectionCutoverEnabled ? submitRunCommand("run.configure", selection) : updateSelection({ ...selection, threadId: activeThreadId }) : Promise.resolve(null)}
+              onPermissionChange={(profile) => activeThreadId ? projectionCutoverEnabled ? submitRunCommand("run.configure", { permissionProfile: profile }) : updatePermission({ permissionProfile: profile, threadId: activeThreadId }) : Promise.resolve(null)}
               onRemoveAttachment={(index) => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
               onSubmit={submit}
               permissionProfile={permissionProfile}
               receipt={directiveReceipt}
               status={activeStatus}
-              thinkingLevel={activeThread?.thinkingLevel ?? "none"}
+              thinkingLevel={thinkingLevel}
             />
           )}
         </div>

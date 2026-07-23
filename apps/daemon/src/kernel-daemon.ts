@@ -984,8 +984,10 @@ export class KernelDaemon {
           ? await this.config.adapterDeps.resolveProjectRoot({ repoPath: projectPath, threadId: runId })
           : undefined;
         const beforeCheckpoint = root ? await captureKernelCheckpoint({ root, runId, turnId, phase: "before" }) : undefined;
+        const runSnapshot = await this.runtime.snapshot({ runId });
+        const modelId = runSnapshot.modelId ?? DEFAULT_MODEL_ID;
+        const thinkingLevel = runSnapshot.thinkingLevel ?? "none";
         if (codexEnabled && codex) {
-          const snapshot = await this.runtime.snapshot({ runId });
           if (beforeCheckpoint) {
             const result = await persistProviderEvent(this.runtime, runId, {
               ...beforeCheckpoint,
@@ -999,7 +1001,7 @@ export class KernelDaemon {
             runtime: this.runtime,
             turnId,
             cwd: root,
-            threadId: snapshot.providerSession?.providerThreadId,
+            threadId: runSnapshot.providerSession?.providerThreadId,
             onBeforeTerminal: async (succeeded) => {
               if (root) {
                 const afterCheckpoint = await captureKernelCheckpoint({ root, runId, turnId, phase: "after" });
@@ -1026,7 +1028,7 @@ export class KernelDaemon {
             onInactive: () => this.activeCodexTurns.delete(activeTurnKey(runId, turnId)),
           });
         } else {
-          const turnProvider = this.provider.resolveTurn?.({ modelId: DEFAULT_MODEL_ID, thinkingLevel: "none" });
+          const turnProvider = this.provider.resolveTurn?.({ modelId, thinkingLevel });
           if (!turnProvider) {
             throw new Error("Kernel provider router does not support agentic turns");
           }
@@ -1122,7 +1124,8 @@ export class KernelDaemon {
         const projectPath = this.projectPathByRun.get(effect.runId);
         if (!projectPath) throw new Error(`Run ${effect.runId} has no authorized project path`);
         const root = await resolveProjectRoot({ repoPath: projectPath, threadId: effect.runId });
-        const turnProvider = this.provider.resolveTurn?.({ modelId: DEFAULT_MODEL_ID, thinkingLevel: "none" });
+        const approvalSnapshot = await this.runtime.snapshot({ runId: effect.runId });
+        const turnProvider = this.provider.resolveTurn?.({ modelId: approvalSnapshot.modelId ?? DEFAULT_MODEL_ID, thinkingLevel: approvalSnapshot.thinkingLevel ?? "none" });
         if (!turnProvider) throw new Error("Kernel provider router does not support agentic turns");
         const activeTurn = {
           abortController: new AbortController(),
@@ -1454,6 +1457,33 @@ export class KernelDaemon {
           // references the same canonical ID.
           await this.runtime.createRun({ projectId, runId: runId as never });
           incrementMetric("activeRuns");
+          await complete("completed");
+          break;
+        }
+        case "run.configure": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("run.configure requires runId");
+          const configuration: Record<string, unknown> = {};
+          if (payload.modelId !== undefined) configuration.modelId = requireBoundedString(payload.modelId, "modelId", 200);
+          if (payload.thinkingLevel !== undefined) {
+            if (payload.thinkingLevel !== "none" && payload.thinkingLevel !== "low" && payload.thinkingLevel !== "medium" && payload.thinkingLevel !== "high") throw new Error("thinkingLevel is invalid");
+            configuration.thinkingLevel = payload.thinkingLevel;
+          }
+          if (payload.permissionProfile !== undefined) {
+            if (payload.permissionProfile !== "read-only" && payload.permissionProfile !== "workspace-write" && payload.permissionProfile !== "full-access") throw new Error("permissionProfile is invalid");
+            configuration.permissionProfile = payload.permissionProfile;
+          }
+          if (payload.budgetUsd !== undefined) {
+            if (payload.budgetUsd !== null && (typeof payload.budgetUsd !== "number" || !Number.isFinite(payload.budgetUsd) || payload.budgetUsd < 0)) throw new Error("budgetUsd is invalid");
+            configuration.budgetUsd = payload.budgetUsd;
+          }
+          if (Object.keys(configuration).length === 0) throw new Error("run.configure requires a configuration field");
+          const result = await appendAdapterEvent(this.runtime, rId, {
+            eventId: `ev-run-configuration-${externalCommandId}`,
+            type: "run.configuration.updated",
+            payload: configuration,
+          });
+          if (!result.ok) throw new Error(`Failed to append run configuration: ${result.reason}`);
           await complete("completed");
           break;
         }
