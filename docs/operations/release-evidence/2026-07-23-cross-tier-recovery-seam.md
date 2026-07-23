@@ -307,20 +307,21 @@ does not substitute for the credentialed real-provider run or the supervised
 release window.
 
 Ordinary CI validation is deterministic: the current daemon suite recorded
-344 passing tests, one credential-dependent skip, and zero failures.
+345 passing tests, one credential-dependent skip, and zero failures.
 The live self-hosted Convex and MCP transport profiles remain protected and
 are run separately when loopback/process capabilities and, for Convex, the
 pinned backend binary are available.
 
 ## Update — 2026-07-23: current-tree operational closure
 
-Commit `e97fb22` passed the protected isolated-backend seam with 12/12 tests
-and 47 assertions. The run covered ordered projection reconnect, daemon and
-backend restart, duplicate/conflicting commands, lost response, lease expiry,
-stale completion fencing, projection duplicate/reorder/partial faults, and a
-real Git checkpoint restore.
+Commit `f4786ea` passed the protected isolated-backend seam with 13/13 tests
+and 51 assertions. The run covered ordered projection reconnect, two-run
+isolation, daemon and backend restart, duplicate/conflicting commands, lost
+response, lease expiry, stale completion fencing, projection
+duplicate/reorder/partial faults, and a real Git checkpoint restore.
 
-The same commit's local-store operational gap is now implemented:
+The earlier current-tree operational closure also implemented the local-store
+gap:
 `relay diagnostics export` produces a bounded, anonymized, payload-free state
 dump; retention requires a hash-verified history snapshot before pruning
 canonical events; checkpoint metadata is only collectible after explicit
