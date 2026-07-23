@@ -612,6 +612,14 @@ parity tests.
 
 **Blocked by:** Prove shadow parity without duplicate effects; Publish one run through the ordered projection outbox.
 
+Progress: the reversible `VITE_RELAY_PROJECTION_ENABLED=1` boundary now
+selects projection run discovery, routes create/turn/stop/approval/restore
+actions through stable canonical inbox envelopes, and feeds projection
+snapshots/events through `ClientRuntime` with durable cursors and fail-closed
+gap handling. The remaining checklist stays open until all detail panels and
+workflow behavior tests leave their legacy Convex reads/writes behind the
+explicit rollback adapter.
+
 - [ ] Browser actions submit canonical command envelopes with stable command IDs
 - [ ] Browser state consumes snapshots plus ordered events and stores a confirmed cursor
 - [ ] Reconnect resumes without gaps or duplicates and visibly fails closed on a gap

@@ -51,6 +51,21 @@ This proves the deterministic side-effect-safe shadow seam. It does not turn
 the protected real Codex harness into ordinary CI, and the real-provider
 checkpoint/file-edit/restart gate remains required before canary promotion.
 
+## Update — 2026-07-23: reversible browser canonical boundary
+
+The browser now has an explicit `VITE_RELAY_PROJECTION_ENABLED=1` cutover
+flag. When enabled, run discovery reads projection summaries, core create,
+turn, stop, approval, and checkpoint-restore actions submit stable canonical
+inbox envelopes, and `useProjectionRun` decodes projection snapshots/events
+through `ClientRuntime`. Confirmed cursors are persisted in browser storage;
+snapshot regression and sequence gaps visibly fail closed. The legacy boundary
+remains the default rollback path.
+
+Focused client/browser verification passes 13 tests, including canonical ID
+stability, snapshot reduction, cursor confirmation, reconnect, terminal
+handling, and gap failure. Full detail-panel migration and end-to-end browser
+behavior coverage remain open before this flag can be promoted beyond canary.
+
 ## Two real, previously-undetected bugs found and fixed
 
 Both existed in code shipped and "complete" per prior sessions' ticket

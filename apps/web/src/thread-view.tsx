@@ -18,12 +18,13 @@ import { resolveHandoffStage } from "./handoff-trace-utils";
 import { Composer, type SlashCommandEntry } from "./composer";
 import { InspectorPanel } from "./inspector";
 import { TerminalDrawer } from "./terminal-drawer";
-import { createThreadRef, canonicalRunData, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile } from "./run-data";
+import { canonicalCommandEnvelope, canonicalRunData, createThreadRef, projectionCutoverEnabled, submitCanonicalCommand, toLegacyRunSummaries, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile, type ProjectionRunSummary } from "./run-data";
 import { resolveWorkbenchView } from "./router";
 import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
+import { useProjectionRun } from "./canonical-runtime";
 
 const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -89,9 +90,10 @@ export function ThreadView({
 }) {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { view?: unknown };
-  const threads = useQuery(listThreads, { projectId }) as LegacyRunSummary[] | undefined;
+  const threads = toLegacyRunSummaries(useQuery(listThreads, { projectId }) as Array<LegacyRunSummary | ProjectionRunSummary> | undefined);
   const create = useMutation(createThreadRef);
   const send = useMutation(sendUserMessage);
+  const submitCanonical = useMutation(submitCanonicalCommand);
   const enqueue = useMutation(enqueueCommand);
   const enqueueGit = useMutation(enqueueGitAction);
   const createComment = useMutation(createDiffComment);
@@ -122,6 +124,7 @@ export function ThreadView({
   const [directiveReceipt, setDirectiveReceipt] = useState<"accepted" | "failed" | undefined>();
   const activeThreadId = requestedThreadId ?? threads?.[0]?._id;
   const activeThread = threads?.find((thread) => thread._id === activeThreadId);
+  const projectionRun = useProjectionRun(projectionCutoverEnabled ? activeThreadId : undefined);
   const requestedThreadMissing = Boolean(requestedThreadId && threads && !activeThread);
   const isPlanRun = activeThread?.mode === "plan";
   const messages = useQuery(listMessages, activeThreadId ? { threadId: activeThreadId } : "skip");
@@ -163,7 +166,19 @@ export function ThreadView({
 
   async function startThread(mode: "chat" | "plan" = "chat") {
     const threadId = await create({ mode, projectId, title: mode === "plan" ? "Untitled plan" : "Untitled task" });
+    if (projectionCutoverEnabled) {
+      await submitCanonical(canonicalCommandEnvelope({ kind: "run.create", payload: { mode, projectId }, runId: threadId, threadId }));
+    }
     void navigate({ to: "/projects/$projectId/threads/$threadId", params: { projectId, threadId }, search: { view: mode === "plan" ? "plan" : "session" } });
+  }
+
+  async function submitRunCommand(kind: string, payload: Record<string, unknown>): Promise<void> {
+    if (!activeThreadId) return;
+    if (projectionCutoverEnabled) {
+      await submitCanonical(canonicalCommandEnvelope({ kind, payload, runId: activeThreadId, threadId: activeThreadId }));
+      return;
+    }
+    if (kind === "turn.send") await send({ content: String(payload.prompt ?? ""), threadId: activeThreadId });
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -173,7 +188,7 @@ export function ThreadView({
     setIsSubmittingDirective(true);
     setDirectiveReceipt(undefined);
     try {
-      await send({ content: outgoingContent, threadId: activeThreadId });
+      await submitRunCommand("turn.send", { prompt: outgoingContent });
       setContent("");
       setAttachments([]);
       setAttachmentError(undefined);
@@ -204,7 +219,8 @@ export function ThreadView({
   async function submitCommand(event: FormEvent) {
     event.preventDefault();
     if (!activeThreadId || !command.trim()) return;
-    await enqueue({ command: command.trim(), threadId: activeThreadId });
+    if (projectionCutoverEnabled) await submitRunCommand("turn.send", { prompt: command.trim() });
+    else await enqueue({ command: command.trim(), threadId: activeThreadId });
     setCommand("");
   }
 
@@ -218,7 +234,7 @@ export function ThreadView({
     status: activeThread.status,
   }) : "request";
 
-  const activeStatus = activeThread?.status ?? "idle";
+  const activeStatus = (projectionRun.state?.snapshot?.status ?? activeThread?.status ?? "idle") as ThreadStatus;
   const latestGitAction = gitActions?.at(-1);
   const diffSummary = summarizeFiles(splitFiles(diff?.content ?? ""));
   const gitActionRunning = latestGitAction?.status === "queued" || latestGitAction?.status === "running";
@@ -256,20 +272,21 @@ export function ThreadView({
         )}
       </div>
       <div className="run-bar-actions">
-        {activeThreadId && activeThread ? <ThreadRunControls onStop={() => stop({ threadId: activeThreadId })} status={activeThread.status} stopRequested={activeThread.stopRequested ?? false} /> : null}
+        {activeThreadId && activeThread ? <ThreadRunControls onStop={() => projectionCutoverEnabled ? submitRunCommand("run.stop", { reason: "user" }) : stop({ threadId: activeThreadId })} status={activeThread.status} stopRequested={activeThread.stopRequested ?? false} /> : null}
         <button aria-label="Toggle terminal drawer" aria-pressed={terminalOpen} className="run-bar-toggle" onClick={onToggleTerminal} title="Toggle terminal (⌘J)" type="button"><span aria-hidden="true">▥</span></button>
         <button aria-label="Toggle inspector" aria-pressed={inspectorOpen} className="run-bar-toggle" onClick={onToggleInspector} title="Toggle inspector (⌘I)" type="button"><span aria-hidden="true">▦</span></button>
       </div>
     </header>
     {activeThreadId ? <>
+      {projectionRun.error ? <p aria-live="assertive" className="projection-error">Projection unavailable — refusing to show newer run state: {projectionRun.error}</p> : null}
       <WorkbenchTabs active={activeToolSurface} onChange={setToolSurface} showPlan={hasPlan} />
       <div className="thread-workbench" data-inspector-open={inspectorOpen}>
         <div className="task-canvas-column">
           <section aria-label="Task canvas" aria-labelledby={`workbench-tab-${activeToolSurface}`} className="run-surface" id="workbench-panel" role="tabpanel">
             {activeToolSurface === "session" ? <>
               <McpElicitationCards items={mcpElicitations ?? []} onCancel={(elicitationId) => cancelElicitation({ elicitationId })} onSubmit={(input) => submitElicitation(input)} />
-              <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => resolve(input)} />
-              <ThreadMessages checkpoints={checkpoints ?? []} messages={messages ?? []} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
+              <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => projectionCutoverEnabled ? submitRunCommand("approval.resolve", { approvalId: input.approvalId, resolution: input.decision }) : resolve(input)} />
+              <ThreadMessages checkpoints={checkpoints ?? []} messages={messages ?? []} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => projectionCutoverEnabled ? submitRunCommand("checkpoint.restore", { checkpointId }) : restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
               <div aria-hidden="true" ref={scrollBottomRef} />
             </> : null}
             {activeToolSurface === "changes" ? <section className="diff-panel"><header className="panel-heading"><div><span>Review workspace</span><h2>Changes</h2></div>{diffComments?.some((comment) => !comment.resolved) ? <strong>{diffComments.filter((comment) => !comment.resolved).length} unresolved</strong> : null}</header><CheckpointComparison checkpoints={checkpoints ?? []} onCompare={async (input) => { const comparisonId = await compareCheckpoints({ ...input, threadId: activeThreadId }); setRequestedComparisonId(comparisonId); setShowComparison(true); }} />{showComparison ? <button className="current-diff" onClick={() => setShowComparison(false)} type="button">Current changes</button> : null}<p aria-live="polite" className="comparison-status">{showComparison ? `Comparison: ${activeComparison?.status ?? "queued"}` : ""}</p><DiffView comments={showComparison ? [] : diffComments ?? []} content={showComparison && activeComparison?.status === "complete" ? activeComparison.content ?? "No differences." : diff?.content ?? "No changes."} onCreateComment={showComparison ? undefined : (input) => createComment({ ...input, threadId: activeThreadId })} />

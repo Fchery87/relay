@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { createCanonicalRuntime } from "./canonical-runtime";
+import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
-test("active app uses projection runs and not the legacy boundary", () => {
-  const app = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
-  expect(app).toContain("canonicalRunData.listRuns");
-  expect(app).not.toContain("legacyRunData");
+test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
+  expect(resolveRunData(true).source).toBe("projection");
+  expect(resolveRunData(true).getRunSnapshot).toBeDefined();
+  expect(resolveRunData(false).source).toBe("legacy");
 });
 
 test("canonical web runtime is backed by client runtime", () => {
@@ -15,4 +15,14 @@ test("canonical web runtime is backed by client runtime", () => {
     submitCommand: async () => { throw new Error("not used"); },
   });
   expect(runtime).toBeDefined();
+});
+
+test("canonical commands have stable IDs and immutable envelopes", () => {
+  const first = canonicalCommandEnvelope({ kind: "turn.send", payload: { prompt: "hello" }, runId: "run-1", threadId: "run-1" });
+  const retry = canonicalCommandEnvelope({ kind: "turn.send", payload: { prompt: "hello" }, runId: "run-1", threadId: "run-1" });
+  const changed = canonicalCommandEnvelope({ kind: "turn.send", payload: { prompt: "different" }, runId: "run-1", threadId: "run-1" });
+  expect(first.commandId).toBe(retry.commandId);
+  expect(first.payloadJson).toBe(retry.payloadJson);
+  expect(changed.commandId).not.toBe(first.commandId);
+  expect(canonicalCommandId("run-1", "turn.send", { prompt: "hello" })).toBe(first.commandId);
 });

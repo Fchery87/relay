@@ -1,5 +1,6 @@
 import type { RunSnapshot, EventEnvelope, CanonicalEventType } from "@relay/contracts";
 import type { RunId } from "@relay/contracts";
+import { reduceVisibleRun } from "./event-reducer";
 
 // ---------------------------------------------------------------------------
 // Client runtime — snapshot+sequence state, ordered delta application,
@@ -8,7 +9,7 @@ import type { RunId } from "@relay/contracts";
 
 export type ClientState = {
   readonly runId: RunId;
-  readonly snapshot?: RunSnapshot;
+  snapshot?: RunSnapshot;
   cursor: number;
   terminal: boolean;
   connected: boolean;
@@ -35,6 +36,11 @@ export type ClientConfig = {
   onEvent?(event: EventEnvelope<CanonicalEventType, unknown>): void;
   /** Called when the state reaches a terminal status. */
   onTerminal?(status: string): void;
+  /** Optional durable cursor sink, called only after an event is applied. */
+  cursorStore?: {
+    load(runId: string): number | null | undefined;
+    save(runId: string, sequence: number): void;
+  };
 };
 
 export class ClientRuntime {
@@ -48,6 +54,10 @@ export class ClientRuntime {
     if (!snapshot) {
       throw new Error(`Run not found: ${runId}`);
     }
+    const confirmedCursor = this.config.cursorStore?.load(runId);
+    if (confirmedCursor !== null && confirmedCursor !== undefined && confirmedCursor > snapshot.sequence) {
+      throw new Error(`Projection snapshot is behind confirmed cursor for run ${runId}: ${snapshot.sequence} < ${confirmedCursor}`);
+    }
 
     const state: ClientState = {
       runId: snapshot.runId,
@@ -59,6 +69,7 @@ export class ClientRuntime {
     };
 
     this.state.set(runId, state);
+    this.config.cursorStore?.save(runId, state.cursor);
 
     // Apply events after the snapshot
     await this.catchUp(runId);
@@ -79,6 +90,9 @@ export class ClientRuntime {
     const commandId = `${runId}:${kind}:${stablePayloadId(payload)}`;
     const snapshot = await this.config.submitCommand({ commandId, kind, runId, payload });
     const state = this.state.get(runId);
+    if (state && snapshot.sequence < state.cursor) {
+      throw new Error(`Projection snapshot regressed for run ${runId}: ${snapshot.sequence} < ${state.cursor}`);
+    }
     const updated: ClientState = {
       runId: snapshot.runId,
       snapshot,
@@ -88,6 +102,7 @@ export class ClientRuntime {
       fresh: true,
     };
     this.state.set(runId, updated);
+    this.config.cursorStore?.save(runId, updated.cursor);
     await this.catchUp(runId);
     return updated;
   }
@@ -110,24 +125,33 @@ export class ClientRuntime {
     try { events = await this.config.fetchEvents(runId, state.cursor); state.connected = true; state.lastError = undefined; }
     catch (error) { state.connected = false; state.fresh = false; state.lastError = error instanceof Error ? error.message : String(error); throw error; }
 
-    const orderedEvents = [...events].sort((left, right) => left.sequence - right.sequence);
-    for (const ev of orderedEvents) {
-      if (ev.sequence <= state.cursor) continue; // already applied
-      if (ev.sequence !== state.cursor + 1) {
-        throw new Error(`Projection gap for run ${runId}: expected sequence ${state.cursor + 1}, received ${ev.sequence}`);
-      }
-      if (this.config.onEvent) this.config.onEvent(ev);
-      state.cursor = ev.sequence;
+    try {
+      const orderedEvents = [...events].sort((left, right) => left.sequence - right.sequence);
+      for (const ev of orderedEvents) {
+        if (ev.sequence <= state.cursor) continue; // already applied
+        if (ev.sequence !== state.cursor + 1) {
+          throw new Error(`Projection gap for run ${runId}: expected sequence ${state.cursor + 1}, received ${ev.sequence}`);
+        }
+        state.snapshot = state.snapshot ? reduceVisibleRun(state.snapshot, ev) : state.snapshot;
+        if (this.config.onEvent) this.config.onEvent(ev);
+        state.cursor = ev.sequence;
+        this.config.cursorStore?.save(runId, state.cursor);
 
-      // A completed turn is not the same as a completed run.
-      if (ev.type === "run.stopped" || ev.type === "run.failed") {
-        state.terminal = true;
-        if (this.config.onTerminal) this.config.onTerminal(ev.type);
+        // A completed turn is not the same as a completed run.
+        if (ev.type === "run.stopped" || ev.type === "run.failed") {
+          state.terminal = true;
+          if (this.config.onTerminal) this.config.onTerminal(ev.type);
+        }
       }
+      state.fresh = true;
+      this.state.set(runId, state);
+    } catch (error) {
+      state.connected = false;
+      state.fresh = false;
+      state.lastError = error instanceof Error ? error.message : String(error);
+      this.state.set(runId, state);
+      throw error;
     }
-
-    state.fresh = true;
-    this.state.set(runId, state);
   }
 }
 

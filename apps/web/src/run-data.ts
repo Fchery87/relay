@@ -71,6 +71,23 @@ export type ProjectionRunSummary = {
   updatedAt: number;
 };
 
+export type ProjectionSnapshotDocument = {
+  projectId: string;
+  runId: string;
+  sequence: number;
+  snapshotJson: string;
+};
+
+export type ProjectionEventDocument = {
+  eventId: string;
+  occurredAt: number;
+  payloadJson: string;
+  runId: string;
+  sequence: number;
+  streamVersion?: number;
+  type: string;
+};
+
 export type RunDataSource = "legacy" | "projection";
 
 export type RunDataBoundary = {
@@ -86,9 +103,9 @@ export const listLegacyRuns = makeFunctionReference<"query", { projectId: string
 
 export const listProjectionRuns = makeFunctionReference<"query", { projectId: string }, ProjectionRunSummary[]>("projections/publish:listProjectionRuns");
 
-export const getProjectionSnapshot = makeFunctionReference<"query", { runId: string }, Record<string, unknown> | null>("projections/publish:getRunSnapshot");
+export const getProjectionSnapshot = makeFunctionReference<"query", { runId: string }, ProjectionSnapshotDocument | null>("projections/publish:getRunSnapshot");
 
-export const listProjectionEvents = makeFunctionReference<"query", { runId: string; afterSequence: number; limit: number }, Array<{ eventId: string; type: string; payload: unknown; sequence: number }>>("projections/publish:listRunEvents");
+export const listProjectionEvents = makeFunctionReference<"query", { runId: string; afterSequence: number; limit: number }, ProjectionEventDocument[]>("projections/publish:listRunEvents");
 
 /** Resolve the run-data boundary at app startup. */
 export function resolveRunData(projectionEnabled: boolean): RunDataBoundary {
@@ -107,7 +124,9 @@ export function resolveRunData(projectionEnabled: boolean): RunDataBoundary {
  * legacy — projections are only published by the kernel-mode daemon, so
  * projection reads return nothing until cutover. Switch back to
  * `projectionRunData` when kernel becomes the effective default. */
-export const canonicalRunData: RunDataBoundary = { source: "legacy", listRuns: listLegacyRuns };
+/** Reversible browser cutover flag; legacy remains the safe default. */
+export const projectionCutoverEnabled = import.meta.env?.VITE_RELAY_PROJECTION_ENABLED === "1";
+export const canonicalRunData: RunDataBoundary = resolveRunData(projectionCutoverEnabled);
 /** Projection boundary; becomes canonical at kernel cutover. */
 export const projectionRunData: RunDataBoundary = {
   source: "projection",
@@ -119,8 +138,17 @@ export const projectionRunData: RunDataBoundary = {
 export const legacyRunData: RunDataBoundary = canonicalRunData;
 
 /** Adapt legacy thread rows to the run-summary shape the sidebar and palette render. */
-export function toRunSummaries(threads: LegacyRunSummary[] | undefined): ProjectionRunSummary[] | undefined {
-  return threads?.map((thread) => ({ projectId: "", runId: thread._id, sequence: 0, status: thread.status, title: thread.title, updatedAt: 0 }));
+export function toRunSummaries(threads: ReadonlyArray<LegacyRunSummary | ProjectionRunSummary> | undefined): ProjectionRunSummary[] | undefined {
+  return threads?.map((thread) => "runId" in thread
+    ? thread
+    : ({ projectId: "", runId: thread._id, sequence: 0, status: thread.status, title: thread.title, updatedAt: 0 }));
+}
+
+/** Normalize projection summaries for detail surfaces that still read legacy panels during canary. */
+export function toLegacyRunSummaries(threads: ReadonlyArray<LegacyRunSummary | ProjectionRunSummary> | undefined): LegacyRunSummary[] | undefined {
+  return threads?.map((thread) => "runId" in thread
+    ? ({ _id: thread.runId, status: thread.status as LegacyRunSummary["status"], title: thread.title, mode: "chat" })
+    : thread);
 }
 
 // ---------------------------------------------------------------------------
@@ -142,9 +170,31 @@ export const submitCanonicalCommand = makeFunctionReference<
 >("commands/inbox:submitToInbox");
 
 /** Generate a stable command ID from run and turn context. */
-export function canonicalCommandId(runId: string, kind: string, sequence?: number): string {
-  const seq = sequence ?? Date.now();
-  return `cmd-${kind.replace(".", "-")}-${runId.slice(-8)}-${seq}`;
+export function canonicalCommandId(runId: string, kind: string, payloadOrSequence?: Record<string, unknown> | number): string {
+  const suffix = typeof payloadOrSequence === "number"
+    ? String(payloadOrSequence)
+    : stablePayloadHash(payloadOrSequence ?? {});
+  return `cmd-${kind.replaceAll(".", "-")}-${runId.slice(-8)}-${suffix}`;
+}
+
+export function canonicalCommandEnvelope(input: { kind: string; payload: Record<string, unknown>; runId: string; threadId: string }) {
+  const payloadJson = JSON.stringify(input.payload);
+  const commandId = canonicalCommandId(input.runId, input.kind, input.payload);
+  return {
+    commandId,
+    correlationId: `corr-${commandId}`,
+    kind: input.kind,
+    payloadJson,
+    runId: input.runId,
+    threadId: input.threadId,
+  };
+}
+
+function stablePayloadHash(payload: Record<string, unknown>): string {
+  const json = JSON.stringify(payload, Object.keys(payload).sort());
+  let hash = 2166136261;
+  for (let index = 0; index < json.length; index++) hash = Math.imul(hash ^ json.charCodeAt(index), 16777619);
+  return (hash >>> 0).toString(16);
 }
 
 // ---------------------------------------------------------------------------

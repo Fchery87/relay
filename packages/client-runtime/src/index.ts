@@ -4,3 +4,4 @@ export * from "./connection-state";
 export * from "./run-cache";
 export * from "./event-reducer";
 export * from "./sync-supervisor";
+export type { CanonicalEventType, EventEnvelope, RunSnapshot } from "@relay/contracts";

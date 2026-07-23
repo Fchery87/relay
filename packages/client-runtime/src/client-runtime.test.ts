@@ -96,4 +96,28 @@ describe("ClientRuntime", () => {
     const state = await rt.connect("run-1");
     expect(state.terminal).toBe(false);
   });
+
+  test("reduces applied events into the visible snapshot and persists confirmed cursors", async () => {
+    const saved: number[] = [];
+    const rt = new ClientRuntime(cfg({
+      cursorStore: { load: () => 0, save: (_runId: string, sequence: number) => saved.push(sequence) },
+      fetchEvents: async () => [ev(1, "run.stopped")],
+    }));
+    const state = await rt.connect("run-1");
+    expect(state.snapshot?.sequence).toBe(1);
+    expect(state.snapshot?.status).toBe("stopped");
+    expect(saved).toEqual([0, 1]);
+  });
+
+  test("marks the connection failed when a projection gap is detected", async () => {
+    const rt = new ClientRuntime(cfg({ fetchEvents: async () => [ev(3)] }));
+    await expect(rt.connect("run-1")).rejects.toThrow("Projection gap");
+    expect(rt.get("run-1")?.connected).toBe(false);
+    expect(rt.get("run-1")?.fresh).toBe(false);
+  });
+
+  test("fails closed when the server snapshot is behind the confirmed cursor", async () => {
+    const rt = new ClientRuntime(cfg({ cursorStore: { load: () => 4, save: () => undefined } }));
+    await expect(rt.connect("run-1")).rejects.toThrow("behind confirmed cursor");
+  });
 });
