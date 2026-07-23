@@ -47,6 +47,13 @@ const httpFixture = httpPort === undefined ? undefined : (() => {
   }
 })();
 const stdioAvailable = await canUseStdio();
+const requireFixtures = Bun.env.RELAY_REQUIRE_MCP_FIXTURES === "1";
+if (requireFixtures && httpFixture === undefined) {
+  throw new Error("MCP conformance requires a loopback HTTP fixture, but Bun.serve could not bind a local port");
+}
+if (requireFixtures && !stdioAvailable) {
+  throw new Error("MCP conformance requires a local stdio child process, but the fixture probe failed");
+}
 afterAll(() => httpFixture?.stop(true));
 
 test.skipIf(httpFixture === undefined)("calls a fixture MCP server over streamable HTTP through governance", async () => {
