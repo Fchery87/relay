@@ -4,6 +4,10 @@ import { ClientRuntime, type CanonicalEventType, type ClientConfig, type ClientS
 import type { ProjectionEventDocument, ProjectionSnapshotDocument } from "./run-data";
 import { getProjectionSnapshot, listProjectionEvents, ProjectionCursorManager } from "./run-data";
 import type { ThreadMessage } from "./thread-messages";
+import type { ThreadCheckpoint } from "./thread-messages";
+import type { ThreadEvent } from "./thread-activity";
+import type { Approval, AuditEntry } from "./governance-panel";
+import type { UsageSummary } from "./usage-panel";
 
 export type ProjectionRunState = {
   readonly error?: string;
@@ -79,6 +83,72 @@ export function projectionEventsToMessages(events: ReadonlyArray<EventEnvelope<C
   }
   return messages;
 }
+
+export function projectionEventsToThreadEvents(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ThreadEvent[] {
+  return events.flatMap((event) => {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (event.type === "activity.completed" || event.type === "activity.failed") {
+      return [{ _id: event.eventId as string, kind: "tool.completed", summary: String(payload.summary ?? payload.error ?? "Activity completed"), tool: String(payload.toolName ?? payload.kind ?? "activity") }];
+    }
+    if (event.type === "checkpoint.restored") return [{ _id: event.eventId as string, kind: "checkpoint.reverted", summary: "Checkpoint restored" }];
+    return [];
+  });
+}
+
+export function projectionEventsToCheckpoints(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ThreadCheckpoint[] {
+  return events.flatMap((event) => {
+    if (event.type !== "checkpoint.captured") return [];
+    const checkpointId = event.payload && typeof event.payload === "object" ? (event.payload as { checkpointId?: unknown }).checkpointId : undefined;
+    if (typeof checkpointId !== "string") return [];
+    return [{ _id: checkpointId, messageId: event.turnId as string ?? event.eventId as string }];
+  });
+}
+
+export function projectionEventsToApprovals(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): Approval[] {
+  const approvals = new Map<string, Approval>();
+  for (const event of events) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    const approvalId = String(payload.approvalId ?? "");
+    if (!approvalId) continue;
+    if (event.type === "approval.requested") approvals.set(approvalId, { _id: approvalId, capability: normalizeCapability(payload.capability), decision: "pending", risk: normalizeRisk(payload.risk), summary: String(payload.details ?? "Approval required") });
+    if (event.type === "approval.resolved") {
+      const existing = approvals.get(approvalId);
+      if (existing) approvals.set(approvalId, { ...existing, decision: payload.resolution === "allow" ? "allow" : "deny" });
+    }
+  }
+  return [...approvals.values()];
+}
+
+export function projectionEventsToAudit(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): AuditEntry[] {
+  return projectionEventsToApprovals(events)
+    .filter((approval) => approval.decision !== "pending")
+    .map((approval) => ({ _id: `audit:${approval._id}`, capability: approval.capability, decision: approval.decision === "allow" ? "allow" : "deny", risk: approval.risk, summary: approval.summary }));
+}
+
+export function projectionEventsToUsage(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): UsageSummary {
+  const records = events.flatMap((event) => {
+    if (event.type !== "usage.recorded") return [];
+    const payload = event.payload as { cacheReadTokens: number; cacheWriteTokens: number; inputTokens: number; modelId: string; outputTokens: number; thinkingTokens: number };
+    return [{ _creationTime: event.occurredAt, _id: event.eventId as string, cacheReadTokens: payload.cacheReadTokens, cacheWriteTokens: payload.cacheWriteTokens, callId: event.eventId as string, costUsd: 0, inputTokens: payload.inputTokens, messageId: event.turnId as string ?? event.eventId as string, modelId: payload.modelId, outputTokens: payload.outputTokens, role: "assistant", thinkingTokens: payload.thinkingTokens, threadId: event.runId as string }];
+  });
+  return {
+    budgetUsd: null,
+    records,
+    totals: {
+      cacheReadTokens: records.reduce((sum, record) => sum + record.cacheReadTokens, 0),
+      cacheWriteTokens: records.reduce((sum, record) => sum + record.cacheWriteTokens, 0),
+      costUsd: 0,
+      inputTokens: records.reduce((sum, record) => sum + record.inputTokens, 0),
+      outputTokens: records.reduce((sum, record) => sum + record.outputTokens, 0),
+      thinkingTokens: records.reduce((sum, record) => sum + (record.thinkingTokens ?? 0), 0),
+      thinkingTokensUnavailableCalls: records.filter((record) => record.thinkingTokens === null).length,
+    },
+    truncated: false,
+  };
+}
+
+function normalizeCapability(value: unknown): Approval["capability"] { return value === "read" || value === "edit" || value === "exec" || value === "task" ? value : "task"; }
+function normalizeRisk(value: unknown): Approval["risk"] { return value === "low" || value === "high" || value === "critical" ? value : "high"; }
 
 function decodeSnapshot(document: ProjectionSnapshotDocument): RunSnapshot {
   const parsed = JSON.parse(document.snapshotJson) as RunSnapshot;

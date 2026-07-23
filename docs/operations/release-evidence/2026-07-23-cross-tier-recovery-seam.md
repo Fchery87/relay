@@ -64,7 +64,9 @@ remains the default rollback path.
 Focused client/browser verification passes 15 tests, including canonical ID
 stability, snapshot reduction, cursor confirmation, reconnect, terminal
 handling, gap failure, and ordered message projection. Full detail-panel migration and end-to-end browser
-behavior coverage remain open before this flag can be promoted beyond canary.
+behavior coverage remain open before this flag can be promoted beyond canary;
+the diff/comment and checkpoint-comparison workflows still use their explicit
+legacy adapters while their canonical event-backed equivalents are completed.
 
 ## Two real, previously-undetected bugs found and fixed
 

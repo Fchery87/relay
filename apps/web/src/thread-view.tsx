@@ -24,7 +24,7 @@ import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
-import { projectionEventsToMessages, useProjectionRun } from "./canonical-runtime";
+import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpoints, projectionEventsToMessages, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
 
 const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -226,16 +226,21 @@ export function ThreadView({
 
   const hasPlan = isPlanRun && activeThread?.planPhase !== undefined;
   const activeToolSurface = toolSurface === "plan" && !hasPlan ? "session" : toolSurface;
-  const pendingApprovalCount = (approvals ?? []).filter((approval) => approval.decision === "pending").length;
+  const activeStatus = (projectionRun.state?.snapshot?.status ?? activeThread?.status ?? "idle") as ThreadStatus;
+  const projectionEvents = projectionRun.events ?? [];
+  const visibleMessages = projectionCutoverEnabled ? projectionEventsToMessages(projectionEvents) : messages ?? [];
+  const visibleEvents = projectionCutoverEnabled ? projectionEventsToThreadEvents(projectionEvents) : events ?? [];
+  const visibleApprovals = projectionCutoverEnabled ? projectionEventsToApprovals(projectionEvents) : approvals ?? [];
+  const visibleAudit = projectionCutoverEnabled ? projectionEventsToAudit(projectionEvents) : audit ?? [];
+  const visibleCheckpoints = projectionCutoverEnabled ? projectionEventsToCheckpoints(projectionEvents) : checkpoints ?? [];
+  const visibleUsage = projectionCutoverEnabled ? projectionEventsToUsage(projectionEvents) : usage ?? EMPTY_USAGE_SUMMARY;
+  const pendingApprovalCount = visibleApprovals.filter((approval) => approval.decision === "pending").length;
   const currentStage = activeThread ? resolveHandoffStage({
     hasPendingApproval: pendingApprovalCount > 0,
     mode: activeThread.mode ?? "chat",
     planPhase: activeThread.planPhase,
-    status: activeThread.status,
+    status: activeStatus,
   }) : "request";
-
-  const activeStatus = (projectionRun.state?.snapshot?.status ?? activeThread?.status ?? "idle") as ThreadStatus;
-  const visibleMessages = projectionCutoverEnabled ? projectionEventsToMessages(projectionRun.events ?? []) : messages ?? [];
   const latestGitAction = gitActions?.at(-1);
   const diffSummary = summarizeFiles(splitFiles(diff?.content ?? ""));
   const gitActionRunning = latestGitAction?.status === "queued" || latestGitAction?.status === "running";
@@ -255,7 +260,7 @@ export function ThreadView({
       permissionProfile={permissionProfile}
       projectName={projectName}
       subagentRuns={subagentRuns ?? []}
-      usage={usage ?? EMPTY_USAGE_SUMMARY}
+      usage={visibleUsage}
     />
   ) : null;
 
@@ -286,18 +291,18 @@ export function ThreadView({
           <section aria-label="Task canvas" aria-labelledby={`workbench-tab-${activeToolSurface}`} className="run-surface" id="workbench-panel" role="tabpanel">
             {activeToolSurface === "session" ? <>
               <McpElicitationCards items={mcpElicitations ?? []} onCancel={(elicitationId) => cancelElicitation({ elicitationId })} onSubmit={(input) => submitElicitation(input)} />
-              <GovernancePanel approvals={approvals ?? []} audit={audit ?? []} onResolve={(input) => projectionCutoverEnabled ? submitRunCommand("approval.resolve", { approvalId: input.approvalId, resolution: input.decision }) : resolve(input)} />
-              <ThreadMessages checkpoints={checkpoints ?? []} messages={visibleMessages} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => projectionCutoverEnabled ? submitRunCommand("checkpoint.restore", { checkpointId }) : restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
+              <GovernancePanel approvals={visibleApprovals} audit={visibleAudit} onResolve={(input) => projectionCutoverEnabled ? submitRunCommand("approval.resolve", { approvalId: input.approvalId, resolution: input.decision }) : resolve(input)} />
+              <ThreadMessages checkpoints={visibleCheckpoints} messages={visibleMessages} onRestore={activeThread?.status === "running" || activeThread?.status === "awaiting-approval" || activeThread?.status === "restoring" ? undefined : (checkpointId) => projectionCutoverEnabled ? submitRunCommand("checkpoint.restore", { checkpointId }) : restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
               <div aria-hidden="true" ref={scrollBottomRef} />
             </> : null}
-            {activeToolSurface === "changes" ? <section className="diff-panel"><header className="panel-heading"><div><span>Review workspace</span><h2>Changes</h2></div>{diffComments?.some((comment) => !comment.resolved) ? <strong>{diffComments.filter((comment) => !comment.resolved).length} unresolved</strong> : null}</header><CheckpointComparison checkpoints={checkpoints ?? []} onCompare={async (input) => { const comparisonId = await compareCheckpoints({ ...input, threadId: activeThreadId }); setRequestedComparisonId(comparisonId); setShowComparison(true); }} />{showComparison ? <button className="current-diff" onClick={() => setShowComparison(false)} type="button">Current changes</button> : null}<p aria-live="polite" className="comparison-status">{showComparison ? `Comparison: ${activeComparison?.status ?? "queued"}` : ""}</p><DiffView comments={showComparison ? [] : diffComments ?? []} content={showComparison && activeComparison?.status === "complete" ? activeComparison.content ?? "No differences." : diff?.content ?? "No changes."} onCreateComment={showComparison ? undefined : (input) => createComment({ ...input, threadId: activeThreadId })} />
+            {activeToolSurface === "changes" ? <section className="diff-panel"><header className="panel-heading"><div><span>Review workspace</span><h2>Changes</h2></div>{diffComments?.some((comment) => !comment.resolved) ? <strong>{diffComments.filter((comment) => !comment.resolved).length} unresolved</strong> : null}</header><CheckpointComparison checkpoints={visibleCheckpoints} onCompare={async (input) => { const comparisonId = await compareCheckpoints({ ...input, threadId: activeThreadId }); setRequestedComparisonId(comparisonId); setShowComparison(true); }} />{showComparison ? <button className="current-diff" onClick={() => setShowComparison(false)} type="button">Current changes</button> : null}<p aria-live="polite" className="comparison-status">{showComparison ? `Comparison: ${activeComparison?.status ?? "queued"}` : ""}</p><DiffView comments={showComparison ? [] : diffComments ?? []} content={showComparison && activeComparison?.status === "complete" ? activeComparison.content ?? "No differences." : diff?.content ?? "No changes."} onCreateComment={showComparison ? undefined : (input) => createComment({ ...input, threadId: activeThreadId })} />
               {!showComparison && diffComments?.some((comment) => !comment.resolved) ? <button className="address-comments" onClick={() => void send({ content: "Address the unresolved review comments.", threadId: activeThreadId })} type="button">Address comments</button> : null}
               <div className="ship-controls"><button className="ship-stage" disabled={gitActionRunning || diffSummary.fileCount === 0} onClick={() => setPendingGitAction("stage")} type="button">Stage all{diffSummary.fileCount > 0 ? ` (${diffSummary.fileCount})` : ""}</button><div className="ship-commit-group"><input aria-label="Commit message" onChange={(event) => setCommitMessage(event.target.value)} placeholder="Commit message" value={commitMessage} /><button className="button-primary ship-commit" disabled={!commitMessage.trim() || gitActionRunning} onClick={() => setPendingGitAction("commit")} type="button">Commit</button></div><button className="ship-push" disabled={gitActionRunning} onClick={() => setPendingGitAction("push")} type="button">Push<span className="ship-push-impact">remote</span></button></div>
               <p aria-live="polite" className="ship-status" data-status={latestGitAction?.status ?? "idle"}>{latestGitAction ? `${latestGitAction.action}: ${latestGitAction.status}` : "No Git actions yet."}</p>
             </section> : null}
             {activeToolSurface === "plan" && isPlanRun && activeThread?.planPhase ? <PlanPanel buildModelId={activeThread.buildModelId ?? DEFAULT_MODEL_ID} canConfigureModels={activeThread.status === "idle"} onApprove={(input) => approve({ ...input, threadId: activeThreadId })} onModelPairChange={(input) => savePlanModels({ ...input, threadId: activeThreadId })} onUpdateDraft={(input) => savePlanDraft({ ...input, threadId: activeThreadId })} plan={plan ?? null} planModelId={activeThread.planModelId ?? DEFAULT_MODEL_ID} phase={activeThread?.planPhase ?? "planning"} /> : null}
           </section>
-          <TerminalDrawer command={command} events={events ?? []} onCommandChange={setCommand} onSubmitCommand={submitCommand} open={terminalOpen} />
+          <TerminalDrawer command={command} events={visibleEvents} onCommandChange={setCommand} onSubmitCommand={submitCommand} open={terminalOpen} />
           {isPlanRun && activeThread?.planPhase === "review" ? null : (
             <Composer
               attachmentError={attachmentError}
