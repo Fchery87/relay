@@ -2,11 +2,10 @@
 # ---------------------------------------------------------------------------
 # Restore a self-hosted Convex + daemon backup into an ISOLATED staging
 # directory (never the live convex-selfhost or daemon home) and verify
-# manifest checksums. Mechanical restore + checksum verification only —
-# functional acceptance (schema deploy, sign-in, pairing, daemon reconnect,
-# projection reconciliation) is a manual follow-up per
-# docs/operations/backup-recovery.md until an automated staging-acceptance
-# harness exists.
+# manifest checksums. For repeatable functional acceptance (schema deploy,
+# sign-in, pairing, machine/project/thread reads, and projection metrics), run
+# scripts/restore-acceptance.ts after this mechanical restore; the remaining
+# kernel-data release evidence is documented in docs/operations/backup-recovery.md.
 #
 # Usage:
 #   scripts/restore-self-hosted-convex.sh --backup DIR --staging DIR [--verify-only]

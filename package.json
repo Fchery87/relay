@@ -23,6 +23,7 @@
     "convex:verify": "bun run scripts/verify-self-hosted-convex.ts",
     "convex:backup": "scripts/backup-self-hosted-convex.sh",
     "convex:restore": "scripts/restore-self-hosted-convex.sh",
+    "convex:restore:acceptance": "bun run scripts/restore-acceptance.ts",
     "daemon:connect": "cd apps/daemon && bun run connect",
     "daemon:dev": "cd apps/daemon && bun run dev",
     "web:dev": "cd apps/web && bun run dev",

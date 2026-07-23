@@ -58,7 +58,7 @@ Use `--verify-only` to check integrity without copying anything.
   together). Caught and fixed via a real restore rehearsal, not by
   inspection.
 
-### Manual follow-up (not yet automated as a single script)
+### Functional acceptance
 
 The restore script prints these as next steps. A full run was rehearsed live
 on 2026-07-22 and again on 2026-07-23 against this repo's own dev instance:
@@ -114,13 +114,40 @@ on 2026-07-22 and again on 2026-07-23 against this repo's own dev instance:
    none echoed `instance-secret.txt`/`admin-key.txt`/device-token values.
 7. **Tear down and delete the staging directory.** Done both times.
 
-### Residual, not yet automated
+The repeatable acceptance harness runs the isolated backend and schema deploy,
+then verifies restored password sign-in, owner-scoped machine/project reads,
+fresh pairing, machine registration and heartbeat, thread create/read, and the
+projection metrics query. It never uses the live backend, requires credentials
+only through environment variables, and removes its staging directory on exit
+unless `--keep-staging` is supplied:
 
-- Password sign-in itself (not just account presence) is unverified against
-  restored data.
-- No single script runs steps 1–7 end to end; each step above was run by
-  hand. A `restore-acceptance.ts` harness automating this (matching the
-  pattern of `scripts/soak-legacy-claims.ts`) is still open work.
+```bash
+RELAY_RESTORE_ACCEPTANCE_EMAIL=user@example.com \
+RELAY_RESTORE_ACCEPTANCE_PASSWORD='...' \
+bun run convex:restore:acceptance -- --backup ./relay-backups/2026-07-22
+```
+
+This path passed on 2026-07-23 against a disposable backup containing a real
+isolated backend database and module-storage tree. The generated account,
+machine, project, and thread were temporary, and the backup, staging directory,
+and backend were deleted after the run.
+
+The restored Convex instance secret is still passed to the backend process using
+the upstream-required `--instance-secret` argument; this accepted process-list
+risk is documented in [self-hosted-convex.md](self-hosted-convex.md). The
+restore account's email and password are environment-only.
+
+Use `--backend-bin PATH` when the backend is not at the documented default,
+or `RELAY_CONVEX_BACKEND_BIN`. Use `--staging DIR --keep-staging` when keeping
+the restored files for inspection. The staging copy contains live credentials;
+delete it after inspection.
+
+### Residual release evidence
+
+- The harness does not manufacture kernel-mode command/projection history. A
+  backup containing real `relay-kernel.sqlite` and projection data still needs
+  a release-window rehearsal that reopens the local store and confirms
+  reconciliation/backlog behavior against that data.
 - The stale-`pairings`-document finding above is a real, live issue
   independent of backup/restore — see the note in
   [self-hosted-convex.md](self-hosted-convex.md) — and should be resolved
