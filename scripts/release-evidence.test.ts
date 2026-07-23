@@ -27,6 +27,7 @@ function completeInput() {
     commit: "abc123",
     gates,
     migrationState: "widened-compatible",
+    rehearsalHash: "sha256:backup-rehearsal",
     residualRisks: ["credentialed provider was run in protected CI"],
     sourceArtifacts: ["conformance-ubuntu-latest", "backup-manifest.json"],
     testIds: ["conformance-linux", "restore-acceptance", "cross-tier-recovery"],
@@ -97,6 +98,11 @@ test("serialized release evidence input rejects unknown gate values", () => {
     ...completeInput(),
     gates: { ...gates, providerConformance: "true" },
   })).toThrow("providerConformance");
+});
+
+test("serialized release evidence requires a backup rehearsal hash", () => {
+  const { rehearsalHash: _, ...withoutHash } = completeInput();
+  expect(() => parseReleaseEvidenceInput(withoutHash)).toThrow("rehearsalHash");
 });
 
 test("serialized release evidence rejects unredacted or oversized diagnostic fields", () => {

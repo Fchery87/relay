@@ -165,6 +165,13 @@ any gate is false. The container does not turn local or deterministic output
 into hosted/provider/release evidence; operators must supply those real facts
 in the input document.
 
+The record also carries the reviewed backup/rollback `rehearsalHash`. After
+review, persist its validated gates server-side with
+`bun run release:evidence:record -- --input <record.json>` while supplying
+`CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY` through the
+environment. The recorder refuses blocked evidence before making the internal
+Convex mutation.
+
 The Convex-side narrowing guard independently requires the reviewed proof to
 be recorded server-side. `convex/narrow.ts` is internal-only and rejects a
 caller-supplied rehearsal hash unless it matches the active `releaseEvidence`

@@ -1653,6 +1653,7 @@ export class KernelDaemon {
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private pollTimer?: ReturnType<typeof setInterval>;
+  private flushInFlight: Promise<void> | null = null;
   private startupSpan?: TraceSpan;
 
   /**
@@ -2229,17 +2230,34 @@ export class KernelDaemon {
   }
 
   private async flush(): Promise<void> {
-    await flushProjections({
-      deviceToken: this.config.deviceToken,
-      runtime: this.runtime,
-      projectionSink: this.projectionSink,
-      machineId: this.config.machineId,
-      telemetry: this.projectionTelemetry,
-    });
-    this.canaryTelemetry.projectionBacklog = this.projectionTelemetry.backlog;
-    this.canaryTelemetry.pendingEffects = this.projectionTelemetry.backlog;
-    this.canaryTelemetry.projectionGaps = this.projectionTelemetry.conflicts;
-    this.canaryTelemetry.projectionDivergences = this.projectionTelemetry.conflicts;
+    // Heartbeat-driven flushes and explicit test/control flushes can overlap.
+    // Serialize them so a second publisher cannot claim later outbox rows
+    // while an earlier batch for the same run is still in flight; Convex
+    // correctly rejects that as a projection gap.
+    if (this.flushInFlight) {
+      await this.flushInFlight;
+      return;
+    }
+
+    const operation = (async () => {
+      await flushProjections({
+        deviceToken: this.config.deviceToken,
+        runtime: this.runtime,
+        projectionSink: this.projectionSink,
+        machineId: this.config.machineId,
+        telemetry: this.projectionTelemetry,
+      });
+      this.canaryTelemetry.projectionBacklog = this.projectionTelemetry.backlog;
+      this.canaryTelemetry.pendingEffects = this.projectionTelemetry.backlog;
+      this.canaryTelemetry.projectionGaps = this.projectionTelemetry.conflicts;
+      this.canaryTelemetry.projectionDivergences = this.projectionTelemetry.conflicts;
+    })();
+    this.flushInFlight = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.flushInFlight === operation) this.flushInFlight = null;
+    }
   }
 
   private heartbeatCount = 0;

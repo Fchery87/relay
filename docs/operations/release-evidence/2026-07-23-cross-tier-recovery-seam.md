@@ -366,3 +366,16 @@ boundary rather than only the package suite. The final local Linux run passed
 tests, production build, bundle budget, Codex schema, and security checks.
 This is local deterministic evidence; Linux/macOS/Windows hosted results and
 the credentialed Codex provider lifecycle remain release gates.
+
+## Update — 2026-07-23: current live verification
+
+The current tree reran
+`RELAY_CROSS_TIER=1 bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts`
+against a fresh isolated self-hosted Convex backend after serializing daemon
+projection flushes. The protected evidence artifact completed with **13 pass,
+0 fail, 215 assertions** in 55.11 seconds. This reconfirms the real
+command/projection seam, daemon and backend restart, lost-response retry,
+workspace checkpoint restore, projection fault injection, lease expiry,
+stale-worker fencing, and two-run isolation, and closes the intermittent
+projection-gap failure found during the preceding rerun. It does not promote
+provider, hosted-OS, canary, or release-window gates.

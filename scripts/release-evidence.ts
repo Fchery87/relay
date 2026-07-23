@@ -26,6 +26,7 @@ export type ReleaseEvidenceInput = Readonly<{
   commit: string;
   gates: ReleaseGates;
   migrationState: string;
+  rehearsalHash: string;
   residualRisks: ReadonlyArray<string>;
   sourceArtifacts: ReadonlyArray<string>;
   testIds: ReadonlyArray<string>;
@@ -42,6 +43,7 @@ export type ReleaseEvidence = Readonly<{
   commit: string;
   gates: ReleaseGates;
   migrationState: string;
+  rehearsalHash: string;
   versions: Readonly<{ backend: string; bun: string; daemon: string }>;
   topology: Readonly<{ backend: string; deployment: string; platform: string }>;
   sourceArtifacts: ReadonlyArray<string>;
@@ -134,6 +136,7 @@ export function parseReleaseEvidenceInput(value: unknown): ReleaseEvidenceInput 
     commit: readString(record, "commit"),
     gates: readGates(record.gates),
     migrationState: readString(record, "migrationState"),
+    rehearsalHash: readString(record, "rehearsalHash"),
     residualRisks: readStringArray(record, "residualRisks"),
     sourceArtifacts: readStringArray(record, "sourceArtifacts"),
     testIds: readStringArray(record, "testIds"),
@@ -149,13 +152,14 @@ function boundedRedacted(values: ReadonlyArray<string> | undefined): ReadonlyArr
   return (values ?? []).map((value) => redactSecrets(value).slice(0, MAX_TEXT_LENGTH)).slice(0, MAX_ITEMS);
 }
 
-function hasCompleteFacts(input: Pick<ReleaseEvidenceInput, "commit" | "migrationState" | "residualRisks" | "sourceArtifacts" | "testIds" | "topology" | "versions">): boolean {
+function hasCompleteFacts(input: Pick<ReleaseEvidenceInput, "commit" | "migrationState" | "rehearsalHash" | "residualRisks" | "sourceArtifacts" | "testIds" | "topology" | "versions">): boolean {
   return [
     input.commit,
     input.migrationState,
     input.topology.backend,
     input.topology.deployment,
     input.topology.platform,
+    input.rehearsalHash,
     input.versions.backend,
     input.versions.bun,
     input.versions.daemon,
@@ -185,6 +189,7 @@ export function createReleaseEvidence(input: ReleaseEvidenceInput): ReleaseEvide
     commit: redactSecrets(input.commit).slice(0, MAX_TEXT_LENGTH),
     gates: { ...input.gates },
     migrationState: redactSecrets(input.migrationState).slice(0, MAX_TEXT_LENGTH),
+    rehearsalHash: redactSecrets(input.rehearsalHash).slice(0, MAX_TEXT_LENGTH),
     versions: {
       backend: redactSecrets(input.versions.backend).slice(0, MAX_TEXT_LENGTH),
       bun: redactSecrets(input.versions.bun).slice(0, MAX_TEXT_LENGTH),
@@ -222,8 +227,10 @@ function readReleaseEvidence(value: unknown): ReleaseEvidence {
   assertSafeTextArray(testIds, "testIds");
   const commit = readString(record, "commit");
   const migrationState = readString(record, "migrationState");
+  const rehearsalHash = readString(record, "rehearsalHash");
   assertSafeText(commit, "commit");
   assertSafeText(migrationState, "migrationState");
+  assertSafeText(rehearsalHash, "rehearsalHash");
   const versions = readVersions(record.versions);
   assertSafeText(versions.backend, "versions.backend");
   assertSafeText(versions.bun, "versions.bun");
@@ -239,6 +246,7 @@ function readReleaseEvidence(value: unknown): ReleaseEvidence {
     commit,
     gates,
     migrationState,
+    rehearsalHash,
     versions,
     topology,
     sourceArtifacts,

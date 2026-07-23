@@ -12,6 +12,8 @@ The record has `schemaVersion: 1` and contains:
   exercised;
 - `sourceArtifacts` and `testIds` identifying the evidence that was actually
   supplied;
+- `rehearsalHash`, the reviewed hash of the backup/rollback rehearsal that is
+  required by the Convex narrowing guard;
 - `gates`, with all nine required booleans: `kernelReady`, `shadowParity`,
   `canaryRollout`, `supportedOsConformance`, `providerConformance`,
   `productionAcceptance`, `backupRehearsal`, `releaseWindow`, and
@@ -48,3 +50,12 @@ or a hash mismatch fails closed. Even a complete dry run does not perform live
 contraction: that irreversible deployment operation remains explicitly
 disabled until the separately recorded release-window and rollback procedure
 is approved.
+
+Once a complete record exists, an operator can persist only its validated gate
+facts into the isolated/self-hosted Convex deployment with:
+
+`CONVEX_SELF_HOSTED_URL=... CONVEX_SELF_HOSTED_ADMIN_KEY=... bun run release:evidence:record -- --input <record.json>`
+
+The admin key is read from the environment and is never placed in the child
+process arguments. The command rejects blocked records before contacting
+Convex.

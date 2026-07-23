@@ -47,6 +47,54 @@ test("canary invariant violation persists a redacted marker and stops the kernel
   }
 });
 
+test("serializes overlapping projection flushes from heartbeat and explicit callers", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-flush-daemon-"));
+  const pending = [command("flush-create", "run.create", "run-flush", { projectId: "project-flush" })];
+  const projectedSequences: number[] = [];
+  let activeSinkCalls = 0;
+  let maximumConcurrentSinkCalls = 0;
+  const holdSinkCall = async (): Promise<void> => {
+    activeSinkCalls++;
+    maximumConcurrentSinkCalls = Math.max(maximumConcurrentSinkCalls, activeSinkCalls);
+    await Bun.sleep(25);
+    activeSinkCalls--;
+  };
+  const daemon = new KernelDaemon({
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "flush-test",
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async ({ events }) => {
+        projectedSequences.push(...events.map((event) => event.sequence));
+        await holdSinkCall();
+      },
+      upsertSnapshot: async () => { await holdSinkCall(); },
+      advanceCursor: async () => { await holdSinkCall(); },
+    },
+  });
+
+  try {
+    await daemon.start();
+    await daemon.pollOnce();
+    await Promise.all([daemon.flushOnce(), daemon.flushOnce()]);
+    expect(maximumConcurrentSinkCalls).toBe(1);
+    expect(projectedSequences).toEqual([1]);
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+  }
+});
+
 class BlockingTurnProvider implements TurnModelProvider {
   readonly modelId = "control-test";
   started!: () => void;
