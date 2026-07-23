@@ -7,5 +7,5 @@
 - [ ] Exercise a credentialed provider restart during start, stream, approval, and terminal phases (`real-codex-harness` protected gate).
 - [x] Run three child tasks, inspect results, select integration, and verify conflicts are surfaced (durable workflow/reviewer-jury coverage).
 - [x] Verify redacted history/artifact/handoff export.
-- [x] Run crash, sandbox, security, conformance, acceptance, and bundle gates locally; hosted OS/provider rows remain release evidence gates.
+- [x] Run crash, sandbox, security, conformance, acceptance, and bundle gates locally (`docs/operations/release-evidence/2026-07-23-linux-conformance.md`); hosted OS/provider rows remain release evidence gates.
 - [ ] Record a real release-window rollback rehearsal before schema narrowing or legacy deletion.
