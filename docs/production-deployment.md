@@ -31,6 +31,17 @@ Windows PowerShell:
 irm https://github.com/Fchery87/relay/releases/latest/download/relay-install.ps1 | iex
 ```
 
+The same signed installers perform upgrades in place after verification. To
+remove only the installed Relay binary, run the matching release uninstaller:
+
+```sh
+curl -fsSL https://github.com/Fchery87/relay/releases/latest/download/relay-uninstall.sh | sh
+```
+
+```powershell
+irm https://github.com/Fchery87/relay/releases/latest/download/relay-uninstall.ps1 | iex
+```
+
 Then pair and run the daemon:
 ```bash
 $HOME/.local/bin/relay connect --url https://your-production.convex.cloud

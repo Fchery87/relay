@@ -41,3 +41,5 @@ await writeFile(join(outputDir, "release.json"), `${JSON.stringify({
 }, null, 2)}\n`);
 await copyFile(join(import.meta.dir, "install.sh"), join(outputDir, "relay-install.sh"));
 await copyFile(join(import.meta.dir, "install.ps1"), join(outputDir, "relay-install.ps1"));
+await copyFile(join(import.meta.dir, "uninstall.sh"), join(outputDir, "relay-uninstall.sh"));
+await copyFile(join(import.meta.dir, "uninstall.ps1"), join(outputDir, "relay-uninstall.ps1"));
