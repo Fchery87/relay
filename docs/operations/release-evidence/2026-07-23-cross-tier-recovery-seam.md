@@ -163,3 +163,17 @@ and Convex tests cover the allow/deny paths and private continuation boundary.
 Provider continuation with tool results, true in-flight steering/interrupt
 cancellation, and orchestration-owned checkpoint capture remain open and
 continue to block parity claims for those behaviors.
+
+## Update — 2026-07-23: kernel capability-gap closure
+
+The preceding residual-risk paragraph is historical. Commit `f79fb2b`
+implemented and verified the kernel turn-loop follow-up: provider-neutral
+continuation after tool results, durable approval suspension/resolution,
+concurrent steering and interrupt control effects, and automatic before/after
+hidden Git checkpoints with retry-idempotent refs. Focused daemon and
+orchestration regressions plus the full repository gates pass.
+
+The remaining provider risk is intentionally separate: this evidence still
+does not claim a real Codex/LLM turn. The protected cross-tier job currently
+proves the real isolated backend with deterministic effects; the real-provider
+vertical slice must pass before shadow parity or canary claims are promoted.

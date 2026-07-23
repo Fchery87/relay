@@ -69,7 +69,11 @@ export function normalizeCodexNotification(
       ? (params.turn as Record<string, unknown>)
       : undefined;
   const providerThreadId =
-    typeof params?.threadId === "string" ? params.threadId : undefined;
+    typeof params?.threadId === "string"
+      ? params.threadId
+      : typeof (params?.thread as Record<string, unknown> | undefined)?.id === "string"
+        ? (params?.thread as Record<string, unknown>).id as string
+        : undefined;
   const providerTurnId =
     typeof params?.turnId === "string"
       ? params.turnId
@@ -91,12 +95,13 @@ function normalizeCanonicalNotification(
 ): NormalizedCanonicalEvent[] {
   switch (notification.method) {
     case "thread/created":
+    case "thread/started":
       return [
         {
           type: "provider.session.started",
           payload: {
             providerInstanceId,
-            providerThreadId: notification.params?.threadId,
+            providerThreadId: notification.params?.threadId ?? (notification.params?.thread as Record<string, unknown> | undefined)?.id,
           },
         },
         { type: "run.started", payload: {} },

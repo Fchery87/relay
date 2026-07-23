@@ -22,6 +22,16 @@ describe("normalizeCodexNotification", () => {
     expect(result.some((e) => e.type === "provider.session.resumed")).toBe(true);
   });
 
+  test("thread/started produces a session event from the current nested thread shape", () => {
+    const result = normalizeCodexNotification(
+      { method: "thread/started", params: { thread: { id: "th-current" } } },
+      "run-1",
+      "pi-1" as never,
+    );
+    expect(result[0]!.type).toBe("provider.session.started");
+    expect(result[0]!.providerThreadId).toBe("th-current");
+  });
+
   test("error notification produces turn.failed", () => {
     const result = normalizeCodexNotification(
       { method: "error", params: { message: "connection lost" } },

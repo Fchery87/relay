@@ -31,24 +31,25 @@ test("codex smoke test", async () => {
   });
   adapters.push(adapter);
 
-  // Wait for transport to initialize (handshake happens in createCodexTransport)
-  expect(adapter.transport.connected).toBe(true);
+  // Subscribe before thread creation so the lifecycle assertions include the
+  // provider session events emitted during thread/start.
+  const events: Array<{ type: string; payload: unknown }> = [];
+  const unsub = adapter.onEvent((ev: NormalizedEvent) => {
+    events.push({ type: ev.type, payload: ev.payload });
+  });
 
   // Start a minimal ephemeral thread
   const threadResult = (await adapter.startThread({ ephemeral: true })) as {
     thread: { id: string; ephemeral: boolean };
   };
+  // startThread awaits the transport's initialize handshake; checking after
+  // that request avoids racing the asynchronous process startup.
+  expect(adapter.transport.connected).toBe(true);
   expect(threadResult.thread.id).toBeTruthy();
   expect(threadResult.thread.ephemeral).toBe(true);
 
   const threadId = threadResult.thread.id;
   expect(adapter.activeThreadId).toBe(threadId);
-
-  // Collect normalized events
-  const events: Array<{ type: string; payload: unknown }> = [];
-  const unsub = adapter.onEvent((ev: NormalizedEvent) => {
-    events.push({ type: ev.type, payload: ev.payload });
-  });
 
   // Start a simple turn
   await adapter.startTurn(threadId, "say hello world");
