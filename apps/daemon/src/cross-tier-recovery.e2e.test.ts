@@ -13,7 +13,7 @@
 // Never touches the developer's real backend or its data — see
 // scripts/lib/isolated-self-hosted-convex.ts.
 //
-// Run explicitly with: bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
+// Run explicitly with: RELAY_CROSS_TIER=1 bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
 // ---------------------------------------------------------------------------
 
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -33,6 +33,7 @@ import { KernelDaemon } from "./kernel-daemon";
 import { runCommand } from "./tools";
 import { createCheckpoint } from "./checkpoints";
 import { createConvexProjectionSink } from "./sync/convex-projection-sink";
+import { protectedCrossTierTestEnabled } from "../../../scripts/lib/protected-test-gate";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 async function canBindLoopback(): Promise<boolean> {
@@ -43,7 +44,9 @@ async function canBindLoopback(): Promise<boolean> {
   });
 }
 
-const binaryAvailable = (await findSelfHostedBackendBinary()) !== null && await canBindLoopback();
+const binaryAvailable = protectedCrossTierTestEnabled({
+  RELAY_CROSS_TIER: Bun.env.RELAY_CROSS_TIER,
+}) && (await findSelfHostedBackendBinary()) !== null && await canBindLoopback();
 
 /**
  * Poll a projected-state condition, forcing an immediate outbox flush each

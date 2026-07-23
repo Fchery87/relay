@@ -192,6 +192,16 @@ Start the backend script first (once per boot), then `bun run daemon:dev` and
 `bun run web:dev` per session. After changing `convex/` code, push with
 `bun run convex:dev`.
 
+The real cross-tier recovery profile is protected and explicitly opt-in. This
+keeps ordinary `bun run test` deterministic even on machines that have the
+self-hosted backend binary installed. Run it alone with:
+
+```bash
+RELAY_CROSS_TIER=1 bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
+```
+
+It still skips when the pinned backend binary or loopback binding is unavailable.
+
 ### `start-relay-backend.sh` vs `bun run convex:dev`
 
 These are commonly confused but do entirely different jobs:
