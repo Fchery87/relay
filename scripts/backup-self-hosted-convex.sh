@@ -7,16 +7,20 @@
 # docs/operations/backup-recovery.md.
 #
 # Usage:
-#   scripts/backup-self-hosted-convex.sh [--out DIR] [--convex-home DIR] [--daemon-home DIR] [--no-secrets]
+#   scripts/backup-self-hosted-convex.sh [--out DIR] [--convex-home DIR] [--daemon-home DIR] [--instance-name NAME] [--no-secrets]
 #
 # Defaults: --convex-home ~/.local/share/convex-selfhost
 #           --daemon-home ~/.config/relay (override with RELAY_DAEMON_HOME)
+#           --instance-name convex-self-hosted (must match what restore starts with —
+#             the admin key is cryptographically bound to instance-name + instance-secret
+#             together; renaming the instance invalidates the restored admin key)
 #           --out ./relay-backups/<timestamp>
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 CONVEX_HOME="${RELAY_CONVEX_SELFHOST_HOME:-$HOME/.local/share/convex-selfhost}"
 DAEMON_HOME="${RELAY_DAEMON_HOME:-$HOME/.config/relay}"
+INSTANCE_NAME="convex-self-hosted"
 OUT_DIR=""
 INCLUDE_SECRETS=1
 
@@ -25,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     --out) OUT_DIR="$2"; shift 2 ;;
     --convex-home) CONVEX_HOME="$2"; shift 2 ;;
     --daemon-home) DAEMON_HOME="$2"; shift 2 ;;
+    --instance-name) INSTANCE_NAME="$2"; shift 2 ;;
     --no-secrets) INCLUDE_SECRETS=0; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -94,6 +99,7 @@ MANIFEST="$OUT_DIR/manifest.json"
   echo "  \"createdAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
   echo "  \"convexHome\": \"$CONVEX_HOME\","
   echo "  \"daemonHome\": \"$DAEMON_HOME\","
+  echo "  \"instanceName\": \"$INSTANCE_NAME\","
   echo "  \"includesSecrets\": $([ "$INCLUDE_SECRETS" -eq 1 ] && echo true || echo false),"
   echo "  \"files\": ["
   first=1

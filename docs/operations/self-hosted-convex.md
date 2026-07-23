@@ -116,6 +116,18 @@ restarts.
 > this repo's scripts can fully close today — do not run this topology on a
 > shared or multi-tenant host. `instance-secret.txt` and `admin-key.txt`
 > stay `chmod 600` regardless.
+>
+> **Considered and rejected:** wrapping the backend in a PID/mount namespace
+> (`unshare --pid --mount-proc`, or bubblewrap) does *not* hide its argv —
+> Linux exposes a nested-namespace process's real PID and
+> `/proc/<realpid>/cmdline` in the parent (root) namespace too, so another
+> process running as the same local user can still read it directly
+> regardless of namespacing. That technique isolates what the *child* can
+> see, not what others can see *of* the child. The only real mitigation for
+> a genuinely multi-user host is a system-wide `hidepid=2` mount option on
+> `/proc` (hides other users' `/proc/<pid>` entries entirely) — that's an
+> operator decision affecting every process on the machine, not something
+> this repo's scripts apply on your behalf.
 
 > Optional: to start it automatically at boot instead, wrap the script in a
 > systemd user service (`ExecStart=%h/.local/share/convex-selfhost/start-relay-backend.sh`,
@@ -194,6 +206,19 @@ Inspecting data without the dashboard: `npx convex data`, `npx convex run`,
 
 ## Troubleshooting
 
+- **Schema push will fail on the next `bun run convex:dev` / `npx convex
+  deploy`** — confirmed 2026-07-23 (read-only check, not fixed): the live
+  `pairings` table has two documents predating the `deviceNonce` field
+  becoming required, both already `claimed` and expired 2026-07-20. A push
+  that validates the current schema against existing documents will reject
+  them with `Object is missing the required field 'deviceNonce'`. Fix by
+  clearing stale `pairings` rows before the next push, e.g.:
+  `echo -n "" > /tmp/empty-pairings.jsonl && npx convex import --table
+  pairings --replace --format jsonLines -y /tmp/empty-pairings.jsonl`
+  (safe — claimed pairings are historical records with no further use).
+  Rehearsed successfully against a disposable restored copy in
+  [backup-recovery.md](backup-recovery.md); not yet applied to the live
+  instance.
 - **`Could not find public function for …`** — deployed functions are stale;
   run `bun run convex:dev`.
 - **Connection refused on 3210** — the backend isn't running; start it with

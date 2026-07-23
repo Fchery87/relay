@@ -74,15 +74,21 @@ mkdir -p "$STAGING_DIR"
 cp -a "$BACKUP_DIR"/. "$STAGING_DIR"/
 chmod -R go-rwx "$STAGING_DIR"
 
+INSTANCE_NAME=$(sed -n 's/.*"instanceName": "\([^"]*\)".*/\1/p' "$STAGING_DIR/manifest.json")
+INSTANCE_NAME="${INSTANCE_NAME:-convex-self-hosted}"
+
 cat <<EOF
 
 Restored into isolated staging: $STAGING_DIR
 
 Manual functional acceptance (per docs/operations/backup-recovery.md):
   1. Start a self-hosted backend pointed at $STAGING_DIR/convex/convex_local_backend.sqlite3
-     on a non-default port, e.g.:
+     on a non-default port, using the SAME --instance-name as the original
+     ($INSTANCE_NAME) — the admin key is cryptographically bound to
+     instance-name + instance-secret together, so renaming the instance
+     invalidates the restored admin key even though the secret matches:
        $STAGING_DIR/../convex-local-backend $STAGING_DIR/convex/convex_local_backend.sqlite3 \\
-         --instance-name convex-self-hosted-staging --port 3220 --site-proxy-port 3221 \\
+         --instance-name $INSTANCE_NAME --port 3220 --site-proxy-port 3221 \\
          --instance-secret "\$(cat $STAGING_DIR/convex/instance-secret.txt)" \\
          --local-storage $STAGING_DIR/convex/convex_local_storage
   2. Deploy schema/functions against it and confirm sign-in, pairing, and
