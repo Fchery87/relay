@@ -6,6 +6,20 @@ import { toProjectSummary } from "./machine_summaries";
 
 const platformValidator = v.union(v.literal("darwin"), v.literal("linux"), v.literal("win32"));
 const projectValidator = v.object({ name: v.string(), path: v.string() });
+const canaryTelemetryValidator = v.object({
+  activeLeases: v.number(),
+  authFailures: v.number(),
+  duplicateCommands: v.number(),
+  fallbackActivations: v.number(),
+  mode: v.union(v.literal("legacy"), v.literal("shadow"), v.literal("kernel")),
+  pendingEffects: v.number(),
+  projectionBacklog: v.number(),
+  projectionDivergences: v.number(),
+  projectionGaps: v.number(),
+  recoverableFailures: v.number(),
+  sandboxViolations: v.number(),
+  unrecoverableFailures: v.number(),
+});
 
 export const registerMachine = mutationGeneric({
   args: {
@@ -84,7 +98,7 @@ export const registerMachine = mutationGeneric({
 });
 
 export const heartbeat = mutationGeneric({
-  args: { deviceToken: v.string() },
+  args: { deviceToken: v.string(), telemetry: v.optional(canaryTelemetryValidator) },
   handler: async (ctx, args) => {
     const deviceTokenHash = await digestSecret(args.deviceToken);
     const machine = await ctx.db
@@ -97,7 +111,24 @@ export const heartbeat = mutationGeneric({
     }
     if (machine.revokedAt) throw new Error("Device token has been revoked");
 
-    await ctx.db.patch(machine._id, { lastHeartbeatAt: Date.now() });
+    const reportedAt = Date.now();
+    await ctx.db.patch(machine._id, { lastHeartbeatAt: reportedAt });
+    if (args.telemetry) {
+      const existing = await ctx.db.query("machineTelemetry").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).unique();
+      const telemetry = { ...args.telemetry, machineId: machine._id, reportedAt };
+      if (existing) await ctx.db.patch(existing._id, telemetry);
+      else await ctx.db.insert("machineTelemetry", telemetry);
+    }
+  },
+});
+
+export const getTelemetry = queryGeneric({
+  args: { machineId: v.id("machines") },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const machine = await ctx.db.get(args.machineId);
+    if (!machine || machine.ownerId !== userId) throw new Error("Machine does not belong to the current user");
+    return await ctx.db.query("machineTelemetry").withIndex("by_machine", (q) => q.eq("machineId", args.machineId)).unique();
   },
 });
 

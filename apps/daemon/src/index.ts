@@ -147,6 +147,11 @@ if (runtimeMode === "kernel") {
     heartbeatIntervalMs: config.heartbeatIntervalMs,
     machineId,
     machineName: config.registration.name,
+    onCanaryTelemetry: (telemetry) => reporter.heartbeatOnce(telemetry),
+    onCanaryRollback: async ({ reason }) => {
+      console.error(`Relay kernel canary stopped (${reason}); restart with RELAY_RUNTIME_MODE=legacy to roll back.`);
+      await shutdown(78);
+    },
     adapterDeps: {
       resolveProjectRoot: sandboxedResolveProjectRoot,
       resolveSlashCommands: async ({ projectPath }) => {
@@ -188,7 +193,7 @@ if (runtimeMode === "shadow") {
 }
 
 let shuttingDown = false;
-async function shutdown() {
+async function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   clearInterval(heartbeatTimer);
@@ -197,7 +202,7 @@ async function shutdown() {
   clearInterval(claimMetricsTimer);
   shadowRuntime?.stop();
   await mcp.close();
-  process.exit(0);
+  process.exit(exitCode);
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());

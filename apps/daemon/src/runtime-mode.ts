@@ -10,35 +10,46 @@ export type CanaryTelemetry = {
   pendingEffects: number;
   projectionBacklog: number;
   projectionGaps: number;
+  projectionDivergences: number;
   authFailures: number;
   sandboxViolations: number;
   recoverableFailures: number;
   unrecoverableFailures: number;
+  fallbackActivations: number;
 };
 
 /** Auto-rollback triggers — if any threshold is exceeded, kernel mode rolls back to legacy. */
 export type RollbackThresholds = {
   readonly maxProjectionGaps: number;
+  readonly maxProjectionDivergences: number;
   readonly maxUnrecoverableFailures: number;
   readonly maxSandboxViolations: number;
 };
 
 export const DEFAULT_ROLLBACK_THRESHOLDS: RollbackThresholds = {
   maxProjectionGaps: 0,
+  maxProjectionDivergences: 0,
   maxUnrecoverableFailures: 0,
   maxSandboxViolations: 0,
 };
+
+export function canaryRollbackReason(
+  telemetry: CanaryTelemetry,
+  thresholds: RollbackThresholds = DEFAULT_ROLLBACK_THRESHOLDS,
+): string | undefined {
+  if (telemetry.projectionGaps > thresholds.maxProjectionGaps) return "projection-gap";
+  if (telemetry.projectionDivergences > thresholds.maxProjectionDivergences) return "projection-divergence";
+  if (telemetry.unrecoverableFailures > thresholds.maxUnrecoverableFailures) return "unrecoverable-failure";
+  if (telemetry.sandboxViolations > thresholds.maxSandboxViolations) return "sandbox-violation";
+  return undefined;
+}
 
 /** Check whether canary telemetry triggers an automatic rollback to legacy. */
 export function shouldRollback(
   telemetry: CanaryTelemetry,
   thresholds: RollbackThresholds = DEFAULT_ROLLBACK_THRESHOLDS,
 ): boolean {
-  return (
-    telemetry.projectionGaps > thresholds.maxProjectionGaps ||
-    telemetry.unrecoverableFailures > thresholds.maxUnrecoverableFailures ||
-    telemetry.sandboxViolations > thresholds.maxSandboxViolations
-  );
+  return canaryRollbackReason(telemetry, thresholds) !== undefined;
 }
 
 /**

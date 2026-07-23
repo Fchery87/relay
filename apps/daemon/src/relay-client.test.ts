@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { MachineRegistration } from "@relay/shared";
 
 import { MachineReporter } from "./relay-client";
+import type { CanaryTelemetry } from "./runtime-mode";
 
 const registration: MachineRegistration = {
   deviceToken: "development-device-token",
@@ -65,5 +66,37 @@ describe("MachineReporter", () => {
       "heartbeat:development-device-token",
       "heartbeat:development-device-token",
     ]);
+  });
+
+  test("forwards bounded canary telemetry with the heartbeat", async () => {
+    let received: CanaryTelemetry | undefined;
+    const reporter = new MachineReporter({
+      gateway: {
+        async heartbeat({ telemetry }) {
+          received = telemetry;
+        },
+        async registerMachine(_machine) {
+          return "machine-id-1";
+        },
+      },
+      registration,
+    });
+    const telemetry: CanaryTelemetry = {
+      activeLeases: 1,
+      authFailures: 0,
+      duplicateCommands: 0,
+      fallbackActivations: 2,
+      mode: "kernel",
+      pendingEffects: 0,
+      projectionBacklog: 0,
+      projectionDivergences: 0,
+      projectionGaps: 0,
+      recoverableFailures: 0,
+      sandboxViolations: 0,
+      unrecoverableFailures: 0,
+    };
+    await reporter.connect();
+    await reporter.heartbeatOnce(telemetry);
+    expect(received).toEqual(telemetry);
   });
 });

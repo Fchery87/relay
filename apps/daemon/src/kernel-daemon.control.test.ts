@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,44 @@ import { KernelDaemon } from "./kernel-daemon";
 import type { ModelProviderRouter, ModelProvider } from "./model-provider";
 import type { TurnModelProvider, TurnStreamEvent } from "./turn-loop";
 import { runCommand } from "./tools";
+
+test("canary invariant violation persists a redacted marker and stops the kernel", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-canary-daemon-"));
+  let rollback: { reason: string; mode: string } | undefined;
+  const daemon = new KernelDaemon({
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => [],
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "canary-test",
+    onCanaryRollback: async ({ reason, telemetry }) => { rollback = { mode: telemetry.mode, reason }; },
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async () => undefined,
+      upsertSnapshot: async () => undefined,
+      advanceCursor: async () => undefined,
+    },
+    rollbackThresholds: { maxProjectionDivergences: 0, maxProjectionGaps: -1, maxSandboxViolations: 0, maxUnrecoverableFailures: 0 },
+  });
+
+  try {
+    await daemon.start();
+    await daemon.heartbeatOnce();
+    expect(rollback).toEqual({ mode: "kernel", reason: "projection-gap" });
+    const marker = JSON.parse(await readFile(join(daemonHome, "kernel-canary-rollback.json"), "utf8")) as { reason: string; telemetry: { mode: string } };
+    expect(marker).toMatchObject({ reason: "projection-gap", telemetry: { mode: "kernel" } });
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+  }
+});
 
 class BlockingTurnProvider implements TurnModelProvider {
   readonly modelId = "control-test";

@@ -54,6 +54,12 @@ The browser inspector derives subagent runs from the canonical activity tail,
 so the subagent detail surface no longer needs the legacy tree query in
 projection mode.
 
+Kernel canary telemetry now leaves the process through machine heartbeats and
+is stored in a dedicated high-churn `machineTelemetry` record. Projection
+gaps/divergence, unrecoverable failures, and sandbox violations fail closed:
+the daemon writes a redacted rollback marker, stops kernel processing, and the
+supervisor/operator can restart with `RELAY_RUNTIME_MODE=legacy`.
+
 Kernel run creation also publishes the trusted built-in, user, and project
 slash-command catalog as a bounded configuration event. The composer consumes
 that event in projection mode, so slash discovery no longer needs its legacy

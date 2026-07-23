@@ -22,6 +22,7 @@ export type ModelStreamEvent =
 
 export interface ModelProviderRouter {
   readonly kind: "model-router";
+  readonly fallbackActivations?: number;
   resolve(input: { modelId: string; thinkingLevel: ThinkingLevel }): ModelProvider;
   resolveTurn?(input: { modelId: string; thinkingLevel: ThinkingLevel }): TurnModelProvider;
 }

@@ -3,8 +3,9 @@ import { makeFunctionReference } from "convex/server";
 import { z } from "zod";
 
 import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, queuedMessageSchema, queuedRestoreSchema, queuedSubagentSchema, steeringMessagesSchema, stopStateSchema, type Capability, type MachineRegistration, type SubagentResult, type TokenUsage } from "@relay/shared";
+import type { CanaryTelemetry } from "./runtime-mode";
 
-const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: string }>(
+const heartbeatMutation = makeFunctionReference<"mutation", { deviceToken: string; telemetry?: CanaryTelemetry }>(
   "machines:heartbeat",
 );
 const registerMachineMutation = makeFunctionReference<"mutation", MachineRegistration, string>(
@@ -59,7 +60,7 @@ const submitMcpElicitationByDeviceMutation = makeFunctionReference<"mutation", {
 const cancelMcpElicitationByDeviceMutation = makeFunctionReference<"mutation", { deviceToken: string; elicitationId: string }, null>("mcp_elicitations:cancelByDevice");
 
 export interface MachineGateway {
-  heartbeat(input: { deviceToken: string }): Promise<unknown>;
+  heartbeat(input: { deviceToken: string; telemetry?: CanaryTelemetry }): Promise<unknown>;
   registerMachine(registration: MachineRegistration): Promise<string>;
 }
 
@@ -85,8 +86,8 @@ export class MachineReporter {
     return this.#machineId;
   }
 
-  heartbeatOnce(): Promise<unknown> {
-    return this.#gateway.heartbeat({ deviceToken: this.#registration.deviceToken });
+  heartbeatOnce(telemetry?: CanaryTelemetry): Promise<unknown> {
+    return this.#gateway.heartbeat({ deviceToken: this.#registration.deviceToken, ...(telemetry === undefined ? {} : { telemetry }) });
   }
 
   async syncProjects(projects: import("@relay/shared").ProjectRegistration[]): Promise<void> {

@@ -279,3 +279,17 @@ The remaining provider risk is intentionally separate: this evidence still
 does not claim a real Codex/LLM turn. The protected cross-tier job currently
 proves the real isolated backend with deterministic effects; the real-provider
 vertical slice must pass before shadow parity or canary claims are promoted.
+
+## Update — 2026-07-23: canary telemetry and rollback readiness
+
+Kernel canary telemetry now crosses the daemon boundary through the machine
+heartbeat and is stored separately from the high-churn machine presence row.
+The bounded record covers leases, duplicate commands, pending effects,
+projection backlog/gaps/divergence, auth, sandbox, recoverable/unrecoverable
+failures, and provider fallback activations. A projection gap/divergence,
+sandbox violation, or unrecoverable failure writes a redacted
+`kernel-canary-rollback.json` marker and stops kernel processing; the documented
+legacy restart path remains available. This closes the code-readiness portion
+of the canary ticket. Actual developer/internal/production canary stages,
+real-provider evidence, parity observation, and the release window remain
+operational gates.

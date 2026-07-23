@@ -10,6 +10,7 @@
 
 import { hostname } from "node:os";
 import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 
 import { isDeviceTokenRejected } from "./device-auth";
 import { createCodexSessionAdapter, type CodexSessionAdapter, type CodexTransportConfig, type NormalizedEvent } from "@relay/codex-app-server";
@@ -43,7 +44,7 @@ import type { MachinePlatform } from "@relay/shared";
 import { ScriptedModelProvider } from "./model-provider";
 import { LocalModelRouter } from "./catalog-provider-router";
 import { persistProviderEvent } from "./provider-event-gateway";
-import { resolveMaxConcurrentRuns } from "./runtime-mode";
+import { canaryRollbackReason, DEFAULT_ROLLBACK_THRESHOLDS, resolveMaxConcurrentRuns, type CanaryTelemetry, type RollbackThresholds } from "./runtime-mode";
 import {
   executeCheckpointRestore,
   type CheckpointRestoreAdapterDeps,
@@ -116,6 +117,12 @@ export type KernelDaemonConfig = {
   providerRouter?: ModelProviderRouter;
   /** Command claim/renewal lease duration — overridable for kill-point tests. Default 30s. */
   commandLeaseDurationMs?: number;
+  /** Heartbeat sink for bounded canary telemetry. */
+  onCanaryTelemetry?: (telemetry: CanaryTelemetry) => Promise<unknown>;
+  /** Stop/rollback hook invoked after an invariant violation is detected. */
+  onCanaryRollback?: (input: { reason: string; telemetry: CanaryTelemetry }) => Promise<void>;
+  /** Thresholds are injectable for deterministic canary kill-point tests. */
+  rollbackThresholds?: RollbackThresholds;
 };
 
 type KernelMcpAdapter = {
@@ -960,11 +967,14 @@ export class KernelDaemon {
     pendingEffects: 0,
     projectionBacklog: 0,
     projectionGaps: 0,
+    projectionDivergences: 0,
     authFailures: 0,
     sandboxViolations: 0,
     recoverableFailures: 0,
     unrecoverableFailures: 0,
+    fallbackActivations: 0,
   };
+  private canaryRollbackTriggered = false;
 
   // Outbox publish observability — backlog, oldest pending age, retries,
   // conflicts, and cursor lag, per the ordered-projection ticket.
@@ -979,6 +989,10 @@ export class KernelDaemon {
   /** Outbox publish observability snapshot, for heartbeat reporting and tests. */
   getProjectionTelemetry(): Readonly<ProjectionTelemetry> {
     return { ...this.projectionTelemetry };
+  }
+
+  getCanaryTelemetry(): CanaryTelemetry {
+    return this.canarySnapshot();
   }
 
   constructor(private readonly config: KernelDaemonConfig) {}
@@ -1554,6 +1568,11 @@ export class KernelDaemon {
     await this.poll();
   }
 
+  /** Run one canary heartbeat immediately — for tests and supervised probes. */
+  async heartbeatOnce(): Promise<void> {
+    await this.heartbeat();
+  }
+
   /** Publish the projection outbox and run snapshots immediately — for tests and manual triggers. */
   async flushOnce(): Promise<void> {
     await this.flush();
@@ -1600,6 +1619,7 @@ export class KernelDaemon {
       }
     } catch (error) {
       if (!this.shuttingDown) {
+        if (isDeviceTokenRejected(error)) this.canaryTelemetry.authFailures++;
         console.error("Kernel daemon: poll failed", error);
       }
     }
@@ -1664,11 +1684,13 @@ export class KernelDaemon {
         // silently overwrite a real success with "rejected". Leave the
         // command claimed; it becomes reclaimable after lease expiry and
         // is safely redelivered (engine-level operations are idempotent).
+        const message = error instanceof Error ? error.message : String(error);
+        if (/duplicate|already complete|already completed/i.test(message)) this.canaryTelemetry.duplicateCommands++;
         console.error(
           "Kernel daemon: completion report failed — command remains claimed for redelivery",
           commandId,
           status,
-          error instanceof Error ? error.message : error,
+          message,
         );
       }
     };
@@ -2068,6 +2090,9 @@ export class KernelDaemon {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("Kernel daemon: command failed", commandId, kind, message);
+      if (isDeviceTokenRejected(error)) this.canaryTelemetry.authFailures++;
+      if (/sandbox violation/i.test(message)) this.canaryTelemetry.sandboxViolations++;
+      if (!/requires |is invalid|not allowed|not awaiting|not editable|stale|already running|already completed/i.test(message)) this.canaryTelemetry.unrecoverableFailures++;
       await complete("rejected");
     } finally {
       stopRenewal?.();
@@ -2086,6 +2111,9 @@ export class KernelDaemon {
       telemetry: this.projectionTelemetry,
     });
     this.canaryTelemetry.projectionBacklog = this.projectionTelemetry.backlog;
+    this.canaryTelemetry.pendingEffects = this.projectionTelemetry.backlog;
+    this.canaryTelemetry.projectionGaps = this.projectionTelemetry.conflicts;
+    this.canaryTelemetry.projectionDivergences = this.projectionTelemetry.conflicts;
   }
 
   private heartbeatCount = 0;
@@ -2096,6 +2124,10 @@ export class KernelDaemon {
       if (this.heartbeatCount % 10 === 0) {
         await this.flush();
       }
+      const telemetry = this.canarySnapshot();
+      await this.config.onCanaryTelemetry?.(telemetry);
+      const rollbackReason = canaryRollbackReason(telemetry, this.config.rollbackThresholds ?? DEFAULT_ROLLBACK_THRESHOLDS);
+      if (rollbackReason) await this.triggerCanaryRollback(rollbackReason, telemetry);
       // Log health/metrics every 60 heartbeats (~30s at default 500ms interval)
       if (this.heartbeatCount % 60 === 0) {
         const metrics = getMetrics();
@@ -2130,12 +2162,34 @@ export class KernelDaemon {
       }
     } catch (error) {
       if (isDeviceTokenRejected(error)) {
+        this.canaryTelemetry.authFailures++;
         console.error("Kernel daemon: device token rejected; shutting down.");
         this.shuttingDown = true;
         process.exit(1);
       }
       console.error("Kernel daemon: heartbeat failed", error);
     }
+  }
+
+  private canarySnapshot(): CanaryTelemetry {
+    const fallbackActivations = this.provider?.fallbackActivations ?? this.canaryTelemetry.fallbackActivations;
+    this.canaryTelemetry.fallbackActivations = fallbackActivations;
+    return { mode: "kernel", ...this.canaryTelemetry };
+  }
+
+  private async triggerCanaryRollback(reason: string, telemetry: CanaryTelemetry): Promise<void> {
+    if (this.canaryRollbackTriggered || this.shuttingDown) return;
+    this.canaryRollbackTriggered = true;
+    const markerPath = join(this.config.daemonHome, "kernel-canary-rollback.json");
+    try {
+      await mkdir(this.config.daemonHome, { recursive: true });
+      await writeFile(markerPath, `${JSON.stringify({ reason, telemetry, recordedAt: Date.now() })}\n`, { mode: 0o600 });
+    } catch (error) {
+      console.error("Kernel daemon: failed to persist canary rollback marker", error instanceof Error ? error.message : error);
+    }
+    console.error("Kernel daemon: canary invariant violated; stopping kernel for legacy rollback", { markerPath, reason, telemetry });
+    await this.stop();
+    await this.config.onCanaryRollback?.({ reason, telemetry });
   }
 }
 

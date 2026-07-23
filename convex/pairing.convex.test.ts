@@ -58,6 +58,49 @@ test("revocation invalidates a daemon token on its next heartbeat", async () => 
   await expect(t.mutation(api.machines.heartbeat, { deviceToken })).rejects.toThrow("revoked");
 });
 
+test("heartbeat stores canary telemetry separately from the high-churn machine record", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await createAuthenticatedUser(t);
+  const otherUser = await createAuthenticatedUser(t);
+  const deviceToken = "t".repeat(32);
+  const deviceNonce = "n".repeat(16);
+  await t.mutation(api.pairing.start, { code: "telemetry-code", deviceNonce, deviceToken });
+  await owner.mutation(api.pairing.claim, { code: "telemetry-code" });
+  const machineId = await t.mutation(api.machines.registerMachine, {
+    daemonVersion: "test",
+    deviceNonce,
+    deviceToken,
+    name: "telemetry-machine",
+    platform: "linux",
+    projects: [],
+  });
+
+  await t.mutation(api.machines.heartbeat, {
+    deviceToken,
+    telemetry: {
+      activeLeases: 1,
+      authFailures: 0,
+      duplicateCommands: 0,
+      fallbackActivations: 2,
+      mode: "kernel",
+      pendingEffects: 0,
+      projectionBacklog: 0,
+      projectionDivergences: 0,
+      projectionGaps: 0,
+      recoverableFailures: 0,
+      sandboxViolations: 0,
+      unrecoverableFailures: 0,
+    },
+  });
+
+  await expect(owner.query(api.machines.getTelemetry, { machineId })).resolves.toMatchObject({
+    fallbackActivations: 2,
+    machineId,
+    mode: "kernel",
+  });
+  await expect(otherUser.query(api.machines.getTelemetry, { machineId })).rejects.toThrow("does not belong");
+});
+
 test("registers a claimed daemon after its pairing code expires", async () => {
   const t = convexTest(schema, modules);
   const ownerId = await t.run((ctx) => ctx.db.insert("users", {}));

@@ -1,6 +1,21 @@
 import { expect, test } from "bun:test";
 
-import { resolveMaxConcurrentRuns, resolveRuntimeMode } from "./runtime-mode";
+import { canaryRollbackReason, resolveMaxConcurrentRuns, resolveRuntimeMode, shouldRollback, type CanaryTelemetry } from "./runtime-mode";
+
+const healthyTelemetry: CanaryTelemetry = {
+  activeLeases: 1,
+  authFailures: 0,
+  duplicateCommands: 0,
+  fallbackActivations: 0,
+  mode: "kernel",
+  pendingEffects: 0,
+  projectionBacklog: 0,
+  projectionDivergences: 0,
+  projectionGaps: 0,
+  recoverableFailures: 0,
+  sandboxViolations: 0,
+  unrecoverableFailures: 0,
+};
 
 test("defaults to legacy when RELAY_RUNTIME_MODE is not set (migration safety)", () => {
   expect(resolveRuntimeMode({})).toBe("legacy");
@@ -56,6 +71,21 @@ test("kernel disabled not set allows kernel mode", () => {
 
 test("kernel disabled allows kernel when absent", () => {
   expect(resolveRuntimeMode({ RELAY_RUNTIME_MODE: "kernel" })).toBe("kernel");
+});
+
+test("canary rollback defaults to fail closed on invariant violations", () => {
+  expect(shouldRollback({ ...healthyTelemetry, projectionGaps: 1 })).toBe(true);
+  expect(canaryRollbackReason({ ...healthyTelemetry, projectionDivergences: 1 })).toBe("projection-divergence");
+  expect(canaryRollbackReason(healthyTelemetry)).toBeUndefined();
+});
+
+test("canary rollback thresholds can tolerate bounded recoverable signals", () => {
+  expect(shouldRollback({ ...healthyTelemetry, projectionGaps: 1 }, {
+    maxProjectionDivergences: 0,
+    maxProjectionGaps: 1,
+    maxSandboxViolations: 0,
+    maxUnrecoverableFailures: 0,
+  })).toBe(false);
 });
 
 // RELAY_KERNEL_MAX_CONCURRENT_RUNS

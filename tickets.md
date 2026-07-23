@@ -661,6 +661,16 @@ adapter.
 
 **Blocked by:** Cut the browser over to canonical commands and projections.
 
+Code-level canary readiness is now wired: kernel heartbeats persist bounded
+telemetry in the dedicated `machineTelemetry` table, the daemon reports leases,
+duplicates, pending effects, projection backlog/gaps/divergence, auth,
+sandbox, recovery, and provider-fallback counters, and invariant violations
+write a redacted `kernel-canary-rollback.json` marker and stop the kernel. The
+existing `RELAY_RUNTIME_MODE=legacy` restart path remains the rollback action.
+The rollout-stage, real-provider, and release-window checkboxes below still
+require supervised operational runs and are intentionally not inferred from
+unit tests.
+
 - [ ] Rollout proceeds through developer opt-in, internal canary, small production canary, then kernel default
 - [ ] Kernel mode starts exactly one effect owner and no legacy claim pollers
 - [ ] Telemetry covers leases, duplicates, pending effects, projection backlog/gaps/divergence, auth, sandbox, recovery, and fallback

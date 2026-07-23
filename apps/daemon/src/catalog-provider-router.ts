@@ -9,6 +9,9 @@ export class LocalModelRouter implements ModelProviderRouter {
   readonly #catalog: ModelCatalog;
   readonly #env: Readonly<Record<string, string | undefined>>;
   readonly #fallbackProvider: ModelProvider;
+  #fallbackActivations = 0;
+
+  get fallbackActivations(): number { return this.#fallbackActivations; }
 
   constructor({ catalog = MODEL_CATALOG, env, fallbackProvider }: { catalog?: ModelCatalog; env: Readonly<Record<string, string | undefined>>; fallbackProvider: ModelProvider }) {
     this.#catalog = catalog;
@@ -21,7 +24,10 @@ export class LocalModelRouter implements ModelProviderRouter {
       const config = resolveProviderConfig({ catalog: this.#catalog, env: this.#env, modelId, thinkingLevel });
       return new CatalogModelProvider(config);
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("No configured provider")) return this.#fallbackProvider;
+      if (error instanceof Error && error.message.startsWith("No configured provider")) {
+        this.#fallbackActivations++;
+        return this.#fallbackProvider;
+      }
       throw error;
     }
   }
@@ -32,6 +38,7 @@ export class LocalModelRouter implements ModelProviderRouter {
       return resolveTurnProvider(config);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("No configured provider")) {
+        this.#fallbackActivations++;
         return asTurnProvider(this.#fallbackProvider);
       }
       throw error;
