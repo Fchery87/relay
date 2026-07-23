@@ -182,6 +182,7 @@ function sameTaskIdentity(left: TaskSpec, right: TaskSpec): boolean {
     threadId: left.threadId,
     turnId: left.turnId,
     modelId: left.modelId,
+    securityModelId: left.securityModelId,
   }) === JSON.stringify({
     taskId: right.taskId,
     parentTaskId: right.parentTaskId,
@@ -201,5 +202,6 @@ function sameTaskIdentity(left: TaskSpec, right: TaskSpec): boolean {
     threadId: right.threadId,
     turnId: right.turnId,
     modelId: right.modelId,
+    securityModelId: right.securityModelId,
   });
 }

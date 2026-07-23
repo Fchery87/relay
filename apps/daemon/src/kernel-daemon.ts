@@ -19,7 +19,13 @@ import {
   type AppendEventInput,
   type AppendEventResult,
 } from "@relay/harness-runtime";
-import { MutableReactorRegistry } from "@relay/orchestration";
+import {
+  juryFindingToReviewComment,
+  mergeJuryFindings,
+  parseJuryFindings,
+  REVIEW_JURY_FINDINGS_FORMAT,
+  MutableReactorRegistry,
+} from "@relay/orchestration";
 import type { EffectIntent, EffectReactor } from "@relay/contracts";
 import {
   canonicalEventPayloadError,
@@ -1522,40 +1528,72 @@ export class KernelDaemon {
         ) as Capability[] ?? (task.capabilityCeiling === "read-only"
           ? ["read", "task"]
           : ["read", "edit", "exec", "task"]);
-        const events = await executeSubagent(
+        const subagentDeps = {
+          provider: this.provider,
+          platform: deps.platform ?? "linux",
+          resolveProjectRoot: deps.resolveProjectRoot,
+        };
+        const workflowKind = effect.intent.kind === "workflow.create_child"
+          ? effect.intent.workflowKind
+          : "subagent";
+        const reviewTurnId = task.turnId ?? task.threadId ?? (effect.runId as string);
+        const reviewerInputs = workflowKind === "review-jury"
+          ? [
+              { roleName: "reviewer", modelId: task.modelId ?? DEFAULT_MODEL_ID },
+              { roleName: "reviewer-security", modelId: task.securityModelId ?? "openai/gpt-5-mini" },
+            ]
+          : [{ roleName: task.roleName ?? task.role, modelId: task.modelId }];
+        const reviewerEvents = await Promise.all(reviewerInputs.map((reviewer, index) => executeSubagent(
           {
-            task: task.objective,
-            roleName: task.roleName ?? task.role,
+            task: workflowKind === "review-jury"
+              ? `${task.objective}\n\nYou are the ${reviewer.roleName} member of a two-reviewer jury.\n${REVIEW_JURY_FINDINGS_FORMAT}`
+              : task.objective,
+            roleName: reviewer.roleName,
             capabilities,
             projectPath: task.projectPath ?? this.projectPathByRun.get(effect.runId as string) ?? ".",
             threadId: task.threadId ?? (effect.runId as string),
-            modelId: task.modelId,
+            modelId: reviewer.modelId,
           },
-          {
-            provider: this.provider,
-            platform: deps.platform ?? "linux",
-            resolveProjectRoot: deps.resolveProjectRoot,
-          },
-          `workflow-${effect.effectId}`,
-        );
-        const normalizedEvents = canonicalizeSubagentEvents(
-          events,
+          subagentDeps,
+          `workflow-${effect.effectId}-${index + 1}`,
+        )));
+        const normalizedEvents = reviewerEvents.flatMap((reviewerEventsForRole) => canonicalizeSubagentEvents(
+          reviewerEventsForRole,
           effect.runId as string,
-          task.turnId ?? task.threadId ?? (effect.runId as string),
-        );
-        const terminal = [...events].reverse().find((event) => event.type === "activity.completed" || event.type === "activity.failed");
+          reviewTurnId,
+        ));
+        const terminalEvents = reviewerEvents.flatMap((reviewerEventsForRole) => reviewerEventsForRole);
+        const terminal = [...terminalEvents].reverse().find((event) => event.type === "activity.completed" || event.type === "activity.failed");
         const terminalPayload = terminal?.payload ?? {};
+        const findings = workflowKind === "review-jury"
+          ? mergeJuryFindings(reviewerEvents.flatMap((reviewerEventsForRole, index) => {
+              const completed = [...reviewerEventsForRole].reverse().find((event) => event.type === "activity.completed");
+              return parseJuryFindings(String(completed?.payload.summary ?? ""), reviewerInputs[index]!.roleName);
+            }))
+          : [];
+        const reviewEvents = findings.map((finding, index) => {
+          const comment = juryFindingToReviewComment(finding, index);
+          return {
+            causationId: effect.effectId as never,
+            correlationId: `corr-jury-${effect.runId}` as never,
+            eventId: `${comment.commentId}-${effect.effectId}` as never,
+            payload: comment,
+            runId: effect.runId as never,
+            turnId: reviewTurnId as never,
+            type: "review.comment.created" as const,
+          };
+        });
         return {
-          commands: normalizedEvents.map((normalizedEvent) => ({
-          type: "provider.event" as const,
-          payload: {
-            providerInstanceId: "provider-local" as never,
-            normalizedEvent,
-          },
+          commands: [...normalizedEvents, ...reviewEvents].map((normalizedEvent) => ({
+            type: "provider.event" as const,
+            payload: {
+              providerInstanceId: "provider-local" as never,
+              normalizedEvent,
+            },
           })),
           result: {
             artifacts: [],
-            findings: [],
+            findings: findings.map((finding) => `${finding.severity}: ${finding.title}`),
             status: terminal?.type === "activity.completed" ? "success" : "failed",
             summary: String(terminalPayload.summary ?? terminalPayload.error ?? "Subagent completed"),
           },

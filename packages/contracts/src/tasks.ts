@@ -8,7 +8,7 @@ export type TaskSpec = Readonly<{
   dependencies: readonly TaskId[]; capabilityCeiling: string; contextBudget: number;
   workspaceMode: "shared-read" | "isolated-worktree"; providerInstanceId?: ProviderInstanceId;
   state: TaskState; attempt: number; maxAttempts: number; workflowKind?: string; roleName?: string;
-  capabilities?: readonly string[]; projectPath?: string; threadId?: string; turnId?: string; modelId?: string;
+  capabilities?: readonly string[]; projectPath?: string; threadId?: string; turnId?: string; modelId?: string; securityModelId?: string;
   result?: unknown; error?: string;
 }>;
 
