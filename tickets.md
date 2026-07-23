@@ -576,6 +576,18 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 - [ ] Ordinary CI uses deterministic effects; protected jobs cover the real provider and supported topology — ordinary CI is unaffected and proven so (the test auto-skips via `describe.skipIf` wherever the backend binary isn't installed); a new protected `cross-tier-recovery` job exists (`.github/workflows/ci.yml`, `workflow_dispatch`-only) but only covers the real self-hosted *backend* — "the real provider" in this item means the LLM/model provider per the PRD, which this job does not exercise (it uses `ScriptedModelProvider`, same as the deterministic tier)
 - [x] Machine-readable evidence records versions, topology, migration state, test run, redacted failures, and residual risks (`docs/operations/release-evidence/2026-07-23-cross-tier-recovery-seam.md`, including the two bugs this test found and fixed)
 
+## Close kernel turn capability gaps
+
+**What to build:** Restore the legacy turn capabilities that are intentionally absent from the first kernel recovery seam, while keeping the canonical runtime as the sole transition owner.
+
+**Blocked by:** Prove the real cross-tier recovery seam. Shadow parity and browser cutover remain blocked for any behavior that is still absent here.
+
+- [x] Kernel provider tool calls execute through the governed sandbox boundary and emit canonical activity events (`apps/daemon/src/kernel-daemon.ts`; policy allow/deny and audit recording are covered; Convex binds the authorized project path onto the daemon claim for workspace resolution; approval suspension remains a separate increment)
+- [ ] Risky tool calls create a canonical approval request, suspend the turn, and resume only after the matching approval resolution
+- [ ] Mid-turn steering is delivered at a real stream/tool boundary without racing the serialized command poller
+- [ ] Interrupt cancels the provider effect and prevents post-interrupt output or terminal duplication
+- [ ] Orchestration-owned before/after-turn checkpoint capture is durable and idempotent
+
 ## Prove shadow parity without duplicate effects
 
 **What to build:** Compare kernel decisions with legacy behavior on equivalent inputs while legacy remains the only effect owner, and persist evidence that can block promotion.

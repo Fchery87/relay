@@ -73,8 +73,11 @@ code paths only through fakes, never over a real network round-trip:
 
 ## Residual risks / not yet covered (as of 2026-07-23)
 
-- Real approval creation, governance/tool execution, mid-turn steering, and
-  actual interrupt cancellation remain open kernel capability gaps, documented
+- The first kernel tool bridge increment is now covered by focused tests:
+  provider tool calls pass through policy/governance/sandbox execution and
+  emit canonical activity events. Real approval suspension/resolution,
+  provider continuation with tool results, mid-turn steering, and actual
+  interrupt cancellation remain open kernel capability gaps, documented
   separately in `docs/operations/kernel-mode-capability-gaps.md`.
 - A real LLM provider (as opposed to the scripted/fallback provider) is not
   exercised; "protected jobs cover the real provider" is only partially
@@ -134,3 +137,23 @@ Test count: 9 → 12 passing tests in
 `apps/daemon/src/cross-tier-recovery.e2e.test.ts` (all live, with the focused
 additions run against the isolated backend; the full file remains the
 protected live profile).
+
+## Update — 2026-07-23: first kernel capability increment
+
+`apps/daemon/src/kernel-daemon.wiring.test.ts` now proves the first tracked
+capability-gap increment with a real temporary workspace. An allowed provider
+edit changes the workspace and emits `activity.started`/`activity.completed`
+canonical events; a denied high-risk shell command records the deny decision,
+does not touch the workspace, and emits the same canonical activity lifecycle.
+Convex ingress binds the command's project path to the authorized thread's
+project path and returns that authorized path with the daemon claim, so the
+daemon does not mistake a Convex project document ID for a filesystem
+repository or accept a caller-selected workspace.
+
+Approval requests are deliberately not treated as complete: policy `ask`
+currently emits an explicit activity failure because the serialized kernel
+poller cannot yet suspend a provider effect while concurrently processing the
+matching `approval.resolve` command. Provider continuation with tool results,
+true in-flight steering/interrupt cancellation, and orchestration-owned
+checkpoint capture remain open and continue to block parity claims for those
+behaviors.

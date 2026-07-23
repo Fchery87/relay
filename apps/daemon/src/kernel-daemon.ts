@@ -35,7 +35,9 @@ import {
 import type { ProjectionSink } from "./sync/convex-projection-sink";
 import type { ModelProvider, ModelProviderRouter } from "./model-provider";
 import type { GovernanceGateway } from "./governed-tool-executor";
+import { executeGovernedToolCall } from "./governed-tool-executor";
 import type { Policy } from "./policy";
+import { classifyToolCall, evaluatePolicy } from "./policy";
 import type { MachinePlatform } from "@relay/shared";
 import { ScriptedModelProvider } from "./model-provider";
 import { LocalModelRouter } from "./catalog-provider-router";
@@ -352,12 +354,18 @@ function withoutCodexScope<TEvent extends NormalizedEvent>(
 // Turn executor — bridges the provider into the kernel's event stream
 // ---------------------------------------------------------------------------
 
-async function executeTurn({
+export async function executeTurn({
   runId,
   turnId,
   prompt,
   provider,
   runtime,
+  governance,
+  policy,
+  platform,
+  root,
+  projectPath,
+  resolveProjectRoot,
   onFirstToken,
 }: {
   runId: string;
@@ -365,6 +373,12 @@ async function executeTurn({
   prompt: string;
   provider: ModelProvider;
   runtime: LocalHarnessRuntime;
+  governance?: GovernanceGateway;
+  policy?: Policy;
+  platform?: MachinePlatform;
+  root?: string;
+  projectPath?: string;
+  resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
   onFirstToken?: (latencyMs: number) => void;
 }): Promise<boolean> {
   const signal = AbortSignal.timeout(10 * 60 * 1000);
@@ -406,6 +420,83 @@ async function executeTurn({
           console.error("Kernel daemon: failed to append usage.recorded", result.reason);
         }
         incrementMetric("eventsProcessed");
+      }
+    }
+
+    if (provider.toolCalls) {
+      let toolRoot = root;
+      let toolIndex = 0;
+      for await (const call of provider.toolCalls({ prompt })) {
+        if (!governance || !policy || !platform) {
+          throw new Error("Kernel tool execution requires governance, policy, and platform dependencies");
+        }
+        if (!toolRoot) {
+          if (!resolveProjectRoot || !projectPath) {
+            throw new Error("Kernel tool execution requires a resolvable project root");
+          }
+          toolRoot = await resolveProjectRoot({ repoPath: projectPath, threadId: runId });
+        }
+
+        const activityId = `activity-tool-${turnId}-${toolIndex++}`;
+        let outputIndex = 0;
+        const classification = classifyToolCall(call);
+        await persistProviderEvent(runtime, runId, {
+          eventId: `ev-activity-started-${runId}-${turnId}-${activityId}`,
+          type: "activity.started",
+          turnId: turnId as never,
+          payload: { activityId: activityId as never, kind: "tool", toolName: call.kind },
+        });
+
+        if (evaluatePolicy({ ...classification, policy }) === "ask") {
+          await persistProviderEvent(runtime, runId, {
+            eventId: `ev-activity-failed-${runId}-${turnId}-${activityId}`,
+            type: "activity.failed",
+            turnId: turnId as never,
+            payload: {
+              activityId: activityId as never,
+              error: "Kernel approval suspension is not available yet; tool refused",
+            },
+          });
+          continue;
+        }
+
+        try {
+          const result = await executeGovernedToolCall({
+            call,
+            governance,
+            onCompleted: async () => undefined,
+            onOutput: async (output) => {
+              await persistProviderEvent(runtime, runId, {
+                eventId: `ev-activity-delta-${runId}-${turnId}-${activityId}-${outputIndex++}`,
+                type: "activity.delta",
+                turnId: turnId as never,
+                payload: { activityId: activityId as never, content: sanitizeForProjection(output).slice(0, 4_000) },
+              });
+            },
+            platform,
+            policy,
+            root: toolRoot,
+            threadId: runId,
+          });
+          await persistProviderEvent(runtime, runId, {
+            eventId: `ev-activity-completed-${runId}-${turnId}-${activityId}`,
+            type: "activity.completed",
+            turnId: turnId as never,
+            payload: {
+              activityId: activityId as never,
+              summary: result.kind === "refused" ? "Tool refused" : "Tool completed",
+              result: { output: sanitizeForProjection(result.output).slice(0, 4_000), succeeded: result.kind === "executed" && result.succeeded },
+            },
+          });
+        } catch (error) {
+          await persistProviderEvent(runtime, runId, {
+            eventId: `ev-activity-failed-${runId}-${turnId}-${activityId}`,
+            type: "activity.failed",
+            turnId: turnId as never,
+            payload: { activityId: activityId as never, error: error instanceof Error ? error.message : String(error) },
+          });
+          throw error;
+        }
       }
     }
     turnSucceeded = true;
@@ -672,6 +763,7 @@ export class KernelDaemon {
   private commandGateway!: CommandGateway;
   private projectionSink!: ProjectionSink;
   private codexAdapter: CodexSessionAdapter | null = null;
+  private readonly projectPathByRun = new Map<string, string>();
   private shuttingDown = false;
   private tracer = new Tracer();
   private supervisor!: DaemonSupervisor;
@@ -769,6 +861,11 @@ export class KernelDaemon {
             runId,
             runtime: this.runtime,
             turnId,
+            governance: this.config.adapterDeps?.governance,
+            policy: this.config.adapterDeps?.policy,
+            platform: this.config.adapterDeps?.platform,
+            projectPath: this.projectPathByRun.get(runId),
+            resolveProjectRoot: this.config.adapterDeps?.resolveProjectRoot,
           });
         }
         return [];
@@ -910,7 +1007,7 @@ export class KernelDaemon {
           continue;
         }
 
-        await this.processCommand(cmd.commandId, cmd.externalCommandId, cmd.kind, payload, cmd.runId, cmd.leaseGeneration);
+        await this.processCommand(cmd.commandId, cmd.externalCommandId, cmd.kind, payload, cmd.runId, cmd.leaseGeneration, cmd.projectPath);
       }
     } catch (error) {
       if (!this.shuttingDown) {
@@ -928,9 +1025,11 @@ export class KernelDaemon {
     payload: Record<string, unknown>,
     runId?: string,
     leaseGeneration?: number,
+    projectPath?: string,
   ): Promise<void> {
     const span = this.tracer.startSpan(`command.${kind}`);
     span.tags["commandId"] = commandId;
+    if (projectPath && runId) this.projectPathByRun.set(runId, projectPath);
 
     // Renew the exact lease generation for the full external-effect
     // lifetime — a claim's initial lease only covers the gap between polls,
@@ -989,6 +1088,9 @@ export class KernelDaemon {
       switch (kind) {
         case "run.create": {
           const projectId = (payload.projectId ?? "default") as string;
+          if (typeof payload.projectPath === "string" && payload.projectPath.length > 0 && runId) {
+            this.projectPathByRun.set(runId, payload.projectPath);
+          }
           // `runId` is the canonical ID assigned at command ingress
           // (submitToInbox defaults it to the thread ID). The local run
           // must be created under this exact ID — otherwise the
@@ -1011,6 +1113,7 @@ export class KernelDaemon {
           const rId = runId ?? (payload.runId as string);
           if (!rId) throw new Error("run.stop requires runId");
           await this.runtime.stopRun({ runId: rId as never });
+          this.projectPathByRun.delete(rId);
           incrementMetric("completedRuns");
           await complete("completed");
           break;
@@ -1044,6 +1147,9 @@ export class KernelDaemon {
           const rId = runId ?? (payload.runId as string);
           if (!rId) throw new Error("turn.send requires runId");
           const rawPrompt = (payload.prompt ?? "Hello") as string;
+          if (typeof payload.projectPath === "string" && payload.projectPath.length > 0) {
+            this.projectPathByRun.set(rId, payload.projectPath);
+          }
 
           // Security: scan prompt for secrets before sending to provider
           const secretFindings = scanForSecrets(rawPrompt);

@@ -222,6 +222,8 @@ export default defineSchema({
     machineId: v.optional(v.id("machines")),
     ownerId: v.optional(v.id("users")),
     payloadJson: v.string(),
+    /** Authorized local workspace path copied from the thread's project at ingress. */
+    projectPath: v.optional(v.string()),
     runId: v.optional(v.string()),
     status: v.union(v.literal("pending"), v.literal("claimed"), v.literal("completed"), v.literal("rejected")),
   }).index("by_status_lease", ["status", "leaseExpiresAt"]).index("by_machine", ["machineId", "status"]).index("by_owner", ["ownerId"]).index("by_command_id", ["commandId"]),

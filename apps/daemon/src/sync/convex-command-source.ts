@@ -14,7 +14,7 @@ const submitCommandMutation = makeFunctionReference<
 const claimCommandBatch = makeFunctionReference<
   "mutation",
   { deviceToken: string; leaseDurationMs: number; limit: number },
-  Array<{ _id: string; commandId?: string; correlationId: string; kind: string; leaseGeneration?: number; payloadJson: string; runId?: string }>
+  Array<{ _id: string; commandId?: string; correlationId: string; kind: string; leaseGeneration?: number; payloadJson: string; projectPath?: string; runId?: string }>
 >("commands/inbox:claimBatch");
 
 const completeCommand = makeFunctionReference<
@@ -32,7 +32,7 @@ const renewLeaseMutation = makeFunctionReference<
 export type CommandGateway = {
   submitCommand(input: { commandId: string; correlationId: string; kind: string; payloadJson: string; threadId: string }): Promise<string>;
   claimBatch(input: { deviceToken: string; leaseDurationMs: number; limit: number }): Promise<
-    Array<{ commandId: string; correlationId: string; externalCommandId: string; kind: string; leaseGeneration: number; payloadJson: string; runId?: string }>
+    Array<{ commandId: string; correlationId: string; externalCommandId: string; kind: string; leaseGeneration: number; payloadJson: string; projectPath?: string; runId?: string }>
   >;
   completeCommand(input: { commandId: string; deviceToken: string; leaseGeneration: number; status: "completed" | "rejected" }): Promise<void>;
   /**
@@ -62,6 +62,7 @@ export function createConvexCommandSource(opts: {
         kind: row.kind as string,
         leaseGeneration: (row.leaseGeneration as number) ?? 0,
         payloadJson: row.payloadJson as string,
+        projectPath: row.projectPath as string | undefined,
         runId: row.runId as string | undefined,
       }));
     },

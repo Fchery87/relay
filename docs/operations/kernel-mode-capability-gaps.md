@@ -1,22 +1,29 @@
 # Kernel-mode capability gaps vs. legacy
 
-**Status:** Open finding, discovered 2026-07-23 while proving the real
-cross-tier recovery seam (`tickets.md`, "Prove the real cross-tier recovery
-seam"). Not yet its own tracked ticket in either ticket group — recorded
-here so it isn't lost, and so later tickets that assume kernel-mode parity
-with legacy ("Prove shadow parity," "Cut the browser over," "Canary kernel
-default," "Remove legacy execution paths") don't proceed on a false premise.
+**Status:** Open tracked follow-up, discovered 2026-07-23 while proving the
+real cross-tier recovery seam (`tickets.md`, "Close kernel turn capability
+gaps"). The first tool-execution increment is complete; approval suspension,
+true in-flight steering/interrupt cancellation, and automatic checkpoint
+capture remain open. Later tickets that assume kernel-mode parity with legacy
+("Prove shadow parity," "Cut the browser over," "Canary kernel default,"
+"Remove legacy execution paths") must not proceed on a false premise.
 
 ## What's missing
 
 Kernel mode's turn execution (`apps/daemon/src/kernel-daemon.ts`,
-`executeTurn()`) only handles `assistant.delta` and `usage.recorded`
-provider stream events. Concretely, in kernel mode today:
+`executeTurn()`) now consumes provider tool calls after the provider stream,
+but the capability is intentionally incomplete. Concretely, in kernel mode
+today:
 
-- **No tool execution.** `executeTurn()` never calls `provider.toolCalls()`
-  and never invokes `governed-tool-executor.ts`'s `executeGovernedToolCall`
-  (imported for its `GovernanceGateway` type only, never called). No file
-  reads/edits, no shell commands, during a `turn.send`.
+- **Governed tool execution (first increment complete).** `executeTurn()`
+  calls `provider.toolCalls()` when available and routes calls through
+  `executeGovernedToolCall`, the configured policy, governance audit, and
+  sandbox/tool executor using the authorized project path carried by the
+  canonical command claim. It emits `activity.started`, bounded
+  `activity.delta`, `activity.completed`, or `activity.failed` events. The
+  current increment supports policy `allow`/`deny`; an `ask` decision is
+  refused with an explicit activity failure until approval suspension is
+  implemented.
 - **No governance chokepoint or approval cards during a turn.** Nothing
   produces a real `approval_required` state from tool risk classification.
   `approval.resolve` (now wired at command-dispatch — see below) can only
@@ -34,6 +41,19 @@ provider stream events. Concretely, in kernel mode today:
 - **No per-turn auto-checkpoint.** `checkpoint.capture` is a no-op; only
   the explicit `checkpoint.restore`/`checkpoint.compare` commands (against
   checkpoints created some other way) function.
+
+## Completed increment — governed tool execution
+
+The kernel tool bridge is covered by `apps/daemon/src/kernel-daemon.wiring.test.ts`
+with a real temporary workspace: an allowed edit changes the file and records
+an allow audit decision; a denied high-risk shell command produces no file
+effect and records a deny decision. Both cases emit canonical activity events
+before `turn.completed`.
+
+This does not yet make the provider loop fully agentic: tool calls are
+consumed after the current provider stream, and the provider is not resumed
+with tool results. That is deliberate follow-up work alongside approval
+suspension rather than a hidden parity claim.
 
 ## Confirmed live (2026-07-23): mid-turn steering cannot be delivered today
 

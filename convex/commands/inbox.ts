@@ -24,6 +24,24 @@ const SUPPORTED_COMMAND_KINDS = new Set([
   "subagent.run",
 ]);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertAuthorizedProjectPath(payloadJson: string, authorizedPath: string): void {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadJson);
+  } catch {
+    return;
+  }
+  if (!isRecord(payload)) return;
+  const projectPath = payload.projectPath;
+  if (projectPath === undefined) return;
+  if (typeof projectPath !== "string") throw new Error("projectPath must be a string");
+  if (projectPath !== authorizedPath) throw new Error("projectPath must match the authorized project");
+}
+
 export const submitToInbox = mutationGeneric({
   args: {
     commandId: v.string(),
@@ -40,6 +58,7 @@ export const submitToInbox = mutationGeneric({
     const thread = await requireOwnedThread(ctx, userId, args.threadId);
     const project = await ctx.db.get(thread.projectId);
     if (!project) throw new Error("Project not found");
+    assertAuthorizedProjectPath(args.payloadJson, project.path);
 
     // Cross-owner protection: the project's machine must belong to the authenticated user.
     const machine = await ctx.db.get(project.machineId);
@@ -70,6 +89,7 @@ export const submitToInbox = mutationGeneric({
       machineId: project.machineId,
       ownerId: userId,
       payloadJson: args.payloadJson,
+      projectPath: project.path,
       runId: canonicalRunId,
       status: "pending",
     });
@@ -92,6 +112,7 @@ export const claimBatch = mutationGeneric({
       correlationId: string;
       kind: string;
       payloadJson: string;
+      projectPath?: string;
       runId?: string;
       leaseGeneration: number;
     }> = [];
@@ -102,7 +123,7 @@ export const claimBatch = mutationGeneric({
     for (const cmd of pending) {
       const leaseGeneration = (cmd.leaseGeneration ?? 0) + 1;
       await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseOwner: machine._id, leaseGeneration, status: "claimed" });
-      results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, runId: cmd.runId, leaseGeneration });
+      results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, projectPath: cmd.projectPath, runId: cmd.runId, leaseGeneration });
     }
 
     // Reclaim expired claimed commands for this machine
@@ -116,7 +137,7 @@ export const claimBatch = mutationGeneric({
       for (const cmd of expired) {
         const leaseGeneration = (cmd.leaseGeneration ?? 0) + 1;
         await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseOwner: machine._id, leaseGeneration, status: "claimed" });
-        results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, runId: cmd.runId, leaseGeneration });
+        results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, projectPath: cmd.projectPath, runId: cmd.runId, leaseGeneration });
       }
     }
 

@@ -4,6 +4,9 @@
 // ---------------------------------------------------------------------------
 
 import { expect, test, describe } from "bun:test";
+import { access, mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   scanForSecrets,
   sanitizeForProjection,
@@ -23,7 +26,9 @@ import type {
   CodexSessionAdapter,
   NormalizedEvent,
 } from "@relay/codex-app-server";
-import { executeTurnViaCodex } from "./kernel-daemon";
+import { executeTurn, executeTurnViaCodex } from "./kernel-daemon";
+import { ScriptedModelProvider } from "./model-provider";
+import type { Policy } from "./policy";
 
 describe("Codex kernel bridge", () => {
   test("waits for notifications that arrive after turn/start acceptance", async () => {
@@ -462,5 +467,97 @@ describe("Version compatibility", () => {
     const current = { ...parseVersion("1.0.0"), schemaVersion: 3 };
     const target = { ...parseVersion("2.0.0"), schemaVersion: 3 };
     expect(isCompatibleUpgrade(current, target)).toBe(true);
+  });
+});
+
+describe("kernel tool bridge", () => {
+  async function observeTypes(runtime: LocalHarnessRuntime, runId: string): Promise<string[]> {
+    const snapshot = await runtime.snapshot({ runId: runId as never });
+    const types: string[] = [];
+    for await (const event of runtime.observe({ runId: runId as never, afterSequence: -1 })) {
+      types.push(event.type);
+      if (event.sequence >= snapshot.sequence) break;
+    }
+    return types;
+  }
+
+  test("executes an allowed provider tool through the sandbox and emits activity events", async () => {
+    const root = await mkdtemp(join(tmpdir(), "relay-kernel-tool-allow-"));
+    const runtime = LocalHarnessRuntime.memory();
+    const created = await runtime.createRun({ projectId: "project", runId: "run-tool-allow" as never });
+    await runtime.resumeRun({ runId: created.runId });
+    const turn = await runtime.sendTurn({ runId: created.runId, prompt: "edit the file" });
+    const decisions: string[] = [];
+    const policy: Policy = { rules: [{ capability: "edit", decision: "allow", risk: "low" }] };
+    let resolvedProjectPath = "";
+
+    const succeeded = await executeTurn({
+      governance: {
+        recordDecision: async ({ decision }) => { decisions.push(decision); },
+        requestApproval: async () => "deny",
+      },
+      platform: "linux",
+      policy,
+      prompt: "edit the file",
+      provider: new ScriptedModelProvider({
+        chunks: ["done"],
+        toolCalls: [{ content: "changed", kind: "edit", path: "result.txt" }],
+      }),
+      projectPath: "project-registration-id",
+      resolveProjectRoot: async ({ repoPath }) => {
+        resolvedProjectPath = repoPath;
+        return root;
+      },
+      runId: created.runId,
+      runtime,
+      turnId: turn.turnId,
+    });
+
+    expect(succeeded).toBe(true);
+    expect(await readFile(join(root, "result.txt"), "utf8")).toBe("changed");
+    expect(resolvedProjectPath).toBe("project-registration-id");
+    expect(decisions).toEqual(["allow"]);
+    const types = await observeTypes(runtime, created.runId);
+    expect(types.indexOf("activity.started")).toBeGreaterThan(-1);
+    expect(types.indexOf("activity.completed")).toBeGreaterThan(types.indexOf("activity.started"));
+    expect(types.at(-1)).toBe("turn.completed");
+    await runtime.shutdown();
+  });
+
+  test("denies a high-risk provider tool without changing the workspace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "relay-kernel-tool-deny-"));
+    const runtime = LocalHarnessRuntime.memory();
+    const created = await runtime.createRun({ projectId: "project", runId: "run-tool-deny" as never });
+    await runtime.resumeRun({ runId: created.runId });
+    const turn = await runtime.sendTurn({ runId: created.runId, prompt: "remove the file" });
+    const decisions: string[] = [];
+    const policy: Policy = { rules: [{ capability: "exec", decision: "deny", risk: "high" }] };
+
+    const succeeded = await executeTurn({
+      governance: {
+        recordDecision: async ({ decision }) => { decisions.push(decision); },
+        requestApproval: async () => "deny",
+      },
+      platform: "linux",
+      policy,
+      prompt: "remove the file",
+      provider: new ScriptedModelProvider({
+        chunks: ["refused"],
+        toolCalls: [{ command: "rm -f blocked.txt", kind: "bash" }],
+      }),
+      root,
+      runId: created.runId,
+      runtime,
+      turnId: turn.turnId,
+    });
+
+    expect(succeeded).toBe(true);
+    expect(decisions).toEqual(["deny"]);
+    await expect(access(join(root, "blocked.txt"))).rejects.toThrow();
+    const types = await observeTypes(runtime, created.runId);
+    expect(types).toContain("activity.started");
+    expect(types).toContain("activity.completed");
+    expect(types.at(-1)).toBe("turn.completed");
+    await runtime.shutdown();
   });
 });

@@ -55,6 +55,8 @@ export type ExternalCommandType = ExternalCommand["type"];
 
 export type CreateRunPayload = {
   readonly projectId: string;
+  /** Local-only repository path used by daemon workspace adapters. */
+  readonly projectPath?: string;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly permissionProfile?: "read-only" | "workspace-write" | "full-access";
   readonly initialPrompt?: string;
@@ -70,6 +72,8 @@ export type ResumeRunCommand = CommandEnvelope<"run.resume", ResumeRunPayload>;
 // --- send ---
 
 export type SendTurnPayload = {
+  /** Local-only repository path used by daemon workspace adapters. */
+  readonly projectPath?: string;
   readonly prompt: string;
   readonly turnId: TurnId;
 };
