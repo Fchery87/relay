@@ -311,6 +311,15 @@ kernel-default progression. This makes the local evidence gate fail closed; it
 does not substitute for the credentialed real-provider run or the supervised
 release window.
 
+## Update — 2026-07-23: fresh protected rerun
+
+At commit `e20c825`, the protected command
+`RELAY_CROSS_TIER=1 bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts`
+was rerun outside the restricted shell against a fresh isolated backend. It
+completed with **13 pass, 0 fail, 51 assertions**. The run covered the same
+real command/projection seam, including backend restart and deterministic
+workspace, lease, lost-response, and projection fault scenarios.
+
 Earlier ordinary CI validation recorded 345 passing daemon tests, one
 credential-dependent skip, and zero failures.
 The live self-hosted Convex and MCP transport profiles remain protected and
