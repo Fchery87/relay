@@ -10,7 +10,19 @@ jobs:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run release:build
+      - name: Configure release signing key
+        env:
+          RELAY_RELEASE_SIGNING_KEY: ${{ secrets.RELAY_RELEASE_SIGNING_KEY }}
+        run: |
+          test -n "$RELAY_RELEASE_SIGNING_KEY"
+          umask 077
+          key_path="$RUNNER_TEMP/relay-release-signing-key.pem"
+          printf '%s\n' "$RELAY_RELEASE_SIGNING_KEY" > "$key_path"
+          echo "RELAY_RELEASE_SIGNING_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+      - name: Build signed release artifacts
+        env:
+          RELAY_RELEASE_VERSION: ${{ github.ref_name }}
+        run: bun run release:build
       - uses: actions/upload-artifact@v4
         with:
           name: relay-release-${{ github.ref_name }}
