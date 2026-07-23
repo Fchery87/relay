@@ -5,10 +5,10 @@
 // projections is safe before narrowing/deleting legacy tables.
 // ---------------------------------------------------------------------------
 
-import { query } from "./_generated/server";
+import { internalQuery } from "./_generated/server";
 
 /** Return counts of projection snapshots to verify data migration completed. */
-export const countProjectionSnapshots = query({
+export const countProjectionSnapshots = internalQuery({
   handler: async (ctx) => {
     const snaps = await ctx.db.query("projectionSnapshots").take(1000);
     return { projectionSnapshotCount: snaps.length };
@@ -16,7 +16,7 @@ export const countProjectionSnapshots = query({
 });
 
 /** Return counts of projection events to verify event migration completed. */
-export const countProjectionEvents = query({
+export const countProjectionEvents = internalQuery({
   handler: async (ctx) => {
     const events = await ctx.db.query("projectionEvents").take(1000);
     return { projectionEventCount: events.length };
@@ -24,7 +24,7 @@ export const countProjectionEvents = query({
 });
 
 /** Comprehensive readiness check for legacy deletion. */
-export const checkNarrowReadiness = query({
+export const checkNarrowReadiness = internalQuery({
   handler: async (ctx) => {
     const snaps = await ctx.db.query("projectionSnapshots").take(1);
     const events = await ctx.db.query("projectionEvents").take(1);

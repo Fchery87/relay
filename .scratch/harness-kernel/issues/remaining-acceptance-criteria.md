@@ -87,3 +87,9 @@ irreversible gates; deterministic local coverage is not substituted for them.
 - [ ] Remove legacy daemon code (agent-loop.ts, per-work-type pollers, raw-llm adapter)
 - [ ] Remove RELAY_RUNTIME_MODE flag and kernel-cutover gating
 - [ ] Record release evidence (dry-run logs, verification output, rehearsal results)
+
+Local narrowing safety is now fail-closed: `convex/narrow.ts` and
+`convex/schema_narrow.ts` are internal-only, and live narrowing requires a
+server-stored `releaseEvidence` record with all nine gates plus a matching
+rehearsal hash. The irreversible contraction remains disabled until the
+external release-window and rollback evidence above is actually recorded.

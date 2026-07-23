@@ -164,3 +164,9 @@ with status `78` when facts are incomplete, diagnostics contain failures, or
 any gate is false. The container does not turn local or deterministic output
 into hosted/provider/release evidence; operators must supply those real facts
 in the input document.
+
+The Convex-side narrowing guard independently requires the reviewed proof to
+be recorded server-side. `convex/narrow.ts` is internal-only and rejects a
+caller-supplied rehearsal hash unless it matches the active `releaseEvidence`
+record and every release gate is true. The current live contraction branch is
+intentionally disabled; do not treat a successful dry run as schema removal.

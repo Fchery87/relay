@@ -35,3 +35,16 @@ upload `cross-tier-recovery-<run-id>` and `real-codex-harness-<run-id>` JSON
 artifacts even when the underlying command fails. Those artifacts prove what
 the protected runner observed; they do not change the corresponding release
 gate until an operator reviews and records the result.
+
+## Convex narrowing guard
+
+The final contraction boundary is not a public Convex API. The maintenance
+queries in `convex/schema_narrow.ts` and the mutation in `convex/narrow.ts` are
+internal-only. A protected release controller must first persist the complete
+gate record through `internal.narrow.recordReleaseEvidence`; the narrowing
+mutation then compares its supplied rehearsal confirmation with the
+server-stored hash and checks all nine gates. Missing evidence, a false gate,
+or a hash mismatch fails closed. Even a complete dry run does not perform live
+contraction: that irreversible deployment operation remains explicitly
+disabled until the separately recorded release-window and rollback procedure
+is approved.

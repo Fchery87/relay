@@ -291,6 +291,25 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_machine_direction", ["machineId", "direction"]),
 
+  // Release evidence is written by an operator-controlled deployment job and
+  // read by the internal narrowing guard. Keeping the proof server-side means
+  // a caller cannot make an irreversible migration appear ready by supplying
+  // an arbitrary hash or set of booleans.
+  releaseEvidence: defineTable({
+    backupRehearsal: v.boolean(),
+    canaryRollout: v.boolean(),
+    evidenceId: v.string(),
+    kernelReady: v.boolean(),
+    productionAcceptance: v.boolean(),
+    providerConformance: v.boolean(),
+    recordedAt: v.number(),
+    releaseWindow: v.boolean(),
+    rehearsalHash: v.string(),
+    shadowParity: v.boolean(),
+    supportedOsConformance: v.boolean(),
+    zeroLegacyActivations: v.boolean(),
+  }).index("by_evidence_id", ["evidenceId"]),
+
   // --- Extensibility tables (widen-only) ---
 
   slashCommands: defineTable({
