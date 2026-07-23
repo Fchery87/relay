@@ -10,6 +10,7 @@
     "bundle:check": "bun run scripts/check-bundle-budget.ts",
     "security:gate": "bun run scripts/security-gate.ts",
     "codex:schema:check": "bun run scripts/check-codex-app-server-schema.ts",
+    "codex:schema:generate": "bun run scripts/codex-schema.ts",
     "codex:harness:smoke": "RELAY_E2E_CODEX=1 RELAY_CODEX_ENABLED=1 bun run scripts/smoke-codex-harness.ts",
     "conformance:matrix": "bun run scripts/run-conformance-matrix.ts",
     "crash:matrix": "bun run scripts/run-crash-matrix.ts --profile=pr",
