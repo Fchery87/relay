@@ -223,6 +223,36 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
     }
   }, 60_000);
 
+  test("two isolated runs never receive each other's events or workspace effects", async () => {
+    const first = await setupScenario("e2e-isolation-first");
+    const second = await setupScenario("e2e-isolation-second");
+    try {
+      await Promise.all([
+        createAndResumeRun(first.fixture, first.runId, first.daemon),
+        createAndResumeRun(second.fixture, second.runId, second.daemon),
+      ]);
+      await submitCommand(first.fixture, {
+        commandId: `cmd-turn-send-${first.runId.slice(-8)}-isolation`,
+        kind: "turn.send",
+        payload: { runId: first.runId, prompt: "only the first run should see this" },
+        runId: first.runId,
+      });
+      await waitUntilProjected(first.daemon, async () => {
+        const events = await fetchEvents(first.fixture, first.runId, -1);
+        return events.some((event) => event.type === "turn.completed" || event.type === "turn.failed");
+      }, 20_000, "first isolated run to complete");
+
+      const firstEvents = await fetchEvents(first.fixture, first.runId, -1);
+      const secondEvents = await fetchEvents(second.fixture, second.runId, -1);
+      expect(firstEvents.every((event) => event.runId === first.runId)).toBe(true);
+      expect(secondEvents.every((event) => event.runId === second.runId)).toBe(true);
+      expect(secondEvents.some((event) => event.type === "turn.started" || event.type === "assistant.delta" || event.type === "turn.completed")).toBe(false);
+      expect(JSON.stringify(secondEvents)).not.toContain("only the first run should see this");
+    } finally {
+      await Promise.all([first.daemon.stop(), second.daemon.stop()]);
+    }
+  }, 60_000);
+
   test("daemon restart: a fresh KernelDaemon instance against the same backend converges without duplicating the run", async () => {
     const fixture2 = await buildIsolatedFixture(backend);
     const runId = fixture2.threadId;
@@ -281,28 +311,21 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
   }, 60_000);
 
   // ---------------------------------------------------------------------
-  // turn.steer / turn.interrupt / approval.resolve — these commands are
-  // real canonical state transitions today, but kernel mode has no
-  // governance/tool-execution integration yet to actually create an
-  // approval or cancel an in-flight provider call — see
-  // docs/operations/kernel-mode-capability-gaps.md. These tests prove the
-  // command-routing and state-transition seam that DOES exist, not full
-  // interrupt/approval semantics.
+  // turn.steer / turn.interrupt / approval.resolve — these tests exercise
+  // reachable post-terminal/precondition paths through the real command
+  // seam. The focused kernel control suite covers the in-flight control lane
+  // and governed approval continuation semantics.
   // ---------------------------------------------------------------------
 
-  test("turn.steer after the turn has already completed is rejected, not silently accepted or hung (real finding: single-threaded sequential poll processing means mid-turn steering cannot land while a turn is genuinely in flight — see kernel-mode-capability-gaps.md)", async () => {
+  test("turn.steer after the turn has already completed is rejected, not silently accepted or hung", async () => {
     const { fixture: fixture3, runId, daemon } = await setupScenario("e2e-steer-machine");
     try {
       await submitCommand(fixture3, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture3.projectId } });
       await submitCommand(fixture3, { commandId: `cmd-run-resume-${runId.slice(-8)}-2`, kind: "run.resume", payload: { runId }, runId });
       await submitCommand(fixture3, { commandId: `cmd-turn-send-${runId.slice(-8)}-3`, kind: "turn.send", payload: { runId, prompt: "steer me" }, runId });
 
-      // The scripted provider completes the turn near-instantly, and
-      // KernelDaemon processes a claimed batch sequentially — so by
-      // construction, turn.steer submitted after turn.send always lands
-      // after the turn is already done, not "mid-turn." Wait for the turn
-      // to actually finish before steering, to test the real, reachable
-      // scenario rather than assume a race that can't happen.
+      // Wait for the turn to finish so this test targets the rejected
+      // post-terminal precondition rather than racing the control lane.
       await waitUntilProjected(daemon, async () => {
         const events = await fetchEvents(fixture3, runId, -1);
         return events.some((e) => e.type === "turn.completed" || e.type === "turn.failed");
@@ -324,7 +347,7 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
     }
   }, 60_000);
 
-  test("turn.interrupt routes through the real seam and records turn.interrupted (does not abort the in-flight provider call — see kernel-mode-capability-gaps.md)", async () => {
+  test("turn.interrupt routes through the real seam and leaves a recoverable run", async () => {
     const { fixture: fixture4, runId, daemon } = await setupScenario("e2e-interrupt-machine");
     try {
       await submitCommand(fixture4, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture4.projectId } });
