@@ -400,6 +400,12 @@ Work the **frontier**: any ticket whose blockers are all done. Tickets 0 and 1 a
 ---
 
 
+The harness-kernel checklist above records the earlier implementation plan.
+Its closed code-readiness items do not waive the operational and irreversible
+acceptance gates in the active self-hosted cutover section below; that section
+is authoritative for hosted evidence, supervised rollout, release windows,
+legacy removal, and schema narrowing.
+
 # Tickets: Self-Hosted Convex Recovery and Kernel Cutover
 
 Stabilize Relay's self-hosted Convex runtime, complete the durable harness-kernel command/projection path, and cut over safely with tested recovery and rollback. Source spec: `.scratch/self-hosted-convex-recovery/PRD.md`.
