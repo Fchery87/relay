@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToMessages } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -39,4 +39,28 @@ test("core browser actions all use the canonical command vocabulary", () => {
   expect(envelopes.map((envelope) => envelope.kind)).toEqual(commands.map(([kind]) => kind));
   expect(new Set(envelopes.map((envelope) => envelope.commandId)).size).toBe(commands.length);
   expect(envelopes.every((envelope) => envelope.correlationId.startsWith("corr-cmd-"))).toBe(true);
+});
+
+test("canonical event tails project ordered user and assistant messages", () => {
+  const event = (sequence: number, type: string, payload: Record<string, unknown>) => ({
+    eventId: `event-${sequence}` as never,
+    sequence,
+    streamVersion: sequence,
+    type: type as never,
+    runId: "run-1" as never,
+    turnId: "turn-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: sequence,
+    payload,
+  });
+  const messages = projectionEventsToMessages([
+    event(3, "assistant.delta", { text: "world" }),
+    event(1, "turn.started", { prompt: "say hello" }),
+    event(4, "assistant.completed", {}),
+    event(2, "assistant.delta", { text: "hello " }),
+  ]);
+  expect(messages).toEqual([
+    { _id: "user:turn-1", content: "say hello", role: "user", status: "complete" },
+    { _id: "assistant:turn-1", content: "hello world", role: "assistant", status: "complete" },
+  ]);
 });
