@@ -14,6 +14,14 @@ the conformance runner enabled `RELAY_REQUIRE_MCP_FIXTURES=1`, which makes the
 MCP tests fail rather than silently skip when their deterministic prerequisites
 are unavailable.
 
+The runner now also accepts `--evidence <path>` or
+`RELAY_CONFORMANCE_EVIDENCE_PATH` and writes a mode-restricted JSON record with
+the platform, runtime, command list, timestamps, and pass/fail status. The CI
+matrix supplies this path and uploads one `conformance-<os>` artifact per
+runner, including when a matrix command fails. This improves evidence
+collection; it does not substitute for hosted execution or credentialed
+provider evidence.
+
 ## Results
 
 - Typecheck: passed for every workspace package.

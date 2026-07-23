@@ -14,8 +14,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run conformance:matrix
+        env:
+          RELAY_CONFORMANCE_EVIDENCE_PATH: ${{ runner.temp }}/relay-conformance.json
       - run: bun run daemon:build:native
       - run: bun run release:smoke
+      - name: Upload conformance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-${{ matrix.os }}
+          path: ${{ runner.temp }}/relay-conformance.json
+          if-no-files-found: error
 
   # Protected job: exercises the real cross-tier recovery seam against a
   # real (isolated, throwaway) self-hosted Convex backend — not the
