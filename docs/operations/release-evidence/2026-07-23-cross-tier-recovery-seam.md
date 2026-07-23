@@ -26,6 +26,31 @@ mutation whose committed response is deliberately discarded before an exact
 retry, and the production projection sink's exact-duplicate, reordered, and
 partial-batch behavior against the real Convex server.
 
+## Update — 2026-07-23: side-effect-safe shadow runtime
+
+Shadow mode now has an application runtime at
+`apps/daemon/src/shadow/shadow-runtime.ts` and a projection comparator at
+`apps/daemon/src/shadow/projection-comparator.ts`. The real legacy conversation
+gateway is wrapped at its claim/message/turn boundary; the wrapper records
+normalized canonical input and legacy-owned effect identities. Shadow replays
+that input through a deterministic local provider adapter with no workspace,
+tool, checkpoint, or remote projection effects. `apps/daemon/src/index.ts`
+starts no `KernelDaemon` and no second claim loop in shadow mode.
+
+Parity evidence is persisted as JSONL under the daemon home, reloaded on
+restart, and exposes a promotion-blocking flag for unexplained divergence.
+The comparator covers canonical lifecycle, provider-session, turn, assistant,
+activity, approval, usage, checkpoint, and projection events plus durable
+snapshot state. Formatting normalization is available only through the
+explicit `assistant.delta.formatting` allowlist. The focused shadow suite
+passes with 10 tests across the orchestration comparator and daemon runtime,
+including gateway capture, duplicate timer prevention, effect fencing,
+restart hydration, and divergence blocking.
+
+This proves the deterministic side-effect-safe shadow seam. It does not turn
+the protected real Codex harness into ordinary CI, and the real-provider
+checkpoint/file-edit/restart gate remains required before canary promotion.
+
 ## Two real, previously-undetected bugs found and fixed
 
 Both existed in code shipped and "complete" per prior sessions' ticket

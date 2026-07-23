@@ -30,6 +30,7 @@ import { resolveExtensionRoots } from "./extension-paths";
 import { loadSkills } from "./skills";
 import { staggerOffset, startStaggeredPoller } from "./pollers";
 import { getClaimMetrics } from "./observability/claim-metrics";
+import { ShadowRuntime } from "./shadow/shadow-runtime";
 
 export async function runDaemon({ yolo = false }: { yolo?: boolean } = {}): Promise<void> {
 const runtimeMode: RuntimeMode = resolveRuntimeMode(Bun.env);
@@ -134,6 +135,7 @@ await collectOrphanedWorktrees();
 const worktreeGcTimer = setInterval(() => void collectOrphanedWorktrees().catch((error: unknown) => console.error("Relay worktree GC failed", error)), 30_000);
 const provider = new LocalModelRouter({ env: Bun.env, fallbackProvider: new ScriptedModelProvider({ chunks: ["Relay received your message."] }) });
 const mcp = new McpRegistry({ env: Bun.env, gateway: createConvexMcpServerGateway({ deploymentUrl: config.deploymentUrl, deviceToken: config.registration.deviceToken }), governance });
+let shadowRuntime: ShadowRuntime | undefined;
 
 // -- Runtime mode branch ----------------------------------------------------
 if (runtimeMode === "kernel") {
@@ -157,22 +159,12 @@ if (runtimeMode === "kernel") {
 
 if (runtimeMode === "shadow") {
   console.info("Shadow mode: kernel comparator-only; legacy retains effect ownership");
-  const kernelDaemon = new KernelDaemon({
-    daemonHome,
-    deploymentUrl: config.deploymentUrl,
-    deviceToken: config.registration.deviceToken,
-    heartbeatIntervalMs: config.heartbeatIntervalMs,
-    machineId,
-    machineName: `${config.registration.name}-shadow`,
-    adapterDeps: {
-      resolveProjectRoot: sandboxedResolveProjectRoot,
-      governance,
-      policy,
-      platform: config.registration.platform,
-    },
-  });
-  // Shadow mode intentionally does not start the kernel claim loop: only the
-  // legacy runtime may execute effects. Recorded inputs are compared offline.
+  shadowRuntime = new ShadowRuntime({ evidencePath: join(daemonHome, "shadow", "evidence.jsonl") });
+  await shadowRuntime.start();
+  // Shadow mode intentionally starts no kernel daemon and no second claim
+  // loop. The legacy gateway remains the sole effect owner; its normalized
+  // turn boundary is captured by the wrapper used by the legacy pollers.
+  // The variable is assigned below so all legacy workers share one boundary.
 }
 
 let shuttingDown = false;
@@ -183,6 +175,7 @@ async function shutdown() {
   clearInterval(projectSyncTimer);
   clearInterval(worktreeGcTimer);
   clearInterval(claimMetricsTimer);
+  shadowRuntime?.stop();
   await mcp.close();
   process.exit(0);
 }
@@ -218,12 +211,13 @@ startClaimPoller(() => {
 });
 
 let turnRunning = false;
+const effectiveConversationGateway = shadowRuntime ? shadowRuntime.wrapConversationGateway(conversationGateway) : conversationGateway;
 startClaimPoller(() => {
   if (turnRunning) return;
   turnRunning = true;
   void runQueuedTurn({
     deviceToken: config.registration.deviceToken,
-    gateway: conversationGateway,
+    gateway: effectiveConversationGateway,
     governance,
     mcp,
     policy: subagentPolicy,

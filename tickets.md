@@ -594,12 +594,17 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Execute the approved hosted-history outcome; Prove the real cross-tier recovery seam.
 
-- [ ] Shadow mode captures equivalent inputs with no-op or deterministic side-effect adapters
-- [ ] Exactly one runtime owns provider, tool, workspace, checkpoint, and projection effects
-- [ ] Canonical state, messages, activity, approvals, usage, diffs, checkpoints, and terminal outcomes are compared
-- [ ] Unexplained divergence persists with correlation evidence and blocks promotion
-- [ ] Harmless formatting differences require an explicit reviewed allowlist
-- [ ] Shadow lifecycle has no duplicate timers, claim loops, or effect ownership
+- [x] Shadow mode captures equivalent inputs with no-op or deterministic side-effect adapters (`apps/daemon/src/shadow/shadow-runtime.ts` wraps the real legacy conversation gateway and replays the normalized turn through a deterministic local provider adapter)
+- [x] Exactly one runtime owns provider, tool, workspace, checkpoint, and projection effects (shadow starts no `KernelDaemon`; the effect fence accepts only legacy ownership)
+- [x] Canonical state, messages, activity, approvals, usage, diffs, checkpoints, and terminal outcomes are compared (`ProjectionComparator` compares canonical event categories and durable snapshot state)
+- [x] Unexplained divergence persists with correlation evidence and blocks promotion (JSONL evidence is reloaded across runtime restart)
+- [x] Harmless formatting differences require an explicit reviewed allowlist (`assistant.delta.formatting`)
+- [x] Shadow lifecycle has no duplicate timers, claim loops, or effect ownership (idempotent supervisor lifecycle and gateway-boundary tests)
+
+The deterministic shadow seam is now implemented and covered. Promotion still
+requires the protected real-provider/Codex run recorded by the cross-tier
+recovery ticket; that gate is intentionally not inferred from deterministic
+parity tests.
 
 ## Cut the browser over to canonical commands and projections
 

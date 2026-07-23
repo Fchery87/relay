@@ -107,7 +107,26 @@ export function defaultSnapshotComparator(
       `Sequence: kernel=${kernel.sequence} < legacy=${legacy.sequence}`,
     );
   }
+  const kernelState = canonicalSnapshotState(kernel);
+  const legacyState = canonicalSnapshotState(legacy);
+  if (kernelState !== legacyState) issues.push("Canonical snapshot state diverges");
   return issues;
+}
+
+function canonicalSnapshotState(snapshot: RunSnapshot): string {
+  return canonicalPayload({
+    activeTurnId: snapshot.activeTurnId,
+    checkpoint: snapshot.checkpoint,
+    permissionProfile: snapshot.permissionProfile,
+    pendingApprovalId: snapshot.pendingApprovalId,
+    projectId: snapshot.projectId,
+    providerInstanceId: snapshot.providerInstanceId,
+    providerSession: snapshot.providerSession,
+    reducerPayload: snapshot.reducerPayload,
+    restartCount: snapshot.restartCount,
+    status: snapshot.status,
+    workspace: snapshot.workspace,
+  });
 }
 
 export function defaultEventComparator(
@@ -137,7 +156,9 @@ export function defaultEventComparator(
 
 function isComparableEvent(type: string): boolean {
   return [
-    "turn.started", "turn.completed", "turn.failed", "turn.interrupted",
+    "run.created", "run.started", "run.stopping", "run.stopped", "run.failed",
+    "provider.session.started", "provider.session.resumed", "provider.session.stopped",
+    "turn.started", "turn.steered", "turn.completed", "turn.failed", "turn.interrupted",
     "assistant.delta", "assistant.completed",
     "activity.started", "activity.delta", "activity.completed", "activity.failed",
     "approval.requested", "approval.resolved", "usage.recorded",
@@ -182,6 +203,11 @@ export class ShadowEvidenceStore {
 
   record(evidence: ShadowEvidence): void {
     this.#records.push(evidence);
+  }
+
+  /** Restore previously persisted evidence before accepting new captures. */
+  hydrate(evidence: ReadonlyArray<ShadowEvidence>): void {
+    this.#records.push(...evidence);
   }
 
   /** Returns evidence where parity failed AND the divergence is not on the allowlist. */
