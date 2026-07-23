@@ -1,8 +1,9 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const commands = [
+export const CONFORMANCE_COMMANDS = [
   ["bun", "run", "typecheck"],
+  ["bun", "test", "scripts"],
   ["bun", "run", "test"],
   ["bun", "run", "test:e2e:harness"],
   ["bun", "run", "build"],
@@ -10,6 +11,8 @@ const commands = [
   ["bun", "run", "codex:schema:check"],
   ["bun", "run", "security:gate"],
 ] as const;
+
+const commands = CONFORMANCE_COMMANDS;
 
 const SUPPORTED_PLATFORMS = new Set(["linux", "darwin", "win32"]);
 

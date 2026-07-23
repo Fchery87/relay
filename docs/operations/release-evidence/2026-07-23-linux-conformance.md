@@ -25,6 +25,7 @@ provider evidence.
 ## Results
 
 - Typecheck: passed for every workspace package.
+- Root operational script suite: 28 tests passed, 0 failures.
 - Full package and Convex tests: 341 daemon tests passed, 16 intentional
   protected skips, 0 failures; 60 Convex tests passed.
 - Deterministic production acceptance: 59 tests passed across three suites.

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  CONFORMANCE_COMMANDS,
   createConformanceEvidence,
   isSupportedConformancePlatform,
 } from "./run-conformance-matrix";
@@ -45,4 +46,8 @@ test("unsupported platforms fail the matrix before execution", () => {
   expect(isSupportedConformancePlatform("darwin")).toBe(true);
   expect(isSupportedConformancePlatform("win32")).toBe(true);
   expect(isSupportedConformancePlatform("aix")).toBe(false);
+});
+
+test("conformance matrix includes the root operational script suite", () => {
+  expect(CONFORMANCE_COMMANDS.some((command) => command.join(" ") === "bun test scripts")).toBe(true);
 });

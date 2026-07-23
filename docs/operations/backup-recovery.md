@@ -155,6 +155,12 @@ Before any schema narrowing or legacy-execution removal (see `tickets.md`,
 "Back up and restore the complete execution system" and later), record a
 fresh backup/restore/verify cycle's output (script stdout, manifest,
 `bun run scripts/verify-self-hosted-convex.ts` result) as that release's
-evidence. No format is mandated yet beyond "keep the actual command output" —
-a dedicated machine-readable evidence schema is still open work (see
-`tickets.md`, "Pin and supervise the self-hosted topology").
+evidence. The machine-readable container is produced by
+`bun run release:evidence -- --input <facts.json> --output <record.json>` and is
+documented in [release-evidence/schema.md](release-evidence/schema.md). It
+records the source artifact IDs, command/test IDs, versions, topology,
+redacted diagnostics, and every cutover gate. It writes mode `0600` and exits
+with status `78` when facts are incomplete, diagnostics contain failures, or
+any gate is false. The container does not turn local or deterministic output
+into hosted/provider/release evidence; operators must supply those real facts
+in the input document.
