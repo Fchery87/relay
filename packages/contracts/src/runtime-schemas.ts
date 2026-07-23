@@ -242,9 +242,7 @@ export function assertCommandSchema(value: unknown): asserts value is Command {
       if (!isRecord(value.payload.task)) {
         throw new CommandSchemaError("workflow.start task is invalid");
       }
-      assertString(value.payload.task.taskId, "workflow.start task.taskId");
-      assertString(value.payload.task.runId, "workflow.start task.runId");
-      assertString(value.payload.task.objective, "workflow.start task.objective");
+      assertWorkflowTask(value.payload.task);
       break;
     case "run.resume":
     case "workspace.result":
@@ -444,6 +442,29 @@ function assertReviewComments(value: unknown, label: string): void {
   }
 }
 
+function assertWorkflowTask(task: Record<string, unknown>): void {
+  for (const field of ["taskId", "runId", "objective", "capabilityCeiling"] as const) {
+    assertString(task[field], `workflow.start task.${field}`);
+  }
+  if (!isNonEmptyString(task.role) || !["explorer", "builder", "reviewer", "integrator"].includes(task.role)) {
+    throw new CommandSchemaError("workflow.start task.role is invalid");
+  }
+  if (!isNonEmptyString(task.state) || !["pending", "ready", "running", "blocked", "completed", "failed", "cancelled"].includes(task.state)) {
+    throw new CommandSchemaError("workflow.start task.state is invalid");
+  }
+  if (task.workspaceMode !== "shared-read" && task.workspaceMode !== "isolated-worktree") {
+    throw new CommandSchemaError("workflow.start task.workspaceMode is invalid");
+  }
+  assertStringArray(task.dependencies, "workflow.start task.dependencies");
+  assertPositiveInteger(task.contextBudget, "workflow.start task.contextBudget");
+  assertNonNegativeInteger(task.attempt, "workflow.start task.attempt");
+  assertPositiveInteger(task.maxAttempts, "workflow.start task.maxAttempts");
+  if (task.capabilities !== undefined) assertStringArray(task.capabilities, "workflow.start task.capabilities");
+  for (const field of ["parentTaskId", "providerInstanceId", "workflowKind", "roleName", "projectPath", "threadId", "turnId", "modelId", "securityModelId"] as const) {
+    if (task[field] !== undefined) assertString(task[field], `workflow.start task.${field}`);
+  }
+}
+
 function validLineRange(startLine: unknown, endLine: unknown): boolean {
   return typeof startLine === "number" && Number.isInteger(startLine) && startLine >= 1 && typeof endLine === "number" && Number.isInteger(endLine) && endLine >= startLine;
 }
@@ -460,6 +481,18 @@ function optionalStringError(
 function assertFiniteNumber(value: unknown, label: string): asserts value is number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new CommandSchemaError(`${label} must be a finite number`);
+  }
+}
+
+function assertNonNegativeInteger(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new CommandSchemaError(`${label} must be a non-negative integer`);
+  }
+}
+
+function assertPositiveInteger(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new CommandSchemaError(`${label} must be a positive integer`);
   }
 }
 

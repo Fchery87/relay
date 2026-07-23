@@ -90,3 +90,52 @@ describe("provider event ingress", () => {
     ).toThrow("providerThreadId");
   });
 });
+
+describe("workflow start ingress", () => {
+  const task = {
+    taskId: "task-1",
+    runId: "run-1",
+    role: "reviewer",
+    objective: "Review the change",
+    dependencies: [],
+    capabilityCeiling: "read-only",
+    contextBudget: 8_000,
+    workspaceMode: "shared-read",
+    state: "ready",
+    attempt: 0,
+    maxAttempts: 2,
+    workflowKind: "review-jury",
+    capabilities: ["read", "task"],
+    projectPath: "/repo",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    modelId: "deepseek/deepseek-v4-flash",
+    securityModelId: "openai/gpt-5-mini",
+  };
+
+  test("accepts a fully specified durable workflow task", () => {
+    expect(() => assertCommandSchema({
+      schemaVersion: 1,
+      commandId: "cmd-workflow",
+      type: "workflow.start",
+      runId: "run-1",
+      correlationId: "corr-workflow",
+      actor: { kind: "system", id: "kernel" },
+      issuedAt: 1,
+      payload: { workflowKind: "review-jury", task },
+    })).not.toThrow();
+  });
+
+  test("rejects malformed task lifecycle fields", () => {
+    expect(() => assertCommandSchema({
+      schemaVersion: 1,
+      commandId: "cmd-workflow-invalid",
+      type: "workflow.start",
+      runId: "run-1",
+      correlationId: "corr-workflow-invalid",
+      actor: { kind: "system", id: "kernel" },
+      issuedAt: 1,
+      payload: { workflowKind: "review-jury", task: { ...task, maxAttempts: 0 } },
+    })).toThrow(CommandSchemaError);
+  });
+});
