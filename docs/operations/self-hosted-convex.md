@@ -200,7 +200,9 @@ self-hosted backend binary installed. Run it alone with:
 RELAY_CROSS_TIER=1 bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
 ```
 
-It still skips when the pinned backend binary or loopback binding is unavailable.
+Without the opt-in, the profile is skipped. With the opt-in, missing backend
+or loopback prerequisites fail the run instead of producing a false-green
+protected job.
 
 ### `start-relay-backend.sh` vs `bun run convex:dev`
 

@@ -6,10 +6,10 @@
 // createConvexCommandSource/createConvexProjectionSink production code
 // talking over HTTP to a real (but throwaway, isolated) backend process.
 //
-// Requires RELAY_CROSS_TIER=1 and skips automatically when the self-hosted
-// Convex backend binary isn't installed or loopback binding is unavailable
-// (see docs/operations/self-hosted-convex.md) — "protected job" tier per
-// tickets.md, not part of the ordinary fast/deterministic suite.
+// Requires RELAY_CROSS_TIER=1. Ordinary runs skip this profile; an explicit
+// protected opt-in fails if the self-hosted Convex backend binary or loopback
+// binding is unavailable (see docs/operations/self-hosted-convex.md) —
+// "protected job" tier per tickets.md, not part of the ordinary suite.
 // Never touches the developer's real backend or its data — see
 // scripts/lib/isolated-self-hosted-convex.ts.
 //
@@ -33,7 +33,10 @@ import { KernelDaemon } from "./kernel-daemon";
 import { runCommand } from "./tools";
 import { createCheckpoint } from "./checkpoints";
 import { createConvexProjectionSink } from "./sync/convex-projection-sink";
-import { protectedCrossTierTestEnabled } from "../../../scripts/lib/protected-test-gate";
+import {
+  protectedCrossTierPrerequisitesMet,
+  protectedCrossTierTestEnabled,
+} from "../../../scripts/lib/protected-test-gate";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 async function canBindLoopback(): Promise<boolean> {
@@ -44,9 +47,16 @@ async function canBindLoopback(): Promise<boolean> {
   });
 }
 
-const binaryAvailable = protectedCrossTierTestEnabled({
+const protectedCrossTierEnabled = protectedCrossTierTestEnabled({
   RELAY_CROSS_TIER: Bun.env.RELAY_CROSS_TIER,
-}) && (await findSelfHostedBackendBinary()) !== null && await canBindLoopback();
+});
+const binaryAvailable = protectedCrossTierEnabled && (await findSelfHostedBackendBinary()) !== null;
+const loopbackAvailable = protectedCrossTierEnabled && await canBindLoopback();
+const liveProfileAvailable = protectedCrossTierPrerequisitesMet({
+  enabled: protectedCrossTierEnabled,
+  backendAvailable: binaryAvailable,
+  loopbackAvailable,
+});
 
 /**
  * Poll a projected-state condition, forcing an immediate outbox flush each
@@ -109,7 +119,7 @@ function submitCommand(fixture: IsolatedFixture, input: { commandId: string; kin
   }, true);
 }
 
-describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backend)", () => {
+describe.skipIf(!liveProfileAvailable)("cross-tier recovery seam (live isolated backend)", () => {
   let backend: IsolatedConvexBackend;
   let fixture: IsolatedFixture;
   const daemonHomes: string[] = [];

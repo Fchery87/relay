@@ -22,8 +22,8 @@ jobs:
   # deterministic fakes the `test` job above uses. Manual trigger only
   # (workflow_dispatch); ordinary PR/push CI never depends on this, and the
   # `test` job's own copy of this test is not part of ordinary package tests;
-  # this protected job opts in explicitly (and the test still skips when the
-  # backend binary or loopback binding is unavailable).
+  # this protected job opts in explicitly, and fails if its backend or
+  # loopback prerequisites are unavailable rather than going green empty.
   cross-tier-recovery:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
