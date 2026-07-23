@@ -11,3 +11,4 @@ export * from "./workflows/review-jury";
 export * from "./workflows/plan";
 export * from "./workflows/elicitation";
 export * from "./reactor-registry";
+export * from "./workflow-reactors";

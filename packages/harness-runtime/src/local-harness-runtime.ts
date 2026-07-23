@@ -20,7 +20,7 @@ import {
   type RetentionResult,
 } from "@relay/local-store";
 import type { RunDiagnostic, StoreDatabase, OutboxRow } from "@relay/local-store";
-import { OrchestrationEngine } from "@relay/orchestration";
+import { createWorkflowReactors, OrchestrationEngine } from "@relay/orchestration";
 import {
   type HarnessRuntime,
   type CreateRunInput,
@@ -70,9 +70,10 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     private readonly db: StoreDatabase,
     private readonly config?: LocalHarnessRuntimeConfig,
   ) {
+    const workflowReactors = createWorkflowReactors(db);
     this.engine = new OrchestrationEngine(db, {
       maxConcurrentRuns: config?.maxConcurrentRuns ?? 4,
-      reactors: config?.reactors,
+      reactors: { ...workflowReactors, ...config?.reactors },
       reactorLeaseMs: config?.reactorLeaseMs,
       reactorBatchSize: config?.reactorBatchSize,
       reactorMaxAttempts: config?.reactorMaxAttempts,
