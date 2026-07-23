@@ -2180,7 +2180,7 @@ export class KernelDaemon {
           const taskId = (payload.taskId ?? `subagent-${commandId}`) as string;
           await this.runtime.runWorkflow({
             runId,
-            workflowKind: "subagent",
+            workflowKind: typeof payload.workflowKind === "string" ? payload.workflowKind : "subagent",
             task: {
               taskId: taskId as never,
               runId: runId as never,
@@ -2199,6 +2199,7 @@ export class KernelDaemon {
               threadId: (payload.threadId ?? runId) as string,
               turnId: payload.turnId as string | undefined,
               modelId: payload.modelId as string | undefined,
+              securityModelId: payload.securityModelId as string | undefined,
             },
           });
           await complete("completed");
