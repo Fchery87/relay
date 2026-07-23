@@ -6,9 +6,9 @@
 // createConvexCommandSource/createConvexProjectionSink production code
 // talking over HTTP to a real (but throwaway, isolated) backend process.
 //
-// Skips automatically when the self-hosted Convex backend binary isn't
-// installed or loopback binding is unavailable (see
-// docs/operations/self-hosted-convex.md) — "protected job" tier per
+// Requires RELAY_CROSS_TIER=1 and skips automatically when the self-hosted
+// Convex backend binary isn't installed or loopback binding is unavailable
+// (see docs/operations/self-hosted-convex.md) — "protected job" tier per
 // tickets.md, not part of the ordinary fast/deterministic suite.
 // Never touches the developer's real backend or its data — see
 // scripts/lib/isolated-self-hosted-convex.ts.
