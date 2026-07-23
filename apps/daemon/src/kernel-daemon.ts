@@ -1012,6 +1012,31 @@ export class KernelDaemon {
           await complete("completed");
           break;
         }
+        case "turn.steer": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("turn.steer requires runId");
+          const steering = (payload.steering ?? "") as string;
+          await this.runtime.steerTurn({ runId: rId as never, steering });
+          await complete("completed");
+          break;
+        }
+        case "turn.interrupt": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("turn.interrupt requires runId");
+          const reason = payload.reason as string | undefined;
+          await this.runtime.interruptTurn({ runId: rId as never, reason });
+          await complete("completed");
+          break;
+        }
+        case "approval.resolve": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("approval.resolve requires runId");
+          const approvalId = (payload.approvalId ?? "") as string;
+          const resolution = (payload.resolution === "deny" ? "deny" : "allow") as "allow" | "deny";
+          await this.runtime.resolveApproval({ runId: rId as never, approvalId, resolution });
+          await complete("completed");
+          break;
+        }
         case "turn.send": {
           const rId = runId ?? (payload.runId as string);
           if (!rId) throw new Error("turn.send requires runId");

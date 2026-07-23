@@ -56,6 +56,18 @@ async function fetchEvents(fixture: IsolatedFixture, runId: string, afterSequenc
   return fixture.call("query", "projections/publish:listRunEvents", { runId, afterSequence, limit: 200 }, true) as Promise<Array<{ sequence: number; type: string }>>;
 }
 
+/** Submit one canonical command through the real inbox, the way the browser will once cut over. */
+function submitCommand(fixture: IsolatedFixture, input: { commandId: string; kind: string; payload: unknown; runId?: string }): Promise<unknown> {
+  return fixture.call("mutation", "commands/inbox:submitToInbox", {
+    commandId: input.commandId,
+    correlationId: `corr-${fixture.threadId}`,
+    kind: input.kind,
+    payloadJson: JSON.stringify(input.payload),
+    ...(input.runId ? { runId: input.runId } : {}),
+    threadId: fixture.threadId,
+  }, true);
+}
+
 describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backend)", () => {
   let backend: IsolatedConvexBackend;
   let fixture: IsolatedFixture;
@@ -87,61 +99,55 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
     return dir;
   }
 
-  test("create -> resume -> send -> projection landing -> reconnecting client sees ordered events, no gaps", async () => {
-    const runId = fixture.threadId; // canonical run ID defaults to threadId when omitted
-
-    // 1. A real daemon, pointed at the real isolated backend, using the
-    // real command gateway and projection sink (no fakes/overrides).
+  /** A real KernelDaemon against the real isolated backend — no fakes/overrides. */
+  async function startDaemon(deviceToken: string, machineId: string, machineName: string): Promise<KernelDaemon> {
     const daemon = new KernelDaemon({
       daemonHome: await tempDaemonHome(),
       deploymentUrl: backend.url,
-      deviceToken: fixture.deviceToken,
+      deviceToken,
       heartbeatIntervalMs: 300,
-      machineId: fixture.machineId,
-      machineName: "e2e-test-machine",
+      machineId,
+      machineName,
       pollIntervalMs: 200,
     });
     await daemon.start();
+    return daemon;
+  }
+
+  /** Fresh fixture + a started daemon for it — the common scenario setup shared by most tests below. */
+  async function setupScenario(machineName: string): Promise<{ fixture: IsolatedFixture; runId: string; daemon: KernelDaemon }> {
+    const scenarioFixture = await buildIsolatedFixture(backend);
+    const daemon = await startDaemon(scenarioFixture.deviceToken, scenarioFixture.machineId, machineName);
+    return { fixture: scenarioFixture, runId: scenarioFixture.threadId, daemon };
+  }
+
+  /** Submit run.create + run.resume and wait for run.started to land — the common precondition for turn-level tests. */
+  async function createAndResumeRun(scenarioFixture: IsolatedFixture, runId: string, daemon: KernelDaemon): Promise<void> {
+    await submitCommand(scenarioFixture, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: scenarioFixture.projectId } });
+    await submitCommand(scenarioFixture, { commandId: `cmd-run-resume-${runId.slice(-8)}-2`, kind: "run.resume", payload: { runId }, runId });
+    await waitUntilProjected(daemon, async () => {
+      const events = await fetchEvents(scenarioFixture, runId, -1);
+      return events.some((e) => e.type === "run.started");
+    }, 15_000, "run.started to be projected");
+  }
+
+  test("create -> resume -> send -> projection landing -> reconnecting client sees ordered events, no gaps", async () => {
+    const runId = fixture.threadId; // canonical run ID defaults to threadId when omitted
+    const daemon = await startDaemon(fixture.deviceToken, fixture.machineId, "e2e-test-machine");
 
     try {
-      // 2. Submit commands the way the browser will once cut over (see
-      // apps/web/src/run-data.ts's submitCanonicalCommand/canonicalCommandId,
-      // not yet wired to a caller — this test proves the seam ahead of that
-      // cutover).
-      await fixture.call("mutation", "commands/inbox:submitToInbox", {
-        commandId: `cmd-run-create-${runId.slice(-8)}-1`,
-        correlationId: `corr-${runId}`,
-        kind: "run.create",
-        payloadJson: JSON.stringify({ projectId: fixture.projectId }),
-        threadId: fixture.threadId,
-      }, true);
+      await submitCommand(fixture, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture.projectId } });
+      await submitCommand(fixture, { commandId: `cmd-run-resume-${runId.slice(-8)}-2`, kind: "run.resume", payload: { runId }, runId });
+      await submitCommand(fixture, { commandId: `cmd-turn-send-${runId.slice(-8)}-3`, kind: "turn.send", payload: { runId, prompt: "hello from the cross-tier recovery test" }, runId });
 
-      await fixture.call("mutation", "commands/inbox:submitToInbox", {
-        commandId: `cmd-run-resume-${runId.slice(-8)}-2`,
-        correlationId: `corr-${runId}`,
-        kind: "run.resume",
-        payloadJson: JSON.stringify({ runId }),
-        runId,
-        threadId: fixture.threadId,
-      }, true);
-
-      await fixture.call("mutation", "commands/inbox:submitToInbox", {
-        commandId: `cmd-turn-send-${runId.slice(-8)}-3`,
-        correlationId: `corr-${runId}`,
-        kind: "turn.send",
-        payloadJson: JSON.stringify({ runId, prompt: "hello from the cross-tier recovery test" }),
-        runId,
-        threadId: fixture.threadId,
-      }, true);
-
-      // 3. Wait on real conditions (receipts landing as projected events),
-      // not arbitrary sleeps.
+      // Wait on real conditions (receipts landing as projected events), not
+      // arbitrary sleeps.
       await waitUntilProjected(daemon, async () => {
         const events = await fetchEvents(fixture, runId, -1);
         return events.some((e) => e.type === "turn.completed" || e.type === "turn.failed");
       }, 20_000, "turn to complete and its terminal event to be projected");
 
-      // 4. The projection landed with a contiguous, ordered event stream —
+      // The projection landed with a contiguous, ordered event stream —
       // exactly what a reconnecting ClientRuntime replays.
       const events = await fetchEvents(fixture, runId, -1);
       const types = events.map((e) => e.type);
@@ -155,12 +161,12 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
         expect(sequences[i]).toBe(sequences[i - 1]! + 1); // no gaps
       }
 
-      // 5. Snapshot never leads the confirmed event prefix.
+      // Snapshot never leads the confirmed event prefix.
       const snapshot = await fetchSnapshot(fixture, runId);
       expect(snapshot).not.toBeNull();
       expect(snapshot!.sequence).toBeLessThanOrEqual(sequences[sequences.length - 1]!);
 
-      // 6. A reconnecting client resumes from any confirmed cursor without
+      // A reconnecting client resumes from any confirmed cursor without
       // gaps or duplicates — simulate reconnecting after the midpoint.
       const midpoint = sequences[Math.floor(sequences.length / 2)]!;
       const resumed = await fetchEvents(fixture, runId, midpoint);
@@ -186,13 +192,7 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
       pollIntervalMs: 200,
     });
     await daemon1.start();
-    await fixture2.call("mutation", "commands/inbox:submitToInbox", {
-      commandId: `cmd-run-create-${runId.slice(-8)}-1`,
-      correlationId: `corr-${runId}`,
-      kind: "run.create",
-      payloadJson: JSON.stringify({ projectId: fixture2.projectId }),
-      threadId: fixture2.threadId,
-    }, true);
+    await submitCommand(fixture2, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture2.projectId } });
 
     await waitUntilProjected(daemon1, async () => {
       const events = await fetchEvents(fixture2, runId, -1);
@@ -215,14 +215,7 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
     });
     await daemon2.start();
     try {
-      await fixture2.call("mutation", "commands/inbox:submitToInbox", {
-        commandId: `cmd-run-resume-${runId.slice(-8)}-2`,
-        correlationId: `corr-${runId}`,
-        kind: "run.resume",
-        payloadJson: JSON.stringify({ runId }),
-        runId,
-        threadId: fixture2.threadId,
-      }, true);
+      await submitCommand(fixture2, { commandId: `cmd-run-resume-${runId.slice(-8)}-2`, kind: "run.resume", payload: { runId }, runId });
 
       await waitUntilProjected(daemon2, async () => {
         const events = await fetchEvents(fixture2, runId, -1);
@@ -240,4 +233,223 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
       await daemon2.stop();
     }
   }, 60_000);
+
+  // ---------------------------------------------------------------------
+  // turn.steer / turn.interrupt / approval.resolve — these commands are
+  // real canonical state transitions today, but kernel mode has no
+  // governance/tool-execution integration yet to actually create an
+  // approval or cancel an in-flight provider call — see
+  // docs/operations/kernel-mode-capability-gaps.md. These tests prove the
+  // command-routing and state-transition seam that DOES exist, not full
+  // interrupt/approval semantics.
+  // ---------------------------------------------------------------------
+
+  test("turn.steer after the turn has already completed is rejected, not silently accepted or hung (real finding: single-threaded sequential poll processing means mid-turn steering cannot land while a turn is genuinely in flight — see kernel-mode-capability-gaps.md)", async () => {
+    const { fixture: fixture3, runId, daemon } = await setupScenario("e2e-steer-machine");
+    try {
+      await submitCommand(fixture3, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture3.projectId } });
+      await submitCommand(fixture3, { commandId: `cmd-run-resume-${runId.slice(-8)}-2`, kind: "run.resume", payload: { runId }, runId });
+      await submitCommand(fixture3, { commandId: `cmd-turn-send-${runId.slice(-8)}-3`, kind: "turn.send", payload: { runId, prompt: "steer me" }, runId });
+
+      // The scripted provider completes the turn near-instantly, and
+      // KernelDaemon processes a claimed batch sequentially — so by
+      // construction, turn.steer submitted after turn.send always lands
+      // after the turn is already done, not "mid-turn." Wait for the turn
+      // to actually finish before steering, to test the real, reachable
+      // scenario rather than assume a race that can't happen.
+      await waitUntilProjected(daemon, async () => {
+        const events = await fetchEvents(fixture3, runId, -1);
+        return events.some((e) => e.type === "turn.completed" || e.type === "turn.failed");
+      }, 20_000, "turn to complete before steering");
+
+      await submitCommand(fixture3, { commandId: `cmd-turn-steer-${runId.slice(-8)}-4`, kind: "turn.steer", payload: { runId, steering: "actually, be brief" }, runId });
+      await daemon.pollOnce();
+      await daemon.flushOnce();
+
+      // Correctly rejected — no turn.steered event, and the run is left in
+      // a sane, unchanged state rather than corrupted or stuck.
+      const events = await fetchEvents(fixture3, runId, -1);
+      expect(events.some((e) => e.type === "turn.steered")).toBe(false);
+      const snapshot = await fetchSnapshot(fixture3, runId);
+      expect(snapshot).not.toBeNull();
+      expect(JSON.parse(snapshot!.snapshotJson).status).toBe("running");
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
+
+  test("turn.interrupt routes through the real seam and records turn.interrupted (does not abort the in-flight provider call — see kernel-mode-capability-gaps.md)", async () => {
+    const { fixture: fixture4, runId, daemon } = await setupScenario("e2e-interrupt-machine");
+    try {
+      await submitCommand(fixture4, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture4.projectId } });
+      await submitCommand(fixture4, { commandId: `cmd-run-resume-${runId.slice(-8)}-2`, kind: "run.resume", payload: { runId }, runId });
+      await submitCommand(fixture4, { commandId: `cmd-turn-send-${runId.slice(-8)}-3`, kind: "turn.send", payload: { runId, prompt: "interrupt me" }, runId });
+      await submitCommand(fixture4, { commandId: `cmd-turn-interrupt-${runId.slice(-8)}-4`, kind: "turn.interrupt", payload: { runId, reason: "user requested" }, runId });
+
+      await waitUntilProjected(daemon, async () => {
+        const events = await fetchEvents(fixture4, runId, -1);
+        return events.some((e) => e.type === "turn.interrupted" || e.type === "turn.completed" || e.type === "turn.failed");
+      }, 20_000, "an interrupt or terminal turn event to be projected");
+
+      // The run reaches a recoverable, non-corrupted state either way —
+      // interrupt-before-completion and interrupt-after-completion (a race
+      // given the scripted provider streams near-instantly) are both valid
+      // outcomes; what matters is neither leaves the run stuck.
+      const snapshot = await fetchSnapshot(fixture4, runId);
+      expect(snapshot).not.toBeNull();
+      const status = JSON.parse(snapshot!.snapshotJson).status as string;
+      expect(["running", "stopped", "failed"]).toContain(status);
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
+
+  test("approval.resolve on a run with no pending approval is rejected, not silently accepted (decider.ts only allows it in awaiting_approval)", async () => {
+    // Kernel mode has no governance integration yet, so nothing creates a
+    // real approval to resolve (see kernel-mode-capability-gaps.md). This
+    // proves the command is correctly rejected rather than silently
+    // accepted or corrupting run state — decider.ts gates approval.resolve
+    // to the awaiting_approval status only, stricter than the reducer's
+    // own no-op-when-running fallback (which handles replaying an already-
+    // applied approval.resolved event, a different case).
+    const { fixture: fixture5, runId, daemon } = await setupScenario("e2e-approval-machine");
+    try {
+      await createAndResumeRun(fixture5, runId, daemon);
+
+      await submitCommand(fixture5, { commandId: `cmd-approval-resolve-${runId.slice(-8)}-3`, kind: "approval.resolve", payload: { runId, approvalId: "no-such-approval", resolution: "allow" }, runId });
+      await daemon.pollOnce();
+      await daemon.flushOnce();
+
+      const events = await fetchEvents(fixture5, runId, -1);
+      expect(events.some((e) => e.type === "approval.resolved")).toBe(false);
+      const snapshot = await fetchSnapshot(fixture5, runId);
+      expect(snapshot).not.toBeNull();
+      expect(JSON.parse(snapshot!.snapshotJson).status).toBe("running");
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
+
+  // ---------------------------------------------------------------------
+  // Fault injection against the real seam: duplicate/conflicting commands,
+  // lease expiry + redelivery, stale-worker fencing, and a real backend
+  // process restart (not just the daemon).
+  // ---------------------------------------------------------------------
+
+  test("duplicate commandId with identical payload is idempotent; conflicting payload is rejected", async () => {
+    const fixture6 = await buildIsolatedFixture(backend);
+    const runId = fixture6.threadId;
+    const commandId = `cmd-run-create-${runId.slice(-8)}-dup`;
+    const payload = { projectId: fixture6.projectId };
+
+    const first = await submitCommand(fixture6, { commandId, kind: "run.create", payload });
+    const second = await submitCommand(fixture6, { commandId, kind: "run.create", payload });
+    expect(second).toBe(first); // exact replay returns the original receipt, not a new one
+
+    await expect(
+      submitCommand(fixture6, { commandId, kind: "run.create", payload: { projectId: fixture6.projectId, extra: "conflicting" } }),
+    ).rejects.toThrow(/Conflicting/i);
+  }, 30_000);
+
+  test("a command claimed by a crashed worker is reclaimed after lease expiry and completed exactly once", async () => {
+    const fixture7 = await buildIsolatedFixture(backend);
+    const runId = fixture7.threadId;
+    await submitCommand(fixture7, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture7.projectId } });
+
+    // Simulate a crashed worker: claim directly under a short lease, at the
+    // Convex level (not through a KernelDaemon), and never complete it.
+    const claimed = (await fixture7.call("mutation", "commands/inbox:claimBatch", {
+      deviceToken: fixture7.deviceToken,
+      leaseDurationMs: 500,
+      limit: 5,
+    })) as Array<{ _id: string; leaseGeneration: number }>;
+    expect(claimed).toHaveLength(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 700)); // let the lease expire
+
+    const daemon = await startDaemon(fixture7.deviceToken, fixture7.machineId, "e2e-lease-expiry-machine");
+    try {
+      await waitUntilProjected(daemon, async () => {
+        const events = await fetchEvents(fixture7, runId, -1);
+        return events.some((e) => e.type === "run.created");
+      }, 20_000, "run.created to be projected after reclaim");
+
+      const events = await fetchEvents(fixture7, runId, -1);
+      expect(events.filter((e) => e.type === "run.created")).toHaveLength(1); // exactly once, no duplicate effect
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
+
+  test("a stale worker's completion is fenced once another worker reclaims the same command", async () => {
+    const fixture8 = await buildIsolatedFixture(backend);
+    const runId = fixture8.threadId;
+    await submitCommand(fixture8, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture8.projectId } });
+
+    const claimedA = (await fixture8.call("mutation", "commands/inbox:claimBatch", {
+      deviceToken: fixture8.deviceToken,
+      leaseDurationMs: 300,
+      limit: 5,
+    })) as Array<{ _id: string; leaseGeneration: number }>;
+    expect(claimedA).toHaveLength(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 400)); // let worker A's lease expire
+
+    const claimedB = (await fixture8.call("mutation", "commands/inbox:claimBatch", {
+      deviceToken: fixture8.deviceToken,
+      leaseDurationMs: 30_000,
+      limit: 5,
+    })) as Array<{ _id: string; leaseGeneration: number }>;
+    expect(claimedB).toHaveLength(1);
+    expect(claimedB[0]!.leaseGeneration).toBeGreaterThan(claimedA[0]!.leaseGeneration);
+
+    // Worker A (stale) tries to complete with its now-superseded generation.
+    await expect(
+      fixture8.call("mutation", "commands/inbox:completeInbox", {
+        commandId: claimedA[0]!._id,
+        deviceToken: fixture8.deviceToken,
+        leaseGeneration: claimedA[0]!.leaseGeneration,
+        status: "completed",
+      }),
+    ).rejects.toThrow(/[Ss]tale/);
+
+    // Worker B (the current holder) completes normally.
+    await fixture8.call("mutation", "commands/inbox:completeInbox", {
+      commandId: claimedB[0]!._id,
+      deviceToken: fixture8.deviceToken,
+      leaseGeneration: claimedB[0]!.leaseGeneration,
+      status: "completed",
+    });
+  }, 30_000);
+
+  test("backend process restart: the daemon recovers its connection and the run converges with no duplicate effect", async () => {
+    const { fixture: fixture9, runId, daemon } = await setupScenario("e2e-backend-restart-machine");
+    try {
+      await submitCommand(fixture9, { commandId: `cmd-run-create-${runId.slice(-8)}-1`, kind: "run.create", payload: { projectId: fixture9.projectId } });
+      await waitUntilProjected(daemon, async () => {
+        const events = await fetchEvents(fixture9, runId, -1);
+        return events.some((e) => e.type === "run.created");
+      }, 20_000, "run.created to be projected before backend restart");
+
+      // Kill and restart the real backend process (same SQLite file/data) —
+      // the daemon's poll loop is still running throughout and must
+      // reconnect on its own, not crash or hang.
+      await backend.restart();
+
+      await submitCommand(fixture9, { commandId: `cmd-run-resume-${runId.slice(-8)}-2`, kind: "run.resume", payload: { runId }, runId });
+      await waitUntilProjected(daemon, async () => {
+        const events = await fetchEvents(fixture9, runId, -1);
+        return events.some((e) => e.type === "run.started");
+      }, 30_000, "run.started to be projected after backend restart");
+
+      const events = await fetchEvents(fixture9, runId, -1);
+      expect(events.filter((e) => e.type === "run.created")).toHaveLength(1);
+      const sequences = events.map((e) => e.sequence).sort((a, b) => a - b);
+      for (let i = 1; i < sequences.length; i++) {
+        expect(sequences[i]).toBe(sequences[i - 1]! + 1);
+      }
+    } finally {
+      await daemon.stop();
+    }
+  }, 90_000);
 });

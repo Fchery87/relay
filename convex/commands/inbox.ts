@@ -49,8 +49,14 @@ export const submitToInbox = mutationGeneric({
     // Exact replay returns the original receipt; conflicted reuse is rejected.
     const existing = await ctx.db.query("commandInbox").withIndex("by_command_id", (q) => q.eq("commandId", args.commandId)).first();
     if (existing) {
-      if (existing.kind !== args.kind || existing.runId !== canonicalRunId || existing.correlationId !== args.correlationId) {
-        throw new Error(`Conflicting commandId "${args.commandId}": kind=${existing.kind} runId=${existing.runId} correlationId=${existing.correlationId}`);
+      if (existing.kind !== args.kind || existing.runId !== canonicalRunId || existing.correlationId !== args.correlationId || existing.payloadJson !== args.payloadJson) {
+        const mismatches = [
+          existing.kind !== args.kind ? "kind" : null,
+          existing.runId !== canonicalRunId ? "runId" : null,
+          existing.correlationId !== args.correlationId ? "correlationId" : null,
+          existing.payloadJson !== args.payloadJson ? "payloadJson" : null,
+        ].filter((field): field is string => field !== null);
+        throw new Error(`Conflicting commandId "${args.commandId}": mismatched ${mismatches.join(", ")}`);
       }
       return existing._id;
     }

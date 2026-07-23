@@ -27,6 +27,13 @@ export type IsolatedConvexBackend = {
   readonly port: number;
   readonly sitePort: number;
   stop(): Promise<void>;
+  /**
+   * Kill the backend process and start a fresh one on the same port against
+   * the same SQLite file/storage dir — simulates a backend restart with
+   * data preserved, for kill-point tests. Resolves once the new process is
+   * healthy again.
+   */
+  restart(): Promise<void>;
 };
 
 export async function findSelfHostedBackendBinary(): Promise<string | null> {
@@ -112,29 +119,37 @@ export async function startIsolatedSelfHostedConvex(): Promise<IsolatedConvexBac
   const sitePort = await findFreePort();
   const dbPath = join(dataDir, "backend.sqlite3");
   const storagePath = join(dataDir, "storage");
-
-  const proc = Bun.spawn(
-    [
-      binaryPath,
-      dbPath,
-      "--instance-name", instanceName,
-      "--instance-secret", instanceSecret,
-      "--interface", "127.0.0.1",
-      "--port", String(port),
-      "--site-proxy-port", String(sitePort),
-      "--local-storage", storagePath,
-      "--disable-beacon",
-    ],
-    { stdout: "ignore", stderr: "ignore" },
-  );
-
   const url = `http://127.0.0.1:${port}`;
   const siteUrl = `http://127.0.0.1:${sitePort}`;
 
+  const spawnAndWait = async (): Promise<ReturnType<typeof Bun.spawn>> => {
+    const spawned = Bun.spawn(
+      [
+        binaryPath,
+        dbPath,
+        "--instance-name", instanceName,
+        "--instance-secret", instanceSecret,
+        "--interface", "127.0.0.1",
+        "--port", String(port),
+        "--site-proxy-port", String(sitePort),
+        "--local-storage", storagePath,
+        "--disable-beacon",
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    );
+    try {
+      await waitForHealthy(url, 15_000);
+    } catch (error) {
+      spawned.kill();
+      throw error;
+    }
+    return spawned;
+  };
+
+  let proc: ReturnType<typeof Bun.spawn>;
   try {
-    await waitForHealthy(url, 15_000);
+    proc = await spawnAndWait();
   } catch (error) {
-    proc.kill();
     await rm(dataDir, { recursive: true, force: true });
     throw error;
   }
@@ -148,7 +163,13 @@ export async function startIsolatedSelfHostedConvex(): Promise<IsolatedConvexBac
     await rm(dataDir, { recursive: true, force: true });
   };
 
-  return { url, siteUrl, adminKey, instanceSecret, instanceName, dataDir, port, sitePort, stop };
+  const restart = async () => {
+    proc.kill();
+    await proc.exited;
+    proc = await spawnAndWait();
+  };
+
+  return { url, siteUrl, adminKey, instanceSecret, instanceName, dataDir, port, sitePort, stop, restart };
 }
 
 /**
