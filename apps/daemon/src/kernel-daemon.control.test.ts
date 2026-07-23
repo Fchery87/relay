@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 
 import { KernelDaemon } from "./kernel-daemon";
 import type { ModelProviderRouter, ModelProvider } from "./model-provider";
@@ -263,6 +264,85 @@ test("kernel provider task calls execute through the governed subagent adapter",
       await Bun.sleep(10);
     }
     expect(projected.some((event) => event.type === "activity.completed" && JSON.parse(event.payloadJson).kind === "subagent:explore")).toBe(true);
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+    await rm(projectRoot, { force: true, recursive: true });
+  }
+});
+
+test("kernel routes a reviewer jury through two durable child executions", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-jury-daemon-"));
+  const projectRoot = await mkdtemp(join(tmpdir(), "relay-kernel-jury-project-"));
+  const runId = "run-jury-daemon";
+  const modelIds: string[] = [];
+  const pending = [
+    command("inbox-create-jury", "run.create", runId, { projectId: "project-jury" }),
+    command("inbox-resume-jury", "run.resume", runId, {}),
+    command("inbox-run-jury", "subagent.run", runId, {
+      capabilities: ["read", "task"],
+      modelId: "deepseek/deepseek-v4-flash",
+      projectPath: projectRoot,
+      roleName: "reviewer",
+      securityModelId: "openai/gpt-5-mini",
+      task: "Review the current change",
+      taskId: "jury-task",
+      workflowKind: "review-jury",
+    }, projectRoot),
+  ];
+  const daemon = new KernelDaemon({
+    adapterDeps: { platform: "linux", resolveProjectRoot: async () => projectRoot },
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "jury-test",
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async () => undefined,
+      upsertSnapshot: async () => undefined,
+      advanceCursor: async () => undefined,
+    },
+    providerRouter: {
+      kind: "model-router",
+      resolve: ({ modelId }) => {
+        modelIds.push(modelId);
+        return {
+          modelId,
+          async *streamReply() {
+            yield {
+              kind: "text" as const,
+              text: modelId === "openai/gpt-5-mini"
+                ? "FINDINGS:\n- P1 | Missing auth check | Security reviewer finding. | convex/auth.ts:7-9"
+                : "FINDINGS:\n- P2 | Missing test | Correctness reviewer finding. | packages/app.ts:4",
+            };
+          },
+        } satisfies ModelProvider;
+      },
+      resolveTurn: () => ({ modelId: "unused", async *streamTurn() {} }),
+    },
+  });
+
+  try {
+    await runCommand({ command: "git init && git config user.email relay@example.test && git config user.name Relay && git commit --allow-empty -m baseline", platform: "linux", root: projectRoot });
+    await daemon.start();
+    await daemon.pollOnce();
+    const db = new Database(join(daemonHome, "relay-kernel.sqlite"));
+    const row = db.query("SELECT state, payload_json FROM durable_tasks WHERE task_id = ?").get("jury-task") as { state: string; payload_json: string } | null;
+    db.close();
+    expect(modelIds).toEqual(["deepseek/deepseek-v4-flash", "openai/gpt-5-mini"]);
+    expect(row?.state).toBe("completed");
+    expect(JSON.parse(row?.payload_json ?? "{}").result.findings).toEqual([
+      "P1: Missing auth check",
+      "P2: Missing test",
+    ]);
   } finally {
     await daemon.stop();
     await rm(daemonHome, { force: true, recursive: true });
