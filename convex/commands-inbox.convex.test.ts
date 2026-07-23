@@ -41,6 +41,28 @@ test("claimed commands carry the authorized project path for daemon workspace re
   expect(claimed[0]).toMatchObject({ projectPath: "/repo" });
 });
 
+test("command ingress records an owner-scoped audit trail with correlation identity", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, owner, projectId } = await createAuthenticatedProject(t);
+  const threadId = await t.run((ctx) => ctx.db.insert("threads", { projectId, status: "running", title: "audited command" }));
+
+  await owner.mutation(api.commands.inbox.submitToInbox, {
+    commandId: "cmd-audited",
+    correlationId: "corr-audited",
+    kind: "turn.send",
+    payloadJson: JSON.stringify({ prompt: "audit me", turnId: "turn-audited" }),
+    runId: threadId,
+    threadId,
+  });
+  const claimed = await t.mutation(api.commands.inbox.claimBatch, { deviceToken, leaseDurationMs: 30_000, limit: 1 });
+  await t.mutation(api.commands.inbox.completeInbox, { commandId: claimed[0]!._id, deviceToken, leaseGeneration: claimed[0]!.leaseGeneration, status: "completed" });
+
+  const audits = await owner.query(api.audit_log.listForThread, { threadId });
+  expect(audits.map((audit) => audit.action)).toEqual(["command.accepted", "command.claimed", "command.completed"]);
+  expect(audits[0]).toMatchObject({ actorKind: "user", category: "command", correlationId: "corr-audited", effectiveScope: "/repo", policyVersion: "command-ingress-v1", requestedScope: "/repo" });
+  expect(audits[2]).toMatchObject({ action: "command.completed", category: "command", effectiveScope: "/repo", requestedScope: "/repo", threadId });
+});
+
 test("command ingress rejects another owner's thread", async () => {
   const t = convexTest(schema, modules);
   const { projectId } = await createAuthenticatedProject(t, "f".repeat(32));

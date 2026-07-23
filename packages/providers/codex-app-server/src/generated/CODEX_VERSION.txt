@@ -1,5 +1,4 @@
 codex-cli 0.144.3
-Generated: 2026-07-17
-Commands: codex app-server generate-ts --out /tmp/relay-codex-schema/ts
-Schema directory: packages/providers/codex-app-server/src/generated/
-Do not hand-edit generated files. Regenerate with `codex app-server generate-ts --out packages/providers/codex-app-server/src/generated/`
+Generated: 2026-07-23
+Commands: codex app-server generate-ts and generate-json-schema
+Do not hand-edit generated files; rerun bun run codex:schema:generate.

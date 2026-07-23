@@ -13,12 +13,28 @@ function toPublicApproval<T extends { continuationJson?: string; turnId?: string
 export const create = mutationGeneric({
   args: { capability, continuationJson: v.optional(v.string()), deviceToken: v.string(), risk, summary: v.string(), threadId: v.id("threads"), turnId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
+    const machine = await requireDeviceForThread(ctx, args.deviceToken, args.threadId);
     const thread = await ctx.db.get("threads", args.threadId);
     if (!thread) throw new Error("Approval thread not found");
     if (thread.status === "awaiting-approval") throw new Error("Thread already awaits approval");
     const approvalId = await ctx.db.insert("approvals", { capability: args.capability, continuationJson: args.continuationJson, decision: "pending", resumeStatus: thread.status, risk: args.risk, summary: args.summary, threadId: args.threadId, turnId: args.turnId });
-    await ctx.db.insert("auditLog", { capability: args.capability, decision: "ask", risk: args.risk, summary: args.summary, threadId: args.threadId });
+    await ctx.db.insert("auditLog", {
+      action: "approval.requested",
+      actorId: machine._id,
+      actorKind: "device",
+      capability: args.capability,
+      category: "approval",
+      correlationId: `approval:${approvalId}`,
+      decision: "ask",
+      machineId: machine._id,
+      policyVersion: "policy-v1",
+      projectId: thread.projectId,
+      requestedScope: args.capability,
+      risk: args.risk,
+      summary: args.summary,
+      threadId: args.threadId,
+      effectiveScope: "pending",
+    });
     await ctx.db.patch(args.threadId, { status: "awaiting-approval" });
     return approvalId;
   },
@@ -50,15 +66,27 @@ export const resolve = mutationGeneric({
     const userId = await requireUser(ctx);
     const approval = await ctx.db.get("approvals", args.approvalId);
     if (!approval) throw new Error("Approval not found");
-    await requireOwnedThread(ctx, userId, approval.threadId);
+    const thread = await requireOwnedThread(ctx, userId, approval.threadId);
+    const project = await ctx.db.get(thread.projectId);
+    const machine = project ? await ctx.db.get(project.machineId) : null;
     if (approval.decision !== "pending") throw new Error("Approval already resolved");
     await ctx.db.patch(approval._id, { decision: args.decision });
     await ctx.db.insert("auditLog", {
+      action: `approval.${args.decision}`,
+      actorId: userId,
+      actorKind: "user",
       capability: approval.capability,
+      category: "approval",
+      correlationId: `approval:${approval._id}`,
       decision: args.decision,
+      ...(machine ? { machineId: machine._id } : {}),
+      policyVersion: "policy-v1",
+      projectId: thread.projectId,
+      requestedScope: approval.capability,
       risk: approval.risk,
       summary: approval.summary,
       threadId: approval.threadId,
+      effectiveScope: args.decision === "allow" ? approval.capability : "none",
     });
     await ctx.db.patch(approval.threadId, { status: approval.resumeStatus ?? "running" });
   },

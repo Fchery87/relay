@@ -54,6 +54,10 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Install pinned Codex app-server
         run: npm install --global @openai/codex@0.144.3
+      - name: Regenerate and verify pinned Codex schemas
+        run: |
+          bun run codex:schema:generate
+          bun run codex:schema:check
       - name: Run real Codex harness lifecycle
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

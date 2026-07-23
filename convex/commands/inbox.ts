@@ -87,7 +87,7 @@ export const submitToInbox = mutationGeneric({
       return existing._id;
     }
 
-    return ctx.db.insert("commandInbox", {
+    const inboxId = await ctx.db.insert("commandInbox", {
       commandId: args.commandId,
       completedAt: undefined,
       correlationId: args.correlationId,
@@ -99,7 +99,24 @@ export const submitToInbox = mutationGeneric({
       projectPath: project.path,
       runId: canonicalRunId,
       status: "pending",
+      threadId: args.threadId,
     });
+    await ctx.db.insert("auditLog", {
+      action: "command.accepted",
+      actorId: userId,
+      actorKind: "user",
+      causationId: args.commandId,
+      category: "command",
+      correlationId: args.correlationId,
+      machineId: project.machineId,
+      policyVersion: "command-ingress-v1",
+      projectId: thread.projectId,
+      requestedScope: project.path,
+      summary: `${args.kind} accepted for ${canonicalRunId}`,
+      threadId: args.threadId,
+      effectiveScope: project.path,
+    });
+    return inboxId;
   },
 });
 
@@ -130,6 +147,21 @@ export const claimBatch = mutationGeneric({
     for (const cmd of pending) {
       const leaseGeneration = (cmd.leaseGeneration ?? 0) + 1;
       await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseOwner: machine._id, leaseGeneration, status: "claimed" });
+      const commandThread = cmd.threadId ? await ctx.db.get(cmd.threadId) : null;
+      await ctx.db.insert("auditLog", {
+        action: "command.claimed",
+        actorId: machine._id,
+        actorKind: "device",
+        causationId: cmd.commandId,
+        category: "command",
+        correlationId: cmd.correlationId,
+        machineId: machine._id,
+        policyVersion: "command-ingress-v1",
+        ...(commandThread ? { projectId: commandThread.projectId, threadId: commandThread._id } : {}),
+        requestedScope: cmd.projectPath,
+        effectiveScope: cmd.projectPath,
+        summary: `${cmd.kind} claimed`,
+      });
       results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, projectPath: cmd.projectPath, runId: cmd.runId, leaseGeneration });
     }
 
@@ -144,6 +176,21 @@ export const claimBatch = mutationGeneric({
       for (const cmd of expired) {
         const leaseGeneration = (cmd.leaseGeneration ?? 0) + 1;
         await ctx.db.patch(cmd._id, { leaseExpiresAt, leaseOwner: machine._id, leaseGeneration, status: "claimed" });
+        const commandThread = cmd.threadId ? await ctx.db.get(cmd.threadId) : null;
+        await ctx.db.insert("auditLog", {
+          action: "command.reclaimed",
+          actorId: machine._id,
+          actorKind: "device",
+          causationId: cmd.commandId,
+          category: "command",
+          correlationId: cmd.correlationId,
+          machineId: machine._id,
+          policyVersion: "command-ingress-v1",
+          ...(commandThread ? { projectId: commandThread.projectId, threadId: commandThread._id } : {}),
+          requestedScope: cmd.projectPath,
+          effectiveScope: cmd.projectPath,
+          summary: `${cmd.kind} reclaimed`,
+        });
         results.push({ _id: cmd._id, commandId: cmd.commandId, correlationId: cmd.correlationId, kind: cmd.kind, payloadJson: cmd.payloadJson, projectPath: cmd.projectPath, runId: cmd.runId, leaseGeneration });
       }
     }
@@ -171,6 +218,21 @@ export const renewLease = mutationGeneric({
 
     const newLeaseExpiresAt = Date.now() + args.leaseDurationMs;
     await ctx.db.patch(args.commandId, { leaseExpiresAt: newLeaseExpiresAt });
+    const commandThread = cmd.threadId ? await ctx.db.get(cmd.threadId) : null;
+    await ctx.db.insert("auditLog", {
+      action: "command.lease.renewed",
+      actorId: machine._id,
+      actorKind: "device",
+      causationId: cmd.commandId,
+      category: "command",
+      correlationId: cmd.correlationId,
+      machineId: machine._id,
+      policyVersion: "command-ingress-v1",
+      ...(commandThread ? { projectId: commandThread.projectId, threadId: commandThread._id } : {}),
+      requestedScope: cmd.projectPath,
+      effectiveScope: cmd.projectPath,
+      summary: `${cmd.kind} lease renewed`,
+    });
   },
 });
 
@@ -192,5 +254,20 @@ export const completeInbox = mutationGeneric({
     if (cmd.leaseGeneration !== args.leaseGeneration) throw new Error("Stale lease generation — command was reclaimed");
 
     await ctx.db.patch(args.commandId, { completedAt: Date.now(), status: args.status });
+    const commandThread = cmd.threadId ? await ctx.db.get(cmd.threadId) : null;
+    await ctx.db.insert("auditLog", {
+      action: `command.${args.status}`,
+      actorId: machine._id,
+      actorKind: "device",
+      causationId: cmd.commandId,
+      category: "command",
+      correlationId: cmd.correlationId,
+      machineId: machine._id,
+      policyVersion: "command-ingress-v1",
+      ...(commandThread ? { projectId: commandThread.projectId, threadId: commandThread._id } : {}),
+      requestedScope: cmd.projectPath,
+      effectiveScope: args.status === "completed" ? cmd.projectPath : "none",
+      summary: `${cmd.kind} ${args.status}`,
+    });
   },
 });

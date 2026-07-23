@@ -54,6 +54,22 @@ export const appendEvents = mutation({
 
       await ctx.db.insert("projectionEvents", { eventId: ev.eventId, machineId: machine._id, occurredAt: ev.occurredAt, ownerId, payloadJson: ev.payloadJson, publishedAt: now, runId: ev.runId, sequence: ev.sequence, type: ev.type, projectId: ev.projectId });
     }
+    if (args.events.length > 0) {
+      const first = args.events[0]!;
+      await ctx.db.insert("auditLog", {
+        action: "projection.events.append",
+        actorId: machine._id,
+        actorKind: "device",
+        category: "projection",
+        correlationId: first.eventId,
+        machineId: machine._id,
+        policyVersion: "projection-v1",
+        projectId: first.projectId,
+        requestedScope: `${first.projectId}:${first.runId}`,
+        effectiveScope: `${first.projectId}:${first.runId}`,
+        summary: `Appended ${args.events.length} projection event(s) for ${first.runId}`,
+      });
+    }
   },
 });
 
@@ -93,6 +109,19 @@ export const upsertSnapshot = mutation({
       }
       await ctx.db.insert("projectionSnapshots", { machineId: machine._id, ownerId: machine.ownerId, runId: args.runId, sequence: args.sequence, snapshotJson: args.snapshotJson, updatedAt: now, projectId: args.projectId });
     }
+    await ctx.db.insert("auditLog", {
+      action: "projection.snapshot.upsert",
+      actorId: machine._id,
+      actorKind: "device",
+      category: "projection",
+      correlationId: `snapshot:${args.runId}:${args.sequence}`,
+      machineId: machine._id,
+      policyVersion: "projection-v1",
+      projectId: args.projectId,
+      requestedScope: `${args.projectId}:${args.runId}:${args.sequence}`,
+      effectiveScope: `${args.projectId}:${args.runId}:${args.sequence}`,
+      summary: `Upserted projection snapshot ${args.runId}:${args.sequence}`,
+    });
   },
 });
 
@@ -129,6 +158,18 @@ export const advanceCursor = mutation({
         updatedAt: Date.now(),
       });
     }
+    await ctx.db.insert("auditLog", {
+      action: "projection.cursor.advance",
+      actorId: machine._id,
+      actorKind: "device",
+      category: "projection",
+      correlationId: `cursor:${machine._id}:${args.direction}:${args.sequence}`,
+      machineId: machine._id,
+      policyVersion: "projection-v1",
+      requestedScope: `${machine._id}:${args.direction}:${args.sequence}`,
+      effectiveScope: `${machine._id}:${args.direction}:${args.sequence}`,
+      summary: `Advanced ${args.direction} projection cursor to ${args.sequence}`,
+    });
   },
 });
 
@@ -162,6 +203,19 @@ export const flushOutbox = mutation({
     } else {
       await ctx.db.insert("projectionCursors", { direction: "outbound", machineId: machine._id, sequence: args.throughSequence, updatedAt: Date.now() });
     }
+    await ctx.db.insert("auditLog", {
+      action: "projection.outbox.flush",
+      actorId: machine._id,
+      actorKind: "device",
+      category: "projection",
+      correlationId: `outbox:${args.projectId}:${args.throughSequence}`,
+      machineId: machine._id,
+      policyVersion: "projection-v1",
+      projectId: args.projectId,
+      requestedScope: `${args.projectId}:${args.throughSequence}`,
+      effectiveScope: `${args.projectId}:${args.throughSequence}`,
+      summary: `Flushed projection outbox through ${args.throughSequence}`,
+    });
   },
 });
 

@@ -30,6 +30,21 @@ test("owner lists only indexed projection snapshots for their project", async ()
   expect(await fixture.owner.query(api.projections.publish.listProjectionRuns, { projectId: fixture.projectId })).toEqual([
     expect.objectContaining({ projectId: fixture.projectId, runId: "run-1", sequence: 1, status: "running", title: "Canonical run" }),
   ]);
+  await expect(t.run((ctx) => ctx.db.query("auditLog").collect())).resolves.toEqual([
+    expect.objectContaining({
+      action: "projection.events.append",
+      actorKind: "device",
+      category: "projection",
+      correlationId: "ev-1",
+      projectId: fixture.projectId,
+    }),
+    expect.objectContaining({
+      action: "projection.snapshot.upsert",
+      actorKind: "device",
+      category: "projection",
+      projectId: fixture.projectId,
+    }),
+  ]);
 });
 
 test("projection reads fail closed across owners", async () => {
@@ -60,4 +75,18 @@ test("projection reads fail closed across owners", async () => {
   expect(await stranger.query(api.projections.publish.listProjectionRuns, { projectId: fixture.projectId })).toEqual([]);
   expect(await stranger.query(api.projections.publish.getProjectionCursor, { direction: "inbound", machineId: fixture.machineId })).toBeNull();
   await expect(stranger.query(api.projections.publish.listRunEvents, { afterSequence: 0, limit: 20, runId: "run-owner-only" })).rejects.toThrow("Access denied");
+});
+
+test("projection outbox flush is recorded with its bounded scope", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await createAuthenticatedProject(t, "g".repeat(32));
+  await t.mutation(api.projections.publish.appendEvents, {
+    deviceToken: fixture.deviceToken,
+    events: [{ eventId: "ev-flush", occurredAt: 1, payloadJson: "{}", projectId: fixture.projectId, runId: "/repo", sequence: 1, type: "run.created" }],
+  });
+  await t.mutation(api.projections.publish.flushOutbox, { deviceToken: fixture.deviceToken, projectId: fixture.projectId, throughSequence: 1 });
+  await expect(t.run((ctx) => ctx.db.query("auditLog").collect())).resolves.toEqual([
+    expect.objectContaining({ action: "projection.events.append" }),
+    expect.objectContaining({ action: "projection.outbox.flush", effectiveScope: `${fixture.projectId}:1`, requestedScope: `${fixture.projectId}:1` }),
+  ]);
 });

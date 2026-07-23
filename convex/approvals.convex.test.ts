@@ -22,8 +22,8 @@ test("a risky tool pauses for approval and a denial is audit logged", async () =
   const resumedThread = await t.run((ctx) => ctx.db.get("threads", threadId));
   expect(resumedThread?.status).toBe("running");
   expect(await owner.query(api.audit_log.listForThread, { threadId })).toMatchObject([
-    { capability: "exec", decision: "ask", risk: "high" },
-    { capability: "exec", decision: "deny", risk: "high" },
+    { action: "approval.requested", capability: "exec", decision: "ask", effectiveScope: "pending", requestedScope: "exec", risk: "high" },
+    { action: "approval.deny", capability: "exec", decision: "deny", effectiveScope: "none", requestedScope: "exec", risk: "high" },
   ]);
 });
 
