@@ -19,12 +19,12 @@ import {
   type AppendEventResult,
 } from "@relay/harness-runtime";
 import { MutableReactorRegistry } from "@relay/orchestration";
-import type { EffectReactor } from "@relay/contracts";
+import type { EffectIntent, EffectReactor } from "@relay/contracts";
 import {
   canonicalEventPayloadError,
   canonicalEventRequiresTurn,
 } from "@relay/contracts";
-import type { CanonicalEventDraft } from "@relay/contracts";
+import type { CanonicalEventDraft, ReviewCommentInput } from "@relay/contracts";
 import { DEFAULT_MODEL_ID, type Capability } from "@relay/shared";
 import {
   createConvexCommandSource,
@@ -79,6 +79,7 @@ import {
   executeKernelAgenticTurn,
   resumeKernelAgenticTurn,
 } from "./kernel-agentic-turn";
+import { buildTurnPrompt, type ReviewComment } from "./agent-loop";
 import { createCheckpoint } from "./checkpoints";
 import { computeDiff } from "./git-review";
 
@@ -127,7 +128,7 @@ type CodexTurnExecution = {
   runtime: LocalHarnessRuntime;
   threadId?: string;
   cwd?: string;
-  onBeforeTerminal?: () => Promise<void>;
+  onBeforeTerminal?: (succeeded: boolean) => Promise<void>;
   onFirstToken?: (latencyMs: number) => void;
   onActive?: (threadId: string) => void;
   onInactive?: () => void;
@@ -204,7 +205,7 @@ async function executeTurnViaCodexExclusive({
           ev.type === "turn.completed" ||
           ev.type === "turn.failed" ||
           ev.type === "turn.interrupted";
-        if (terminalEvent && onBeforeTerminal) await onBeforeTerminal();
+        if (terminalEvent && onBeforeTerminal) await onBeforeTerminal(ev.type === "turn.completed");
         const result = await persistProviderEvent(runtime, runId, input);
         if (!result.ok) {
           throw new Error(
@@ -975,6 +976,9 @@ export class KernelDaemon {
         }
         const { runId } = effect;
         const { turnId, prompt } = effect.intent;
+        const providerIntent = effect.intent as Extract<EffectIntent, { kind: "provider.send_turn" }>;
+        const reviewComments = providerIntent.reviewComments ?? [];
+        const providerPrompt = buildTurnPrompt({ content: prompt, reviewComments: reviewComments as ReviewComment[] });
         const projectPath = this.projectPathByRun.get(runId);
         const root = projectPath && this.config.adapterDeps?.resolveProjectRoot
           ? await this.config.adapterDeps.resolveProjectRoot({ repoPath: projectPath, threadId: runId })
@@ -990,22 +994,33 @@ export class KernelDaemon {
           }
           await executeTurnViaCodex({
             codexAdapter: codex,
-            prompt,
+            prompt: providerPrompt,
             runId,
             runtime: this.runtime,
             turnId,
             cwd: root,
             threadId: snapshot.providerSession?.providerThreadId,
-            onBeforeTerminal: async () => {
-              if (!root) return;
-              const afterCheckpoint = await captureKernelCheckpoint({ root, runId, turnId, phase: "after" });
-              const result = await persistProviderEvent(this.runtime, runId, {
-                ...afterCheckpoint,
-              });
-              if (!result.ok) throw new Error(`Failed to append Codex after checkpoint: ${result.reason}`);
-              const diff = await captureKernelDiff({ root, runId, turnId });
-              const diffResult = await persistProviderEvent(this.runtime, runId, diff);
-              if (!diffResult.ok) throw new Error(`Failed to append Codex workspace diff: ${diffResult.reason}`);
+            onBeforeTerminal: async (succeeded) => {
+              if (root) {
+                const afterCheckpoint = await captureKernelCheckpoint({ root, runId, turnId, phase: "after" });
+                const result = await persistProviderEvent(this.runtime, runId, {
+                  ...afterCheckpoint,
+                });
+                if (!result.ok) throw new Error(`Failed to append Codex after checkpoint: ${result.reason}`);
+                const diff = await captureKernelDiff({ root, runId, turnId });
+                const diffResult = await persistProviderEvent(this.runtime, runId, diff);
+                if (!diffResult.ok) throw new Error(`Failed to append Codex workspace diff: ${diffResult.reason}`);
+              }
+              if (succeeded) {
+                for (const resolution of reviewCommentResolutionEvents({
+                  commentIds: providerIntent.reviewCommentIds ?? reviewComments.map((comment) => comment.commentId),
+                  runId,
+                  turnId,
+                })) {
+                  const result = await persistProviderEvent(this.runtime, runId, resolution);
+                  if (!result.ok) throw new Error(`Failed to append Codex review resolution: ${result.reason}`);
+                }
+              }
             },
             onActive: (threadId) => this.activeCodexTurns.set(activeTurnKey(runId, turnId), { threadId }),
             onInactive: () => this.activeCodexTurns.delete(activeTurnKey(runId, turnId)),
@@ -1024,7 +1039,7 @@ export class KernelDaemon {
           try {
             const result = await executeKernelAgenticTurn({
               governance: this.config.adapterDeps?.governance ?? unavailableGovernance(),
-              messages: [{ content: prompt, role: "user" }],
+              messages: [{ content: providerPrompt, role: "user" }],
               platform: this.config.adapterDeps?.platform ?? "linux",
               policy: this.config.adapterDeps?.policy ?? { rules: [] },
               provider: turnProvider,
@@ -1032,6 +1047,7 @@ export class KernelDaemon {
               runId,
               signal: signal.signal,
               turnId,
+              reviewCommentIds: providerIntent.reviewCommentIds ?? reviewComments.map((comment) => comment.commentId),
               claimSteering: async () => activeTurn.steering.splice(0),
             });
             const afterCheckpoint = root && !result.pending ? await captureKernelCheckpoint({ root, runId, turnId, phase: "after" }) : undefined;
@@ -1040,11 +1056,19 @@ export class KernelDaemon {
             const providerEvents = terminalEvent?.type === "turn.completed" || terminalEvent?.type === "turn.failed" || terminalEvent?.type === "turn.interrupted"
               ? result.events.slice(0, -1)
               : result.events;
+            const reviewResolutions = terminalEvent?.type === "turn.completed"
+              ? reviewCommentResolutionEvents({
+                commentIds: providerIntent.reviewCommentIds ?? reviewComments.map((comment) => comment.commentId),
+                runId,
+                turnId,
+              })
+              : [];
             return [
               ...(beforeCheckpoint ? [beforeCheckpoint] : []),
               ...providerEvents,
               ...(afterCheckpoint ? [afterCheckpoint] : []),
               ...(workspaceDiff ? [workspaceDiff] : []),
+              ...reviewResolutions,
               ...(terminalEvent ? [terminalEvent] : []),
             ].map((normalizedEvent) => ({
               type: "provider.event" as const,
@@ -1122,7 +1146,10 @@ export class KernelDaemon {
           });
           const afterCheckpoint = await captureKernelCheckpoint({ root, runId: effect.runId, turnId: effect.intent.turnId, phase: "after" });
           const workspaceDiff = await captureKernelDiff({ root, runId: effect.runId, turnId: effect.intent.turnId });
-          return [...result.events, afterCheckpoint, workspaceDiff].map((normalizedEvent) => ({
+          const reviewResolutions = result.reviewCommentIds
+            ? reviewCommentResolutionEvents({ commentIds: result.reviewCommentIds, runId: effect.runId, turnId: effect.intent.turnId })
+            : [];
+          return [...result.events, afterCheckpoint, workspaceDiff, ...reviewResolutions].map((normalizedEvent) => ({
             type: "provider.event" as const,
             payload: {
               providerInstanceId: "provider-local" as never,
@@ -1473,6 +1500,19 @@ export class KernelDaemon {
           await complete("completed");
           break;
         }
+        case "review.comment.create": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("review.comment.create requires runId");
+          const comment = normalizeReviewComment(payload);
+          const result = await appendAdapterEvent(this.runtime, rId, {
+            eventId: `ev-review-comment-created-${externalCommandId}`,
+            type: "review.comment.created",
+            payload: comment,
+          });
+          if (!result.ok) throw new Error(`Failed to append review comment: ${result.reason}`);
+          await complete("completed");
+          break;
+        }
         case "turn.send": {
           const rId = runId ?? (payload.runId as string);
           if (!rId) throw new Error("turn.send requires runId");
@@ -1481,8 +1521,20 @@ export class KernelDaemon {
             this.projectPathByRun.set(rId, payload.projectPath);
           }
 
-          // Security: scan prompt for secrets before sending to provider
-          const secretFindings = scanForSecrets(rawPrompt);
+          const reviewComments = normalizeReviewComments(payload.reviewComments);
+          const reviewCommentIds = normalizeStringArray(
+            payload.reviewCommentIds ?? reviewComments.map((comment) => comment.commentId),
+            "reviewCommentIds",
+          );
+          const receivedCommentIds = new Set(reviewComments.map((comment) => comment.commentId));
+          if (reviewCommentIds.some((commentId) => !receivedCommentIds.has(commentId))) {
+            throw new Error("reviewCommentIds must refer only to comments included in reviewComments");
+          }
+
+          // Security: scan the complete provider prompt, including review feedback,
+          // for secrets before sending it to the provider.
+          const providerPrompt = buildTurnPrompt({ content: rawPrompt, reviewComments: reviewComments as ReviewComment[] });
+          const secretFindings = scanForSecrets(providerPrompt);
           if (secretFindings.length > 0) {
             console.warn("Kernel daemon: secrets detected in prompt:", secretFindings);
             throw new Error("Prompt contains credentials — rejected by security scan");
@@ -1499,6 +1551,8 @@ export class KernelDaemon {
             runId: rId as never,
             prompt,
             commandId: externalCommandId as never,
+            ...(reviewComments.length > 0 ? { reviewComments } : {}),
+            ...(reviewCommentIds.length > 0 ? { reviewCommentIds } : {}),
           });
 
           // The durable effect is now queued. Do not hold the command poller
@@ -1714,6 +1768,62 @@ function unavailableGovernance(): GovernanceGateway {
     recordDecision: async () => undefined,
     requestApproval: async () => "deny",
   };
+}
+
+function normalizeReviewComment(value: Record<string, unknown>): ReviewCommentInput {
+  const comments = normalizeReviewComments([value]);
+  const comment = comments[0];
+  if (!comment) throw new Error("review.comment.create requires a comment payload");
+  return comment;
+}
+
+function normalizeReviewComments(value: unknown): ReviewCommentInput[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) throw new Error("reviewComments must be an array of at most 100 comments");
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`reviewComments[${index}] must be an object`);
+    const record = entry as Record<string, unknown>;
+    const commentId = requireBoundedString(record.commentId, `reviewComments[${index}].commentId`, 200);
+    const content = requireBoundedString(record.content, `reviewComments[${index}].content`, 20_000);
+    const filePath = requireBoundedString(record.filePath, `reviewComments[${index}].filePath`, 2_000);
+    const startLine = requirePositiveInteger(record.startLine, `reviewComments[${index}].startLine`);
+    const endLine = requirePositiveInteger(record.endLine, `reviewComments[${index}].endLine`);
+    if (endLine < startLine) throw new Error(`reviewComments[${index}].endLine must be >= startLine`);
+    return { commentId, content, endLine, filePath, startLine };
+  });
+}
+
+function normalizeStringArray(value: unknown, label: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) throw new Error(`${label} must be an array of at most 100 strings`);
+  const values = value.map((entry, index) => requireBoundedString(entry, `${label}[${index}]`, 200));
+  return [...new Set(values)];
+}
+
+function requireBoundedString(value: unknown, label: string, maxLength: number): string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) throw new Error(`${label} must be a non-empty string of at most ${maxLength} characters`);
+  return value;
+}
+
+function requirePositiveInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) throw new Error(`${label} must be a positive integer`);
+  return value;
+}
+
+function reviewCommentResolutionEvents(input: { commentIds: ReadonlyArray<string>; runId: string; turnId: string }): CanonicalEventDraft[] {
+  return [...new Set(input.commentIds)].map((commentId, index) => {
+    const safeCommentId = commentId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+    const eventId = `ev-review-comment-resolved-${input.runId}-${input.turnId}-${index}-${safeCommentId}`;
+    return {
+      causationId: `review-resolve-${input.runId}-${input.turnId}-${index}` as never,
+      correlationId: `corr-review-${input.runId}-${input.turnId}` as never,
+      eventId: eventId as never,
+      payload: { commentId },
+      runId: input.runId as never,
+      turnId: input.turnId as never,
+      type: "review.comment.resolved",
+    } as CanonicalEventDraft;
+  });
 }
 
 async function captureKernelCheckpoint(input: {

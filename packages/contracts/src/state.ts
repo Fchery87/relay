@@ -255,6 +255,8 @@ export function reduceRun(
     case "checkpoint.restored":
     case "checkpoint.compared":
     case "workspace.diff.updated":
+    case "review.comment.created":
+    case "review.comment.resolved":
     case "projection.published":
       return null;
 

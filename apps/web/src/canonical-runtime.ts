@@ -8,6 +8,7 @@ import type { ThreadCheckpoint } from "./thread-messages";
 import type { ThreadEvent } from "./thread-activity";
 import type { Approval, AuditEntry } from "./governance-panel";
 import type { UsageSummary } from "./usage-panel";
+import type { DiffComment } from "./diff-utils";
 
 export type ProjectionRunState = {
   readonly error?: string;
@@ -121,6 +122,28 @@ export function projectionEventsToDiff(events: ReadonlyArray<EventEnvelope<Canon
   if (!latest || !latest.payload || typeof latest.payload !== "object") return "No changes.";
   const content = (latest.payload as { content?: unknown }).content;
   return typeof content === "string" ? content : "No changes.";
+}
+
+export function projectionEventsToReviewComments(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): DiffComment[] {
+  const comments = new Map<string, DiffComment>();
+  for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (event.type === "review.comment.created") {
+      if (typeof payload.commentId !== "string" || typeof payload.content !== "string" || typeof payload.filePath !== "string" || typeof payload.startLine !== "number" || typeof payload.endLine !== "number") continue;
+      comments.set(payload.commentId, {
+        _id: payload.commentId,
+        content: payload.content,
+        endLine: payload.endLine,
+        filePath: payload.filePath,
+        resolved: false,
+        startLine: payload.startLine,
+      });
+    } else if (event.type === "review.comment.resolved" && typeof payload.commentId === "string") {
+      const existing = comments.get(payload.commentId);
+      if (existing) comments.set(payload.commentId, { ...existing, resolved: true });
+    }
+  }
+  return [...comments.values()];
 }
 
 export function projectionEventsToCheckpointComparison(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ProjectionCheckpointComparison | null {

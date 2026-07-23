@@ -25,6 +25,8 @@ export type EffectIntent =
   | {
       readonly kind: "provider.send_turn";
       readonly prompt: string;
+      readonly reviewComments?: ReadonlyArray<import("./commands").ReviewCommentInput>;
+      readonly reviewCommentIds?: ReadonlyArray<string>;
       readonly turnId: TurnId;
     }
   | {

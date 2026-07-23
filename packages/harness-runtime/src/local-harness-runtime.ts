@@ -124,7 +124,12 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       correlationId: `corr-send` as never,
       actor: { kind: "user", id: "user" },
       issuedAt: Date.now(),
-      payload: { prompt: input.prompt, turnId },
+      payload: {
+        prompt: input.prompt,
+        ...(input.reviewComments ? { reviewComments: input.reviewComments } : {}),
+        ...(input.reviewCommentIds ? { reviewCommentIds: input.reviewCommentIds } : {}),
+        turnId,
+      },
     });
 
     if (receipt.kind !== "turn") {

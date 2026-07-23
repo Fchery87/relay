@@ -75,9 +75,19 @@ export type SendTurnPayload = {
   /** Local-only repository path used by daemon workspace adapters. */
   readonly projectPath?: string;
   readonly prompt: string;
+  readonly reviewComments?: ReadonlyArray<ReviewCommentInput>;
+  readonly reviewCommentIds?: ReadonlyArray<string>;
   readonly turnId: TurnId;
 };
 export type SendTurnCommand = CommandEnvelope<"turn.send", SendTurnPayload>;
+
+export type ReviewCommentInput = {
+  readonly commentId: string;
+  readonly content: string;
+  readonly endLine: number;
+  readonly filePath: string;
+  readonly startLine: number;
+};
 
 // --- steer ---
 

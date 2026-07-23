@@ -157,6 +157,8 @@ export function decide(
       effects.push({
         kind: "provider.send_turn",
         prompt: command.payload.prompt,
+        ...(command.payload.reviewComments ? { reviewComments: command.payload.reviewComments } : {}),
+        ...(command.payload.reviewCommentIds ? { reviewCommentIds: command.payload.reviewCommentIds } : {}),
         turnId: command.payload.turnId,
       });
       const updated = reduceAndApply(current, events, command.issuedAt);

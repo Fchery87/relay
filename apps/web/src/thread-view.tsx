@@ -18,13 +18,13 @@ import { resolveHandoffStage } from "./handoff-trace-utils";
 import { Composer, type SlashCommandEntry } from "./composer";
 import { InspectorPanel } from "./inspector";
 import { TerminalDrawer } from "./terminal-drawer";
-import { canonicalCommandEnvelope, canonicalRunData, createThreadRef, projectionCutoverEnabled, submitCanonicalCommand, toLegacyRunSummaries, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile, type ProjectionRunSummary } from "./run-data";
+import { canonicalCommandEnvelope, canonicalCommandId, canonicalRunData, createThreadRef, projectionCutoverEnabled, submitCanonicalCommand, toLegacyRunSummaries, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile, type ProjectionRunSummary } from "./run-data";
 import { resolveWorkbenchView } from "./router";
 import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
-import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToMessages, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
+import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
 
 const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -131,7 +131,7 @@ export function ThreadView({
   const events = useQuery(listEvents, activeThreadId ? { threadId: activeThreadId } : "skip");
   const diff = useQuery(latestDiff, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const gitActions = useQuery(listGitActions, activeThreadId ? { threadId: activeThreadId } : "skip");
-  const diffComments = useQuery(listDiffComments, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const diffComments = useQuery(listDiffComments, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const approvals = useQuery(listApprovals, activeThreadId ? { threadId: activeThreadId } : "skip");
   const audit = useQuery(listAudit, activeThreadId ? { threadId: activeThreadId } : "skip");
   const usage = useQuery(getThreadUsage, activeThreadId ? { threadId: activeThreadId } : "skip");
@@ -187,7 +187,7 @@ export function ThreadView({
     setIsSubmittingDirective(true);
     setDirectiveReceipt(undefined);
     try {
-      await submitRunCommand("turn.send", { prompt: outgoingContent });
+      await submitRunCommand("turn.send", { prompt: outgoingContent, ...canonicalReviewFeedback() });
       setContent("");
       setAttachments([]);
       setAttachmentError(undefined);
@@ -218,7 +218,7 @@ export function ThreadView({
   async function submitCommand(event: FormEvent) {
     event.preventDefault();
     if (!activeThreadId || !command.trim()) return;
-    if (projectionCutoverEnabled) await submitRunCommand("turn.send", { prompt: command.trim() });
+    if (projectionCutoverEnabled) await submitRunCommand("turn.send", { prompt: command.trim(), ...canonicalReviewFeedback() });
     else await enqueue({ command: command.trim(), threadId: activeThreadId });
     setCommand("");
   }
@@ -240,6 +240,15 @@ export function ThreadView({
   const activeProjectionComparison = projectionCutoverEnabled ? projectionComparison : (comparison?._id === requestedComparisonId ? comparison : null);
   const visibleDiff = projectionCutoverEnabled ? projectionEventsToDiff(projectionEvents) : diff?.content ?? "No changes.";
   const visibleUsage = projectionCutoverEnabled ? projectionEventsToUsage(projectionEvents) : usage ?? EMPTY_USAGE_SUMMARY;
+  const visibleReviewComments = projectionCutoverEnabled ? projectionEventsToReviewComments(projectionEvents) : diffComments ?? [];
+  function canonicalReviewFeedback(): Record<string, unknown> {
+    if (!projectionCutoverEnabled) return {};
+    const pending = visibleReviewComments.filter((comment) => !comment.resolved);
+    return {
+      reviewComments: pending.map(({ _id: commentId, ...comment }) => ({ commentId, ...comment })),
+      reviewCommentIds: pending.map((comment) => comment._id),
+    };
+  }
   const pendingApprovalCount = visibleApprovals.filter((approval) => approval.decision === "pending").length;
   const currentStage = activeThread ? resolveHandoffStage({
     hasPendingApproval: pendingApprovalCount > 0,
@@ -301,8 +310,8 @@ export function ThreadView({
               <ThreadMessages checkpoints={visibleCheckpoints} messages={visibleMessages} onRestore={activeStatus === "running" || activeStatus === "awaiting-approval" || activeStatus === "restoring" ? undefined : (checkpointId) => projectionCutoverEnabled ? submitRunCommand("checkpoint.restore", { checkpointId, commit: visibleCheckpoints.find((checkpoint) => checkpoint._id === checkpointId)?.commit, ref: visibleCheckpoints.find((checkpoint) => checkpoint._id === checkpointId)?.ref }) : restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
               <div aria-hidden="true" ref={scrollBottomRef} />
             </> : null}
-            {activeToolSurface === "changes" ? <section className="diff-panel"><header className="panel-heading"><div><span>Review workspace</span><h2>Changes</h2></div>{diffComments?.some((comment) => !comment.resolved) ? <strong>{diffComments.filter((comment) => !comment.resolved).length} unresolved</strong> : null}</header><CheckpointComparison checkpoints={visibleCheckpoints} onCompare={async (input) => { if (projectionCutoverEnabled) { const from = visibleCheckpoints.find((checkpoint) => checkpoint._id === input.fromCheckpointId); const to = visibleCheckpoints.find((checkpoint) => checkpoint._id === input.toCheckpointId); if (!from?.commit || !to?.commit) return; await submitRunCommand("checkpoint.compare", { fromCheckpointId: from._id, fromCommit: from.commit, toCheckpointId: to._id, toCommit: to.commit }); } else { const comparisonId = await compareCheckpoints({ ...input, threadId: activeThreadId }); setRequestedComparisonId(comparisonId); } setShowComparison(true); }} />{showComparison ? <button className="current-diff" onClick={() => setShowComparison(false)} type="button">Current changes</button> : null}<p aria-live="polite" className="comparison-status">{showComparison ? `Comparison: ${activeProjectionComparison?.status ?? "queued"}` : ""}</p><DiffView comments={showComparison ? [] : diffComments ?? []} content={showComparison && activeProjectionComparison?.status === "complete" ? activeProjectionComparison.content ?? "No differences." : visibleDiff} onCreateComment={showComparison ? undefined : (input) => createComment({ ...input, threadId: activeThreadId })} />
-              {!showComparison && diffComments?.some((comment) => !comment.resolved) ? <button className="address-comments" onClick={() => void send({ content: "Address the unresolved review comments.", threadId: activeThreadId })} type="button">Address comments</button> : null}
+        {activeToolSurface === "changes" ? <section className="diff-panel"><header className="panel-heading"><div><span>Review workspace</span><h2>Changes</h2></div>{visibleReviewComments.some((comment) => !comment.resolved) ? <strong>{visibleReviewComments.filter((comment) => !comment.resolved).length} unresolved</strong> : null}</header><CheckpointComparison checkpoints={visibleCheckpoints} onCompare={async (input) => { if (projectionCutoverEnabled) { const from = visibleCheckpoints.find((checkpoint) => checkpoint._id === input.fromCheckpointId); const to = visibleCheckpoints.find((checkpoint) => checkpoint._id === input.toCheckpointId); if (!from?.commit || !to?.commit) return; await submitRunCommand("checkpoint.compare", { fromCheckpointId: from._id, fromCommit: from.commit, toCheckpointId: to._id, toCommit: to.commit }); } else { const comparisonId = await compareCheckpoints({ ...input, threadId: activeThreadId }); setRequestedComparisonId(comparisonId); } setShowComparison(true); }} />{showComparison ? <button className="current-diff" onClick={() => setShowComparison(false)} type="button">Current changes</button> : null}<p aria-live="polite" className="comparison-status">{showComparison ? `Comparison: ${activeProjectionComparison?.status ?? "queued"}` : ""}</p><DiffView comments={showComparison ? [] : visibleReviewComments} content={showComparison && activeProjectionComparison?.status === "complete" ? activeProjectionComparison.content ?? "No differences." : visibleDiff} onCreateComment={showComparison ? undefined : (input) => projectionCutoverEnabled ? submitRunCommand("review.comment.create", { ...input, commentId: canonicalCommandId(activeThreadId ?? "", "review.comment.create", input) }) : createComment({ ...input, threadId: activeThreadId })} />
+              {!showComparison && visibleReviewComments.some((comment) => !comment.resolved) ? <button className="address-comments" onClick={() => projectionCutoverEnabled ? void submitRunCommand("turn.send", { prompt: "Address the unresolved review comments.", ...canonicalReviewFeedback() }) : void send({ content: "Address the unresolved review comments.", threadId: activeThreadId })} type="button">Address comments</button> : null}
               <div className="ship-controls"><button className="ship-stage" disabled={gitActionRunning || diffSummary.fileCount === 0} onClick={() => setPendingGitAction("stage")} type="button">Stage all{diffSummary.fileCount > 0 ? ` (${diffSummary.fileCount})` : ""}</button><div className="ship-commit-group"><input aria-label="Commit message" onChange={(event) => setCommitMessage(event.target.value)} placeholder="Commit message" value={commitMessage} /><button className="button-primary ship-commit" disabled={!commitMessage.trim() || gitActionRunning} onClick={() => setPendingGitAction("commit")} type="button">Commit</button></div><button className="ship-push" disabled={gitActionRunning} onClick={() => setPendingGitAction("push")} type="button">Push<span className="ship-push-impact">remote</span></button></div>
               <p aria-live="polite" className="ship-status" data-status={latestGitAction?.status ?? "idle"}>{latestGitAction ? `${latestGitAction.action}: ${latestGitAction.status}` : "No Git actions yet."}</p>
             </section> : null}

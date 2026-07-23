@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToMessages } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToMessages, projectionEventsToReviewComments } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -86,6 +86,27 @@ test("canonical checkpoint artifacts retain restore metadata and comparison outp
   }]);
   expect(projectionEventsToCheckpointComparison([event(2, "checkpoint.compared", { content: "diff", fromCheckpointId: "abc", toCheckpointId: "def" })])).toEqual({ _id: "comparison:abc:def", content: "diff", status: "complete" });
   expect(projectionEventsToDiff([event(3, "workspace.diff.updated", { baseCommit: "HEAD", content: "current diff" })])).toBe("current diff");
+});
+
+test("canonical event tails project review comments and resolve only matching comments", () => {
+  const event = (sequence: number, type: string, payload: Record<string, unknown>) => ({
+    eventId: `event-${sequence}` as never,
+    sequence,
+    streamVersion: sequence,
+    type: type as never,
+    runId: "run-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: sequence,
+    payload,
+  });
+  expect(projectionEventsToReviewComments([
+    event(3, "review.comment.resolved", { commentId: "comment-1" }),
+    event(1, "review.comment.created", { commentId: "comment-1", content: "Fix this", endLine: 4, filePath: "src/app.ts", startLine: 3 }),
+    event(2, "review.comment.created", { commentId: "comment-2", content: "Also this", endLine: 8, filePath: "src/app.ts", startLine: 8 }),
+  ])).toEqual([
+    { _id: "comment-1", content: "Fix this", endLine: 4, filePath: "src/app.ts", resolved: true, startLine: 3 },
+    { _id: "comment-2", content: "Also this", endLine: 8, filePath: "src/app.ts", resolved: false, startLine: 8 },
+  ]);
 });
 
 test("canonical runtime behavior covers create, turn, approval, stop, checkpoint, and reconnect", async () => {

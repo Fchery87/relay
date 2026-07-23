@@ -19,6 +19,7 @@ const SUPPORTED_COMMAND_KINDS = new Set([
   "turn.steer",
   "turn.interrupt",
   "approval.resolve",
+  "review.comment.create",
   "checkpoint.restore",
   "checkpoint.compare",
   "subagent.run",

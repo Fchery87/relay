@@ -45,6 +45,8 @@ const CANONICAL_EVENT_TYPES = new Set<CanonicalEventType>([
   "checkpoint.restored",
   "checkpoint.compared",
   "workspace.diff.updated",
+  "review.comment.created",
+  "review.comment.resolved",
   "projection.published",
 ]);
 
@@ -114,6 +116,8 @@ export function assertCommandSchema(value: unknown): asserts value is Command {
     case "turn.send":
       assertString(value.payload.prompt, "turn.send prompt");
       assertString(value.payload.turnId, "turn.send turnId");
+      if (value.payload.reviewComments !== undefined) assertReviewComments(value.payload.reviewComments, "turn.send reviewComments");
+      if (value.payload.reviewCommentIds !== undefined) assertStringArray(value.payload.reviewCommentIds, "turn.send reviewCommentIds");
       break;
     case "turn.steer":
       assertString(value.payload.steering, "turn.steer steering");
@@ -369,6 +373,13 @@ export function canonicalEventPayloadError(
   if (type === "workspace.diff.updated" && typeof payload.content !== "string") {
     return "workspace.diff.updated.content must be a string";
   }
+  if (type === "review.comment.created") {
+    if (!isNonEmptyString(payload.commentId) || !isNonEmptyString(payload.content) || !isNonEmptyString(payload.filePath)) return "review.comment.created fields must be non-empty strings";
+    if (!validLineRange(payload.startLine, payload.endLine)) return "review.comment.created line range is invalid";
+  }
+  if (type === "review.comment.resolved" && !isNonEmptyString(payload.commentId)) {
+    return "review.comment.resolved.commentId must be a non-empty string";
+  }
   if (
     type === "projection.published" &&
     (typeof payload.cursor !== "number" || !Number.isFinite(payload.cursor))
@@ -386,6 +397,21 @@ function assertString(value: unknown, label: string): asserts value is string {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function assertStringArray(value: unknown, label: string): asserts value is string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.length === 0)) throw new CommandSchemaError(`${label} must be a non-empty string array`);
+}
+
+function assertReviewComments(value: unknown, label: string): void {
+  if (!Array.isArray(value) || value.length > 100) throw new CommandSchemaError(`${label} must contain at most 100 comments`);
+  for (const comment of value) {
+    if (!isRecord(comment) || !isNonEmptyString(comment.commentId) || !isNonEmptyString(comment.content) || !isNonEmptyString(comment.filePath) || !validLineRange(comment.startLine, comment.endLine)) throw new CommandSchemaError(`${label} contains an invalid comment`);
+  }
+}
+
+function validLineRange(startLine: unknown, endLine: unknown): boolean {
+  return typeof startLine === "number" && Number.isInteger(startLine) && startLine >= 1 && typeof endLine === "number" && Number.isInteger(endLine) && endLine >= startLine;
 }
 
 function optionalStringError(

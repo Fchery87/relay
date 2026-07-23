@@ -24,6 +24,7 @@ export type KernelAgenticApprovalContinuation = {
   readonly messages: ChatMessage[];
   readonly toolUseId: string;
   readonly turnId: string;
+  readonly reviewCommentIds?: readonly string[];
 };
 
 export type KernelAgenticTurnResult = {
@@ -32,6 +33,7 @@ export type KernelAgenticTurnResult = {
     readonly approvalId: string;
     readonly continuationJson: string;
   };
+  readonly reviewCommentIds?: readonly string[];
 };
 
 type KernelAgenticTurnInput = {
@@ -45,6 +47,7 @@ type KernelAgenticTurnInput = {
   readonly runId: string;
   readonly signal: AbortSignal;
   readonly turnId: string;
+  readonly reviewCommentIds?: readonly string[];
   readonly claimSteering?: () => Promise<string[]>;
   readonly suppressTerminal?: boolean;
 };
@@ -80,6 +83,7 @@ export async function resumeKernelAgenticTurn(input: {
     eventNamespace: input.eventNamespace ?? "resume",
     events,
     skipActivityStart: continuation.activityId,
+    reviewCommentIds: continuation.reviewCommentIds,
   });
   const outcome = await callbacks.executeToolCall(continuation.call, {
     messages: continuation.messages,
@@ -89,7 +93,7 @@ export async function resumeKernelAgenticTurn(input: {
     throw new Error("An approval continuation unexpectedly requested another approval");
   }
 
-  const result: ChatMessage = {
+  const toolResult: ChatMessage = {
     role: "tool_results",
     results: [{
       content: outcome.content,
@@ -97,14 +101,15 @@ export async function resumeKernelAgenticTurn(input: {
       toolUseId: continuation.toolUseId,
     }],
   };
-  return runKernelAgenticLoop({
+  const result = await runKernelAgenticLoop({
     ...input,
     eventNamespace: input.eventNamespace ?? "resume",
     events,
-    messages: [...continuation.messages, result],
+    messages: [...continuation.messages, toolResult],
     callbacks,
     suppressTerminal: true,
   });
+  return { ...result, reviewCommentIds: continuation.reviewCommentIds };
 }
 
 async function runKernelAgenticLoop(
@@ -126,7 +131,7 @@ async function runKernelAgenticLoop(
   });
 
   if (result.pending) {
-    return { events, pending: result.pending };
+    return { events, pending: result.pending, reviewCommentIds: input.reviewCommentIds };
   }
   if (!input.signal.aborted && !input.suppressTerminal) {
     events.push(event({
@@ -144,7 +149,7 @@ async function runKernelAgenticLoop(
       type: "turn.completed",
     }));
   }
-  return { events };
+  return { events, reviewCommentIds: input.reviewCommentIds };
 }
 
 function createCallbacks(input: {
@@ -158,6 +163,7 @@ function createCallbacks(input: {
   readonly resolution?: "allow" | "deny";
   readonly skipActivityStart?: string;
   readonly turnId: string;
+  readonly reviewCommentIds?: readonly string[];
   readonly claimSteering?: () => Promise<string[]>;
 }): {
   executeToolCall(
@@ -211,6 +217,7 @@ function createCallbacks(input: {
           messages: context.messages,
           toolUseId,
           turnId: input.turnId,
+          reviewCommentIds: input.reviewCommentIds,
         };
         const approvalId = await input.governance.createApproval({
           ...classification,
@@ -334,6 +341,11 @@ function parseContinuation(json: string): KernelAgenticApprovalContinuation {
     messages: value.messages,
     toolUseId: value.toolUseId,
     turnId: value.turnId,
+    reviewCommentIds: value.reviewCommentIds === undefined
+      ? undefined
+      : Array.isArray(value.reviewCommentIds) && value.reviewCommentIds.every((commentId) => typeof commentId === "string")
+        ? value.reviewCommentIds
+        : (() => { throw new Error("Kernel agentic approval continuation has malformed review comment IDs"); })(),
   };
 }
 

@@ -618,9 +618,13 @@ actions through stable canonical inbox envelopes, routes checkpoint comparison
 through the canonical `checkpoint.compared` event and current-worktree diff
 through `workspace.diff.updated`, and feeds projection
 snapshots/events through `ClientRuntime` with durable cursors and fail-closed
-gap handling. The remaining checklist stays open until all detail panels and
-workflow behavior tests leave their legacy Convex reads/writes behind the
-explicit rollback adapter.
+gap handling. Inline review comments now use canonical
+`review.comment.created`/`review.comment.resolved` events, and unresolved
+projected comments are included in the next canonical turn before successful
+turn completion resolves only the comments received by that turn. The
+remaining checklist stays open until all detail panels and workflow behavior
+tests leave their legacy Convex reads/writes behind the explicit rollback
+adapter.
 
 - [x] Browser actions submit canonical command envelopes with stable command IDs (`canonicalCommandEnvelope` and the reversible projection flag route core actions through `commands/inbox:submitToInbox`)
 - [x] Browser state consumes snapshots plus ordered events and stores a confirmed cursor (`useProjectionRun` + `ClientRuntime` + `ProjectionCursorManager`)

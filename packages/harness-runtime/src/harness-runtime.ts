@@ -31,6 +31,8 @@ export type ResumeRunInput = {
 export type SendTurnInput = {
   readonly runId: RunId;
   readonly prompt: string;
+  readonly reviewComments?: ReadonlyArray<import("@relay/contracts").ReviewCommentInput>;
+  readonly reviewCommentIds?: ReadonlyArray<string>;
   /** Stable identities may be supplied when retrying delivery. */
   readonly commandId?: CommandId;
   readonly turnId?: TurnId;

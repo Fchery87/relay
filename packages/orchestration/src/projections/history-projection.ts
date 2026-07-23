@@ -163,6 +163,8 @@ function applyEvent(
     case "checkpoint.restored":
     case "checkpoint.compared":
     case "workspace.diff.updated":
+    case "review.comment.created":
+    case "review.comment.resolved":
     case "run.created":
     case "run.started":
     case "run.stopping":

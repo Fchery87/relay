@@ -74,6 +74,8 @@ export type CanonicalEvent =
   | CheckpointRestoredEvent
   | CheckpointComparedEvent
   | WorkspaceDiffUpdatedEvent
+  | ReviewCommentCreatedEvent
+  | ReviewCommentResolvedEvent
   // --- projection synchronisation ---
   | ProjectionPublishedEvent;
 
@@ -299,6 +301,28 @@ export type WorkspaceDiffUpdatedPayload = {
 export type WorkspaceDiffUpdatedEvent = EventEnvelope<
   "workspace.diff.updated",
   WorkspaceDiffUpdatedPayload
+>;
+
+export type ReviewCommentCreatedPayload = {
+  readonly commentId: string;
+  readonly content: string;
+  readonly endLine: number;
+  readonly filePath: string;
+  readonly startLine: number;
+};
+
+export type ReviewCommentCreatedEvent = EventEnvelope<
+  "review.comment.created",
+  ReviewCommentCreatedPayload
+>;
+
+export type ReviewCommentResolvedPayload = {
+  readonly commentId: string;
+};
+
+export type ReviewCommentResolvedEvent = EventEnvelope<
+  "review.comment.resolved",
+  ReviewCommentResolvedPayload
 >;
 
 // --- projection ---
