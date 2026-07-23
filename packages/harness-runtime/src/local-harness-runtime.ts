@@ -320,6 +320,11 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     return this.engine.drainEffects();
   }
 
+  /** Drain steer/interrupt effects without waiting behind a provider turn. */
+  drainControlEffects(): Promise<number> {
+    return this.engine.drainControlEffects();
+  }
+
   // -- Sandbox enforcement ---------------------------------------------------
 
   /**

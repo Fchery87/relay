@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { runAgenticTurn, type ChatMessage, type TurnModelProvider, type TurnStreamEvent } from "./turn-loop";
+import { runAgenticTurn, type ChatMessage, type ToolExecutionOutcome, type TurnModelProvider, type TurnStreamEvent } from "./turn-loop";
 import type { TokenUsage } from "@relay/shared";
 import type { ToolCall } from "./tool-executor";
 
@@ -120,6 +120,49 @@ test("refused call produces isError tool_result and loop continues", async () =>
     expect(toolResultMsg.results[0]!.content).toBe("policy_denied");
   }
   expect(result.messages.length).toBeGreaterThanOrEqual(4);
+});
+
+test("approval outcome suspends with the exact provider continuation", async () => {
+  const controller = new AbortController();
+  const provider = new FakeTurnProvider([
+    [
+      { kind: "text", text: "I need permission" },
+      { kind: "tool_use", call: { command: "git push", kind: "bash" }, id: "bash-1" },
+      fakeStop("tool_use"),
+    ],
+  ]);
+  const callbacks = {
+    executeToolCall: async (
+      _call: ToolCall,
+      context: { messages: ChatMessage[]; toolUseId: string },
+    ): Promise<ToolExecutionOutcome> => ({
+      approvalId: "approval-1",
+      continuationJson: JSON.stringify({ messages: context.messages, toolUseId: context.toolUseId }),
+      status: "pending",
+    }),
+  };
+
+  const result = await runAgenticTurn({
+    messages: [{ content: "publish the change", role: "user" }],
+    provider,
+    signal: controller.signal,
+    system: "",
+    tools: [],
+    callbacks,
+  });
+
+  expect(result.pending).toEqual({
+    approvalId: "approval-1",
+    continuationJson: expect.any(String),
+  });
+  expect(JSON.parse(result.pending!.continuationJson)).toMatchObject({
+    toolUseId: "bash-1",
+    messages: [
+      { content: "publish the change", role: "user" },
+      { role: "assistant" },
+    ],
+  });
+  expect(result.messages.at(-1)?.role).toBe("assistant");
 });
 
 test("maxIterations exceeded stops the loop", async () => {

@@ -56,6 +56,7 @@ export function claimEffectBatch(
   leaseMs: number,
   limit: number,
   now = Date.now(),
+  kinds?: ReadonlyArray<EffectIntent["kind"]>,
 ): ReadonlyArray<DurableEffect> {
   if (!owner) throw new Error("Effect lease owner is required");
   if (!Number.isInteger(limit) || limit < 1) {
@@ -66,6 +67,17 @@ export function claimEffectBatch(
   }
 
   return db.transaction(() => {
+    const kindClause = kinds && kinds.length > 0
+      ? `AND candidate.kind IN (${kinds.map(() => "?").join(", ")})`
+      : "";
+    const orderingClause = kinds && kinds.length > 0
+      ? ""
+      : `AND NOT EXISTS (
+             SELECT 1 FROM effect_outbox AS earlier
+             WHERE earlier.run_id = candidate.run_id
+               AND earlier.rowid < candidate.rowid
+               AND earlier.status IN ('pending', 'running')
+           )`;
     const candidates = db
       .query(
         `SELECT candidate.effect_id FROM effect_outbox AS candidate
@@ -79,16 +91,12 @@ export function claimEffectBatch(
               AND candidate.lease_expires_at <= ?
             )
            )
-           AND NOT EXISTS (
-             SELECT 1 FROM effect_outbox AS earlier
-             WHERE earlier.run_id = candidate.run_id
-               AND earlier.rowid < candidate.rowid
-               AND earlier.status IN ('pending', 'running')
-           )
+           ${kindClause}
+           ${orderingClause}
          ORDER BY candidate.rowid ASC
          LIMIT ?`,
       )
-      .all(now, now, limit) as Array<{ effect_id: string }>;
+      .all(now, now, ...(kinds ?? []), limit) as Array<{ effect_id: string }>;
     if (candidates.length === 0) return [];
 
     const leaseExpiresAt = now + leaseMs;

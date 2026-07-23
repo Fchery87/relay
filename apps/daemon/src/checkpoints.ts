@@ -41,6 +41,10 @@ export async function createCheckpoint({ root, threadId, turnId }: { root: strin
   const env = { GIT_INDEX_FILE: indexPath };
   const ref = checkpointRef({ threadId, turnId });
   try {
+    const existing = await runGit({ args: ["rev-parse", "--verify", `${ref}^{commit}`], root });
+    if (existing.exitCode === 0 && existing.stdout.trim()) {
+      return { commit: existing.stdout.trim(), ref };
+    }
     await requireGit({ args: ["read-tree", "HEAD"], env, root });
     await requireGit({ args: ["add", "-A"], env, root });
     const tree = await requireGit({ args: ["write-tree"], env, root });

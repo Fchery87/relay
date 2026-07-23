@@ -29,6 +29,18 @@ test("creates a hidden checkpoint for tracked and untracked changes without movi
   expect(checkpoint.commit).not.toBe(head);
 });
 
+test("retries of the same hidden checkpoint ref return the original commit", async () => {
+  const root = await createRepository();
+  await writeFile(join(root, "file.txt"), "turn one\n");
+  const first = await createCheckpoint({ root, threadId: "thread-1", turnId: "turn-1" });
+  await writeFile(join(root, "file.txt"), "a later mutation\n");
+
+  const retry = await createCheckpoint({ root, threadId: "thread-1", turnId: "turn-1" });
+
+  expect(retry).toEqual(first);
+  expect((await runCommand({ command: "git show refs/relay/checkpoints/thread-1/turn-1:file.txt", platform: "linux", root })).stdout).toBe("turn one\n");
+});
+
 test("restores a checkpoint without deleting later checkpoint refs", async () => {
   const root = await createRepository();
   await writeFile(join(root, "file.txt"), "turn one\n");

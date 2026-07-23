@@ -121,6 +121,70 @@ describe("OrchestrationEngine durability", () => {
     expect(executions).toBe(1);
   });
 
+  test("control drain reaches an in-flight provider turn", async () => {
+    const db = openMemoryStore();
+    let releaseProvider!: () => void;
+    let providerStarted!: () => void;
+    const providerGate = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    const started = new Promise<void>((resolve) => { providerStarted = resolve; });
+    let steeringSeen = false;
+    const engine = new OrchestrationEngine(db, {
+      maxConcurrentRuns: 1,
+      reactors: {
+        "provider.send_turn": {
+          execute: async (effect, context) => {
+            providerStarted();
+            await providerGate;
+            return createDeterministicProviderReactor({ text: "done" }).execute(effect, context);
+          },
+          recover: async () => [],
+        },
+        "provider.steer_turn": {
+          execute: async () => {
+            steeringSeen = true;
+            return [];
+          },
+          recover: async () => [],
+        },
+      },
+    });
+    const created = await engine.createRun({ projectId: "project-control" });
+    await engine.submit({
+      commandId: "cmd-resume-control" as never,
+      type: "run.resume",
+      runId: created.runId,
+      correlationId: "corr-resume-control" as never,
+      actor: { kind: "system", id: "test" },
+      issuedAt: 1,
+      payload: {},
+    });
+    await engine.submit({
+      commandId: "cmd-turn-control" as never,
+      type: "turn.send",
+      runId: created.runId,
+      correlationId: "corr-turn-control" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 2,
+      payload: { prompt: "hello", turnId: "turn-control" as never },
+    });
+    const providerDrain = engine.drainEffects();
+    await started;
+    await engine.submit({
+      commandId: "cmd-steer-control" as never,
+      type: "turn.steer",
+      runId: created.runId,
+      correlationId: "corr-steer-control" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 3,
+      payload: { steering: "focus" },
+    });
+
+    expect(await engine.drainControlEffects()).toBe(1);
+    expect(steeringSeen).toBe(true);
+    releaseProvider();
+    await providerDrain;
+  });
+
   test("runs a follow-up pass when an effect arrives during a bounded drain", async () => {
     const db = openMemoryStore();
     let firstStarted!: () => void;

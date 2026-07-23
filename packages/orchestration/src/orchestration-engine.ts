@@ -75,6 +75,7 @@ export class OrchestrationEngine {
   private readonly activeReactorControllers = new Set<AbortController>();
   private readonly activeTasks = new Set<Promise<void>>();
   private activeDrain?: Promise<number>;
+  private activeControlDrain?: Promise<number>;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private closed = false;
   private closePromise?: Promise<void>;
@@ -139,7 +140,21 @@ export class OrchestrationEngine {
     return drain;
   }
 
-  private async performDrain(): Promise<number> {
+  /** Drain only live control signals concurrently with a long provider effect. */
+  drainControlEffects(): Promise<number> {
+    if (this.closed) return Promise.reject(new Error("Orchestration engine is closed"));
+    const previous = this.activeControlDrain;
+    const pass = previous
+      ? previous.then(() => this.performDrain(["provider.steer_turn", "provider.interrupt_turn"]), () => this.performDrain(["provider.steer_turn", "provider.interrupt_turn"]))
+      : this.performDrain(["provider.steer_turn", "provider.interrupt_turn"]);
+    const drain = pass.finally(() => {
+      if (this.activeControlDrain === drain) this.activeControlDrain = undefined;
+    });
+    this.activeControlDrain = drain;
+    return drain;
+  }
+
+  private async performDrain(kinds?: ReadonlyArray<EffectIntent["kind"]>): Promise<number> {
     const batchSize = this.config.reactorBatchSize ?? 32;
     const workerCount = Math.min(this.config.maxConcurrentRuns, batchSize);
     let claimed = 0;
@@ -155,6 +170,7 @@ export class OrchestrationEngine {
           this.config.reactorLeaseMs ?? 30_000,
           1,
           this.reactorNow(),
+          kinds,
         );
         if (!effect) return;
         claimed++;
@@ -553,9 +569,11 @@ export class OrchestrationEngine {
     this.queuedRuns.clear();
 
     const activeDrain = this.activeDrain;
+    const activeControlDrain = this.activeControlDrain;
     this.closePromise = Promise.allSettled([
       ...this.activeTasks,
       ...(activeDrain ? [activeDrain] : []),
+      ...(activeControlDrain ? [activeControlDrain] : []),
     ]).then(() => undefined);
     return this.closePromise;
   }

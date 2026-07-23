@@ -208,6 +208,10 @@ export function decide(
             kind: "provider.steer_turn",
             reason: `Turn ${snapshot.activeTurnId} was interrupted`,
           },
+          {
+            kind: "provider.resolve_approval",
+            reason: `Turn ${snapshot.activeTurnId} was interrupted`,
+          },
         ],
         snapshot: updated,
       };

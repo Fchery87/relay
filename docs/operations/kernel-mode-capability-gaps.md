@@ -1,20 +1,18 @@
 # Kernel-mode capability gaps vs. legacy
 
-**Status:** Open tracked follow-up, discovered 2026-07-23 while proving the
-real cross-tier recovery seam (`tickets.md`, "Close kernel turn capability
-gaps"). Governed tool execution and durable approval suspension/resolution
-are now complete; provider continuation with tool results, true in-flight
-steering/interrupt cancellation, and automatic checkpoint capture remain open.
+**Status:** Closed for the kernel turn-loop scope on 2026-07-23. The gap was
+discovered while proving the real cross-tier recovery seam (`tickets.md`,
+"Close kernel turn capability gaps"). Governed tool execution, durable
+approval suspension/resolution, provider continuation with tool results,
+in-flight steering/interrupt cancellation, and automatic checkpoint capture
+are now covered by the durable kernel path and focused regressions.
 Later tickets that assume kernel-mode parity with legacy
 ("Prove shadow parity," "Cut the browser over," "Canary kernel default,"
 "Remove legacy execution paths") must not proceed on a false premise.
 
-## What's missing
+## Historical gap (now closed)
 
-Kernel mode's turn execution (`apps/daemon/src/kernel-daemon.ts`,
-`executeTurn()`) now consumes provider tool calls after the provider stream,
-but the capability is intentionally incomplete. Concretely, in kernel mode
-today:
+The following findings described the kernel behavior at discovery time:
 
 - **Governed tool execution.** `executeTurn()`
   calls `provider.toolCalls()` when available and routes calls through
@@ -26,21 +24,10 @@ today:
   `ask` decision creates a durable Convex approval containing a private,
   device-readable continuation and emits `approval.requested` without
   blocking the daemon poller.
-- **Provider continuation with tool results is still absent.** The current
-  provider bridge consumes tool calls after the provider stream; it does not
-  resume the provider with the resulting tool output.
-- **`provider.steer_turn`, `provider.interrupt_turn`, `tool.execute`, and
-  `checkpoint.capture` effect reactors remain no-ops** (`kernel-daemon.ts`,
-  the `noopReactor` registration loop). Their canonical commands/events exist
-  and update run state correctly, but the corresponding real work never
-  happens.
-- **`turn.interrupt` doesn't abort an in-flight provider call.**
-  `executeTurn()` uses a fixed `AbortSignal.timeout(10 * 60 * 1000)`, never
-  connected to the interrupt command or effect cancellation. Interrupting
-  records `turn.interrupted` state but the streaming call keeps running.
-- **No per-turn auto-checkpoint.** `checkpoint.capture` is a no-op; only
-  the explicit `checkpoint.restore`/`checkpoint.compare` commands (against
-  checkpoints created some other way) function.
+- Provider continuation, control-effect routing, interrupt cancellation, and
+  automatic checkpoints were absent at discovery time. The implementation now
+  lives in `kernel-agentic-turn.ts`, the live control-effect lane in the
+  orchestration engine, and the kernel provider reactor.
 
 ## Completed increment — governed tool execution
 
@@ -50,10 +37,8 @@ an allow audit decision; a denied high-risk shell command produces no file
 effect and records a deny decision. Both cases emit canonical activity events
 before `turn.completed`.
 
-This does not yet make the provider loop fully agentic: tool calls are
-consumed after the current provider stream, and the provider is not resumed
-with tool results. That remains deliberate follow-up work rather than a
-hidden parity claim.
+The provider loop now resumes through the provider adapters with the complete
+provider-neutral message history, including tool results.
 
 ## Completed increment — durable approval suspension and resolution
 
@@ -67,7 +52,24 @@ The decider then appends `approval.resolved` and the matching `turn.completed`
 in canonical order. Focused daemon, orchestration, and Convex tests cover
 allow, deny, private continuation visibility, and stale identity rejection.
 
-## Confirmed live (2026-07-23): mid-turn steering cannot be delivered today
+## Completed increment — agentic continuation and live controls
+
+`TurnModelProvider` and the shared agentic loop now receive tool results on
+subsequent provider requests. Approval continuations persist the held call,
+tool-use ID, and validated message history; resolution executes the tool and
+re-enters the provider loop. `turn.send` no longer blocks the command poller,
+and a dedicated control-effect lane delivers steering at a stream boundary or
+aborts the active provider signal for interrupts. Focused tests cover the
+continuation and a real `KernelDaemon` control path.
+
+## Completed increment — orchestration-owned checkpoints
+
+The kernel provider reactor captures a deterministic hidden Git checkpoint
+before and after a turn when an authorized workspace is present. Ref and
+event IDs are deterministic, so retries converge without duplicate projected
+events. The daemon regression test verifies both canonical checkpoint events.
+
+## Confirmed live before the fix (2026-07-23; retained as evidence)
 
 Proven via `apps/daemon/src/cross-tier-recovery.e2e.test.ts` against the
 real seam, not just reasoning about the code: `KernelDaemon.poll()` claims
@@ -95,35 +97,23 @@ pending approval is correctly rejected, not silently accepted.
 
 ## What was fixed alongside this finding (2026-07-23)
 
-`turn.steer`, `turn.interrupt`, and `approval.resolve` are three of the ten
-command kinds `convex/commands/inbox.ts` accepts at ingress
-(`SUPPORTED_COMMAND_KINDS`), but `KernelDaemon.processCommand`'s dispatch
-switch had no case for any of them — they fell through to `default` and
-were rejected as "unknown command kind." Added the three missing cases,
-wired to the already-implemented `LocalHarnessRuntime.steerTurn`/
-`interruptTurn`/`resolveApproval`. This makes the *commands* route and
-update canonical state correctly; it does not create the underlying
-tool-execution/governance capability described above.
+The command dispatch now routes all three command kinds and the control
+effects are drained concurrently with the provider effect. The original
+unknown-command and serialized-poller findings remain here as historical
+evidence of the regression that the new tests protect against.
 
 ## Why this matters for later tickets
 
-- **"Prove shadow parity without duplicate effects"**: shadow mode compares
-  kernel decisions against legacy on the same inputs. Inputs that exercise
-  provider continuation, mid-turn steering, or a checkpoint will diverge by
-  construction until those gaps close — not a shadow-mode bug to chase.
-- **"Cut the browser over" / "Canary kernel default"**: cutting real users
-  onto kernel mode today would silently drop tool use, governance, and
-  auto-checkpointing relative to legacy. This is a functional regression,
-  not just a migration risk, and should block canary promotion regardless
-  of what the canary telemetry shows.
+- Shadow parity may now compare continuation, control, governance, and
+  checkpoint behavior; its own no-duplicate-effect evidence is still required.
+- Browser cutover and canary promotion remain gated by their independent
+  projection, rollout, and release-window tickets.
 
 ## Scope decision (2026-07-23)
 
-Per explicit direction: "Prove the real cross-tier recovery seam" is scoped
-to what kernel mode *actually does today* — create/resume/send/streaming,
-steer/interrupt as canonical state transitions (not real cancellation),
-durable approval suspension/resolution, checkpoint.restore/compare,
-projection/reconnect/restart, and fault injection against those. This gap is tracked here as a
-separate, later piece of work — likely comparable in size to porting
-`governed-tool-executor.ts`/`turn-loop.ts`'s capability into the kernel
-effect-reactor model — not bundled into the seam-proving ticket.
+Per explicit direction, the original cross-tier seam was scoped to the
+behavior kernel mode actually had at that point. The follow-up is now closed:
+the kernel effect path owns the agentic provider loop, control-effect lane,
+durable approval continuation, and before/after checkpoint capture. Shadow
+parity and browser/canary work may proceed only after their remaining
+independent gates are satisfied.

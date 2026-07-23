@@ -103,6 +103,10 @@ describe("decider", () => {
         kind: "provider.steer_turn",
         reason: "Turn turn-1 was interrupted",
       },
+      {
+        kind: "provider.resolve_approval",
+        reason: "Turn turn-1 was interrupted",
+      },
     ]);
     const duplicate = decide(
       result.snapshot!,
@@ -129,7 +133,7 @@ describe("decider", () => {
       snap({
         status: "awaiting_approval",
         pendingApprovalId: "a1",
-        activeTurnId: "turn-1",
+        activeTurnId: "turn-1" as never,
       }),
       cmd("effect.result", {
         effectId: "effect-approval",

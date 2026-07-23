@@ -14,13 +14,45 @@ export type TurnStreamEvent =
   | { kind: "usage"; usage: TokenUsage }
   | { kind: "stop"; reason: "end_turn" | "max_tokens" | "tool_use" };
 
+export type ToolExecutionResult = {
+  content: string;
+  isError?: boolean;
+  toolUseId: string;
+};
+
+export type ToolExecutionPending = {
+  readonly approvalId: string;
+  readonly continuationJson: string;
+  readonly status: "pending";
+};
+
+export type ToolExecutionOutcome = ToolExecutionResult | ToolExecutionPending;
+
+export type AgenticTurnResult = {
+  messages: ChatMessage[];
+  totalUsage: TokenUsage;
+  pending?: {
+    approvalId: string;
+    continuationJson: string;
+  };
+};
+
+export function isPendingToolExecutionOutcome(
+  outcome: ToolExecutionOutcome,
+): outcome is ToolExecutionPending {
+  return "status" in outcome && outcome.status === "pending";
+}
+
 export interface TurnModelProvider {
   readonly modelId?: string;
   streamTurn(input: { messages: ChatMessage[]; signal: AbortSignal; system: string; tools: McpModelTool[] }): AsyncIterable<TurnStreamEvent>;
 }
 
 export interface TurnCallbacks {
-  executeToolCall(call: ToolCall): Promise<{ content: string; isError?: boolean; toolUseId: string }>;
+  executeToolCall(
+    call: ToolCall,
+    context?: { readonly messages: ChatMessage[]; readonly toolUseId: string },
+  ): Promise<ToolExecutionOutcome>;
   onText?(text: string): Promise<void>;
   claimSteering?(): Promise<string[]>;
   onUsage?(usage: TokenUsage): void;
@@ -42,7 +74,7 @@ export async function runAgenticTurn({
   system: string;
   tools: McpModelTool[];
   callbacks: TurnCallbacks;
-}): Promise<{ messages: ChatMessage[]; totalUsage: TokenUsage }> {
+}): Promise<AgenticTurnResult> {
   const messages = [...initialMessages];
   let totalUsage: TokenUsage = { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0 };
   let exhausted = false;
@@ -50,7 +82,10 @@ export async function runAgenticTurn({
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal.aborted) break;
 
-    // Check for steering messages between iterations
+    // Check for steering messages between iterations. Steering is also
+    // checked after a provider says "end_turn" below so a message that
+    // arrives while the stream is in flight gets one real boundary at which
+    // to take effect.
     if (callbacks.claimSteering && iteration > 0) {
       const steering = await callbacks.claimSteering();
       for (const content of steering) {
@@ -101,7 +136,20 @@ export async function runAgenticTurn({
       const results: Array<{ content: string; isError?: boolean; toolUseId: string }> = [];
       for (const { call, id } of toolUses) {
         try {
-          const result = await callbacks.executeToolCall(call);
+          const result = await callbacks.executeToolCall(call, {
+            messages: [...messages],
+            toolUseId: id,
+          });
+          if (isPendingToolExecutionOutcome(result)) {
+            return {
+              messages,
+              totalUsage,
+              pending: {
+                approvalId: result.approvalId,
+                continuationJson: result.continuationJson,
+              },
+            };
+          }
           results.push({ ...result, toolUseId: id });
         } catch (error) {
           results.push({ content: error instanceof Error ? error.message : "Tool execution failed", isError: true, toolUseId: id });
@@ -112,7 +160,11 @@ export async function runAgenticTurn({
       continue;
     }
 
-    // No more tool calls — end turn
+    const steering = await callbacks.claimSteering?.() ?? [];
+    for (const content of steering) messages.push({ content, role: "user" });
+    if (steering.length > 0) continue;
+
+    // No more tool calls or queued steering — end turn
     break;
   }
 

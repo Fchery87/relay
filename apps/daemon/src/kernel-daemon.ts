@@ -24,6 +24,7 @@ import {
   canonicalEventPayloadError,
   canonicalEventRequiresTurn,
 } from "@relay/contracts";
+import type { CanonicalEventDraft } from "@relay/contracts";
 import { DEFAULT_MODEL_ID, type Capability } from "@relay/shared";
 import {
   createConvexCommandSource,
@@ -74,6 +75,11 @@ import {
 } from "@relay/local-store";
 import { SLO_DEFINITIONS } from "@relay/local-store";
 import type { ToolCall } from "./tool-executor";
+import {
+  executeKernelAgenticTurn,
+  resumeKernelAgenticTurn,
+} from "./kernel-agentic-turn";
+import { createCheckpoint } from "./checkpoints";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -101,6 +107,8 @@ export type KernelDaemonConfig = {
   commandGateway?: CommandGateway;
   /** Test-injection seam — overrides the real Convex-backed projection sink. */
   projectionSink?: ProjectionSink;
+  /** Test-injection seam for provider/control-boundary coverage. */
+  providerRouter?: ModelProviderRouter;
   /** Command claim/renewal lease duration — overridable for kill-point tests. Default 30s. */
   commandLeaseDurationMs?: number;
 };
@@ -118,6 +126,8 @@ type CodexTurnExecution = {
   runtime: LocalHarnessRuntime;
   threadId?: string;
   onFirstToken?: (latencyMs: number) => void;
+  onActive?: (threadId: string) => void;
+  onInactive?: () => void;
 };
 
 const codexTurnTails = new WeakMap<CodexSessionAdapter, Promise<void>>();
@@ -149,6 +159,8 @@ async function executeTurnViaCodexExclusive({
   runtime,
   threadId,
   onFirstToken,
+  onActive,
+  onInactive,
 }: CodexTurnExecution): Promise<boolean> {
   const turnStart = Date.now();
   let firstTokenEmitted = false;
@@ -237,6 +249,7 @@ async function executeTurnViaCodexExclusive({
     if (!expectedProviderThreadId) {
       throw new Error("Codex did not provide a native thread ID");
     }
+    onActive?.(expectedProviderThreadId);
     // Start the turn — Codex notifications stream back via onEvent
     const startResult = await codexAdapter.startTurn(
       expectedProviderThreadId,
@@ -270,6 +283,7 @@ async function executeTurnViaCodexExclusive({
     if (terminalTimeout) clearTimeout(terminalTimeout);
     unsub();
     await appendChain;
+    onInactive?.();
   }
 
   return succeeded;
@@ -870,6 +884,11 @@ export class KernelDaemon {
   private tracer = new Tracer();
   private supervisor!: DaemonSupervisor;
   private firstTokenLatencies: number[] = [];
+  private readonly activeKernelTurns = new Map<string, {
+    readonly abortController: AbortController;
+    readonly steering: string[];
+  }>();
+  private readonly activeCodexTurns = new Map<string, { readonly threadId: string }>();
 
   // Canary telemetry — collected during command processing, reported via heartbeat.
   private canaryTelemetry = {
@@ -904,21 +923,16 @@ export class KernelDaemon {
   async start(): Promise<void> {
     const startSpan = this.tracer.startSpan("daemon.start");
 
-    // 1. Open the local SQLite store with a reactor registry so the
-    // orchestration engine can drain provider, workspace, checkpoint,
-    // and approval effects through registered reactors.
+    // 1. Build the provider and reactor composition before opening the local
+    // store, so the runtime receives the complete registry snapshot.
     const dbPath = join(this.config.daemonHome, "relay-kernel.sqlite");
     const reactors = new MutableReactorRegistry();
-    this.runtime = LocalHarnessRuntime.open(dbPath, {
-      maxConcurrentRuns: resolveMaxConcurrentRuns(Bun.env as Record<string, string | undefined>),
-      reactors: reactors.build(),
-    });
 
     // 2. Create the provider
     const fallback = new ScriptedModelProvider({
       chunks: ["Relay kernel received your message."],
     });
-    this.provider = new LocalModelRouter({
+    this.provider = this.config.providerRouter ?? new LocalModelRouter({
       env: Bun.env as Record<string, string | undefined>,
       fallbackProvider: fallback,
     });
@@ -942,12 +956,17 @@ export class KernelDaemon {
     const codex = this.codexAdapter;
     const codexEnabled = codex && Bun.env.RELAY_CODEX_ENABLED === "1";
     const providerReactor: EffectReactor = {
-      execute: async (effect, _context) => {
+      execute: async (effect, context) => {
         if (effect.intent.kind !== "provider.send_turn") {
           throw new Error(`Unexpected effect kind: ${effect.intent.kind}`);
         }
         const { runId } = effect;
         const { turnId, prompt } = effect.intent;
+        const projectPath = this.projectPathByRun.get(runId);
+        const root = projectPath && this.config.adapterDeps?.resolveProjectRoot
+          ? await this.config.adapterDeps.resolveProjectRoot({ repoPath: projectPath, threadId: runId })
+          : undefined;
+        const beforeCheckpoint = root ? await captureKernelCheckpoint({ root, runId, turnId, phase: "before" }) : undefined;
         if (codexEnabled && codex) {
           await executeTurnViaCodex({
             codexAdapter: codex,
@@ -955,29 +974,70 @@ export class KernelDaemon {
             runId,
             runtime: this.runtime,
             turnId,
+            onActive: (threadId) => this.activeCodexTurns.set(activeTurnKey(runId, turnId), { threadId }),
+            onInactive: () => this.activeCodexTurns.delete(activeTurnKey(runId, turnId)),
           });
         } else {
-          await executeTurn({
-            provider: this.provider as unknown as Parameters<typeof executeTurn>[0]["provider"],
-            prompt,
-            runId,
-            runtime: this.runtime,
-            turnId,
-            governance: this.config.adapterDeps?.governance,
-            policy: this.config.adapterDeps?.policy,
-            platform: this.config.adapterDeps?.platform,
-            projectPath: this.projectPathByRun.get(runId),
-            resolveProjectRoot: this.config.adapterDeps?.resolveProjectRoot,
-          });
+          const turnProvider = this.provider.resolveTurn?.({ modelId: DEFAULT_MODEL_ID, thinkingLevel: "none" });
+          if (!turnProvider) {
+            throw new Error("Kernel provider router does not support agentic turns");
+          }
+          const activeTurn = {
+            abortController: new AbortController(),
+            steering: [],
+          };
+          this.activeKernelTurns.set(activeTurnKey(runId, turnId), activeTurn);
+          const signal = linkAbortSignals(context.signal, activeTurn.abortController.signal);
+          try {
+            const result = await executeKernelAgenticTurn({
+              governance: this.config.adapterDeps?.governance ?? unavailableGovernance(),
+              messages: [{ content: prompt, role: "user" }],
+              platform: this.config.adapterDeps?.platform ?? "linux",
+              policy: this.config.adapterDeps?.policy ?? { rules: [] },
+              provider: turnProvider,
+              root,
+              runId,
+              signal: signal.signal,
+              turnId,
+              claimSteering: async () => activeTurn.steering.splice(0),
+            });
+            const afterCheckpoint = root && !result.pending ? await captureKernelCheckpoint({ root, runId, turnId, phase: "after" }) : undefined;
+            const terminalEvent = result.events.at(-1);
+            const providerEvents = terminalEvent?.type === "turn.completed" || terminalEvent?.type === "turn.failed" || terminalEvent?.type === "turn.interrupted"
+              ? result.events.slice(0, -1)
+              : result.events;
+            return [
+              ...(beforeCheckpoint ? [beforeCheckpoint] : []),
+              ...providerEvents,
+              ...(afterCheckpoint ? [afterCheckpoint] : []),
+              ...(terminalEvent ? [terminalEvent] : []),
+            ].map((normalizedEvent) => ({
+              type: "provider.event" as const,
+              payload: {
+                providerInstanceId: "provider-local" as never,
+                normalizedEvent,
+              },
+            }));
+          } finally {
+            signal.dispose();
+            this.activeKernelTurns.delete(activeTurnKey(runId, turnId));
+          }
         }
-        return [];
+        const afterCheckpoint = root ? await captureKernelCheckpoint({ root, runId, turnId, phase: "after" }) : undefined;
+        return [
+          ...(beforeCheckpoint ? [beforeCheckpoint] : []),
+          ...(afterCheckpoint ? [afterCheckpoint] : []),
+        ].map((normalizedEvent) => ({
+          type: "provider.event" as const,
+          payload: { providerInstanceId: "provider-local" as never, normalizedEvent },
+        }));
       },
-      recover: async () => [],
+      recover: async (effect, context) => providerReactor.execute(effect, context),
     };
     reactors.register("provider.send_turn", providerReactor);
 
     const approvalReactor: EffectReactor = {
-      execute: async (effect) => {
+      execute: async (effect, context) => {
         if (effect.intent.kind !== "provider.resolve_approval") {
           throw new Error(`Unexpected effect kind: ${effect.intent.kind}`);
         }
@@ -1001,19 +1061,40 @@ export class KernelDaemon {
         const projectPath = this.projectPathByRun.get(effect.runId);
         if (!projectPath) throw new Error(`Run ${effect.runId} has no authorized project path`);
         const root = await resolveProjectRoot({ repoPath: projectPath, threadId: effect.runId });
-        await resumeKernelApproval({
-          approvalId: effect.intent.approvalId,
-          continuationJson: approval.continuationJson,
-          governance,
-          platform,
-          policy,
-          resolution: effect.intent.resolution,
-          root,
-          runId: effect.runId,
-          runtime: this.runtime,
-          turnId: effect.intent.turnId,
-        });
-        return [];
+        const turnProvider = this.provider.resolveTurn?.({ modelId: DEFAULT_MODEL_ID, thinkingLevel: "none" });
+        if (!turnProvider) throw new Error("Kernel provider router does not support agentic turns");
+        const activeTurn = {
+          abortController: new AbortController(),
+          steering: [],
+        };
+        this.activeKernelTurns.set(activeTurnKey(effect.runId, effect.intent.turnId), activeTurn);
+        const signal = linkAbortSignals(context.signal, activeTurn.abortController.signal);
+        try {
+          const result = await resumeKernelAgenticTurn({
+            continuationJson: approval.continuationJson,
+            governance,
+            platform,
+            policy,
+            provider: turnProvider,
+            resolution: effect.intent.resolution,
+            root,
+            runId: effect.runId,
+            signal: signal.signal,
+            turnId: effect.intent.turnId,
+            claimSteering: async () => activeTurn.steering.splice(0),
+          });
+          const afterCheckpoint = await captureKernelCheckpoint({ root, runId: effect.runId, turnId: effect.intent.turnId, phase: "after" });
+          return [...result.events, afterCheckpoint].map((normalizedEvent) => ({
+            type: "provider.event" as const,
+            payload: {
+              providerInstanceId: "provider-local" as never,
+              normalizedEvent,
+            },
+          }));
+        } finally {
+          signal.dispose();
+          this.activeKernelTurns.delete(activeTurnKey(effect.runId, effect.intent.turnId));
+        }
       },
       recover: async (effect, context) => {
         if (context.signal.aborted) throw new Error("Approval effect cancelled");
@@ -1029,9 +1110,70 @@ export class KernelDaemon {
       execute: async () => [],
       recover: async () => [],
     };
-    for (const kind of ["provider.start_session", "provider.resume_session", "provider.steer_turn", "provider.interrupt_turn", "provider.stop_session", "workspace.create", "workspace.reconcile", "checkpoint.capture", "checkpoint.restore", "tool.execute"] as const) {
+    for (const kind of ["provider.start_session", "provider.resume_session", "provider.stop_session", "workspace.create", "workspace.reconcile", "checkpoint.restore", "tool.execute"] as const) {
       reactors.register(kind, noopReactor);
     }
+
+    reactors.register("provider.steer_turn", {
+      execute: async (effect) => {
+        if (effect.intent.kind !== "provider.steer_turn") throw new Error(`Unexpected effect kind: ${effect.intent.kind}`);
+        this.activeKernelTurns.get(activeTurnKey(effect.runId, effect.intent.turnId))?.steering.push(effect.intent.steering);
+        const codexTurn = this.activeCodexTurns.get(activeTurnKey(effect.runId, effect.intent.turnId));
+        if (codexTurn && codex) await codex.steerTurn(codexTurn.threadId, effect.intent.steering);
+        return [];
+      },
+      recover: async (effect, context) => {
+        if (context.signal.aborted) return [];
+        return reactors.build()["provider.steer_turn"]!.execute(effect, context);
+      },
+    });
+    reactors.register("provider.interrupt_turn", {
+      execute: async (effect) => {
+        if (effect.intent.kind !== "provider.interrupt_turn") throw new Error(`Unexpected effect kind: ${effect.intent.kind}`);
+        this.activeKernelTurns.get(activeTurnKey(effect.runId, effect.intent.turnId))?.abortController.abort(new DOMException(effect.intent.reason, "AbortError"));
+        const codexTurn = this.activeCodexTurns.get(activeTurnKey(effect.runId, effect.intent.turnId));
+        if (codexTurn && codex) await codex.interruptTurn(codexTurn.threadId, effect.intent.reason);
+        return [];
+      },
+      recover: async (effect, context) => {
+        if (context.signal.aborted) return [];
+        return reactors.build()["provider.interrupt_turn"]!.execute(effect, context);
+      },
+    });
+    reactors.register("checkpoint.capture", {
+      execute: async (effect) => {
+        if (effect.intent.kind !== "checkpoint.capture") throw new Error(`Unexpected effect kind: ${effect.intent.kind}`);
+        const projectPath = this.projectPathByRun.get(effect.runId);
+        const resolveProjectRoot = this.config.adapterDeps?.resolveProjectRoot;
+        if (!projectPath || !resolveProjectRoot) return [];
+        const root = await resolveProjectRoot({ repoPath: projectPath, threadId: effect.runId });
+        const checkpoint = await createCheckpoint({ root, threadId: effect.runId, turnId: effect.intent.turnId });
+        return [{
+          type: "provider.event" as const,
+          payload: {
+            providerInstanceId: "provider-local" as never,
+            normalizedEvent: {
+              causationId: effect.commandId as never,
+              correlationId: `corr-${effect.effectId}` as never,
+              eventId: `ev-checkpoint-${effect.runId}-${effect.intent.turnId}` as never,
+              payload: { checkpointId: `ckpt-${checkpoint.commit.slice(0, 12)}` as never, commit: checkpoint.commit, ref: checkpoint.ref },
+              runId: effect.runId as never,
+              turnId: effect.intent.turnId,
+              type: "checkpoint.captured" as const,
+            },
+          },
+        }];
+      },
+      recover: async (effect, context) => {
+        if (context.signal.aborted) return [];
+        return reactors.build()["checkpoint.capture"]!.execute(effect, context);
+      },
+    });
+
+    this.runtime = LocalHarnessRuntime.open(dbPath, {
+      maxConcurrentRuns: resolveMaxConcurrentRuns(Bun.env as Record<string, string | undefined>),
+      reactors: reactors.build(),
+    });
 
     // 3. Create Convex adapters (or use test-injected fakes)
     this.commandGateway = this.config.commandGateway ?? createConvexCommandSource({
@@ -1271,6 +1413,7 @@ export class KernelDaemon {
           if (!rId) throw new Error("turn.steer requires runId");
           const steering = (payload.steering ?? "") as string;
           await this.runtime.steerTurn({ runId: rId as never, steering });
+          void this.runtime.drainControlEffects().catch((error) => console.error("Kernel daemon: steer effect drain failed", error));
           await complete("completed");
           break;
         }
@@ -1279,6 +1422,7 @@ export class KernelDaemon {
           if (!rId) throw new Error("turn.interrupt requires runId");
           const reason = payload.reason as string | undefined;
           await this.runtime.interruptTurn({ runId: rId as never, reason });
+          void this.runtime.drainControlEffects().catch((error) => console.error("Kernel daemon: interrupt effect drain failed", error));
           await complete("completed");
           break;
         }
@@ -1319,23 +1463,15 @@ export class KernelDaemon {
             commandId: externalCommandId as never,
           });
 
-          const drained = await this.runtime.drainEffects();
-          const turnLatency = Date.now() - turnStart;
-
-          // Determine success from the canonical run state after draining.
-          const snapshot = this.runtime.getSnapshotByRunId(rId);
-          const succeeded = snapshot?.status === "completed" || snapshot?.status === "ready" || snapshot?.status === "running";
-
-          if (succeeded) {
-            incrementMetric("completedRuns");
-          } else {
-            incrementMetric("failedRuns");
-          }
-
-          span.tags["turnLatencyMs"] = String(turnLatency);
-          span.tags["turnSucceeded"] = String(succeeded);
-          span.tags["effectsDrained"] = String(drained);
-          await complete(succeeded ? "completed" : "rejected");
+          // The durable effect is now queued. Do not hold the command poller
+          // hostage to provider latency: later steer/interrupt commands must
+          // be claimable while this effect is streaming.
+          void this.runtime.drainEffects().catch((error) => {
+            console.error("Kernel daemon: turn effect drain failed", rId, error);
+          });
+          span.tags["turnLatencyMs"] = String(Date.now() - turnStart);
+          span.tags["turnSucceeded"] = "queued";
+          await complete("completed");
           break;
         }
         case "checkpoint.restore": {
@@ -1506,4 +1642,61 @@ export class KernelDaemon {
       console.error("Kernel daemon: heartbeat failed", error);
     }
   }
+}
+
+function activeTurnKey(runId: string, turnId: string): string {
+  return `${runId}\u0000${turnId}`;
+}
+
+function linkAbortSignals(primary: AbortSignal, secondary: AbortSignal): {
+  readonly signal: AbortSignal;
+  readonly dispose: () => void;
+} {
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => controller.abort(signal.reason);
+  if (primary.aborted) abort(primary);
+  if (secondary.aborted) abort(secondary);
+  const primaryListener = () => abort(primary);
+  const secondaryListener = () => abort(secondary);
+  primary.addEventListener("abort", primaryListener, { once: true });
+  secondary.addEventListener("abort", secondaryListener, { once: true });
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      primary.removeEventListener("abort", primaryListener);
+      secondary.removeEventListener("abort", secondaryListener);
+    },
+  };
+}
+
+function unavailableGovernance(): GovernanceGateway {
+  return {
+    recordDecision: async () => undefined,
+    requestApproval: async () => "deny",
+  };
+}
+
+async function captureKernelCheckpoint(input: {
+  readonly phase: "before" | "after";
+  readonly root: string;
+  readonly runId: string;
+  readonly turnId: string;
+}): Promise<CanonicalEventDraft> {
+  const checkpoint = await createCheckpoint({
+    root: input.root,
+    threadId: input.runId,
+    turnId: `${input.turnId}-${input.phase}`,
+  });
+  return {
+    causationId: `checkpoint-${input.phase}-${input.runId}-${input.turnId}` as never,
+    correlationId: `corr-checkpoint-${input.runId}-${input.turnId}` as never,
+    eventId: `ev-checkpoint-${input.phase}-${input.runId}-${input.turnId}` as never,
+    payload: {
+      checkpointId: `ckpt-${checkpoint.commit.slice(0, 12)}` as never,
+      commit: checkpoint.commit,
+      ref: checkpoint.ref,
+    },
+    turnId: input.turnId as never,
+    type: "checkpoint.captured",
+  } as CanonicalEventDraft;
 }

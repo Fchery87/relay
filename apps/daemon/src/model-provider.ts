@@ -23,6 +23,7 @@ export type ModelStreamEvent =
 export interface ModelProviderRouter {
   readonly kind: "model-router";
   resolve(input: { modelId: string; thinkingLevel: ThinkingLevel }): ModelProvider;
+  resolveTurn?(input: { modelId: string; thinkingLevel: ThinkingLevel }): TurnModelProvider;
 }
 
 export class CatalogModelProvider implements ModelProvider {
