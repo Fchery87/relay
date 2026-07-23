@@ -7,6 +7,7 @@ export type CanaryTelemetry = {
   mode: RuntimeMode;
   activeLeases: number;
   duplicateCommands: number;
+  crossOwnerResults: number;
   pendingEffects: number;
   projectionBacklog: number;
   projectionGaps: number;
@@ -22,6 +23,7 @@ export type CanaryTelemetry = {
 export type RollbackThresholds = {
   readonly maxProjectionGaps: number;
   readonly maxProjectionDivergences: number;
+  readonly maxCrossOwnerResults: number;
   readonly maxUnrecoverableFailures: number;
   readonly maxSandboxViolations: number;
 };
@@ -29,6 +31,7 @@ export type RollbackThresholds = {
 export const DEFAULT_ROLLBACK_THRESHOLDS: RollbackThresholds = {
   maxProjectionGaps: 0,
   maxProjectionDivergences: 0,
+  maxCrossOwnerResults: 0,
   maxUnrecoverableFailures: 0,
   maxSandboxViolations: 0,
 };
@@ -39,6 +42,7 @@ export function canaryRollbackReason(
 ): string | undefined {
   if (telemetry.projectionGaps > thresholds.maxProjectionGaps) return "projection-gap";
   if (telemetry.projectionDivergences > thresholds.maxProjectionDivergences) return "projection-divergence";
+  if (telemetry.crossOwnerResults > thresholds.maxCrossOwnerResults) return "cross-owner-result";
   if (telemetry.unrecoverableFailures > thresholds.maxUnrecoverableFailures) return "unrecoverable-failure";
   if (telemetry.sandboxViolations > thresholds.maxSandboxViolations) return "sandbox-violation";
   return undefined;

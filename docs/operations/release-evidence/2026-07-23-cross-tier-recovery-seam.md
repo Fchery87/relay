@@ -294,13 +294,20 @@ of the canary ticket. Actual developer/internal/production canary stages,
 real-provider evidence, parity observation, and the release window remain
 operational gates.
 The machine-readable companion command is `bun run canary:evidence`; it writes
-the stage record with versions, topology, migration state, test IDs, redacted
-failures, residual risks, and promotion-blocking telemetry status. When given a
-previous record it enforces the developer → internal → small-production →
-kernel-default progression and blocks records with failures.
+the stage record with versions, topology, migration state, test IDs, explicitly
+redacted failures/logs, residual risks, and promotion-blocking telemetry status.
+Pass the machine-readable telemetry snapshot with `--telemetry <path>` and
+optional redacted log lines with `--log <text>`. Records with missing required
+facts, missing telemetry, failures, duplicate/cross-owner results, or invariant
+telemetry are promotion-blocking and are written with `0600` permissions. When
+given a previous record it first requires that record to be complete and
+unblocked, then enforces the developer → internal → small-production →
+kernel-default progression. This makes the local evidence gate fail closed; it
+does not substitute for the credentialed real-provider run or the supervised
+release window.
 
 Ordinary CI validation is deterministic: the current daemon suite recorded
-330 passing tests, 17 explicit capability-dependent skips, and zero failures.
+344 passing tests, one credential-dependent skip, and zero failures.
 The live self-hosted Convex and MCP transport profiles remain protected and
 are run separately when loopback/process capabilities and, for Convex, the
 pinned backend binary are available.

@@ -31,7 +31,7 @@ test("canary invariant violation persists a redacted marker and stops the kernel
       upsertSnapshot: async () => undefined,
       advanceCursor: async () => undefined,
     },
-    rollbackThresholds: { maxProjectionDivergences: 0, maxProjectionGaps: -1, maxSandboxViolations: 0, maxUnrecoverableFailures: 0 },
+    rollbackThresholds: { maxProjectionDivergences: 0, maxProjectionGaps: -1, maxCrossOwnerResults: 0, maxSandboxViolations: 0, maxUnrecoverableFailures: 0 },
   });
 
   try {

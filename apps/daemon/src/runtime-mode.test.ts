@@ -5,6 +5,7 @@ import { canaryRollbackReason, resolveMaxConcurrentRuns, resolveRuntimeMode, sho
 const healthyTelemetry: CanaryTelemetry = {
   activeLeases: 1,
   authFailures: 0,
+  crossOwnerResults: 0,
   duplicateCommands: 0,
   fallbackActivations: 0,
   mode: "kernel",
@@ -76,12 +77,14 @@ test("kernel disabled allows kernel when absent", () => {
 test("canary rollback defaults to fail closed on invariant violations", () => {
   expect(shouldRollback({ ...healthyTelemetry, projectionGaps: 1 })).toBe(true);
   expect(canaryRollbackReason({ ...healthyTelemetry, projectionDivergences: 1 })).toBe("projection-divergence");
+  expect(canaryRollbackReason({ ...healthyTelemetry, crossOwnerResults: 1 })).toBe("cross-owner-result");
   expect(canaryRollbackReason(healthyTelemetry)).toBeUndefined();
 });
 
 test("canary rollback thresholds can tolerate bounded recoverable signals", () => {
   expect(shouldRollback({ ...healthyTelemetry, projectionGaps: 1 }, {
     maxProjectionDivergences: 0,
+    maxCrossOwnerResults: 0,
     maxProjectionGaps: 1,
     maxSandboxViolations: 0,
     maxUnrecoverableFailures: 0,

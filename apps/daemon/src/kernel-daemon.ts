@@ -965,6 +965,7 @@ export class KernelDaemon {
   private canaryTelemetry = {
     activeLeases: 0,
     duplicateCommands: 0,
+    crossOwnerResults: 0,
     pendingEffects: 0,
     projectionBacklog: 0,
     projectionGaps: 0,
@@ -994,6 +995,21 @@ export class KernelDaemon {
 
   getCanaryTelemetry(): CanaryTelemetry {
     return this.canarySnapshot();
+  }
+
+  private assertProviderEventOwnership(
+    events: ReadonlyArray<unknown>,
+    runId: string,
+  ): void {
+    const foreignCount = events.filter((event) => {
+      if (typeof event !== "object" || event === null || !("runId" in event)) return false;
+      const eventRunId = (event as { readonly runId?: unknown }).runId;
+      return typeof eventRunId === "string" && eventRunId !== runId;
+    }).length;
+    if (foreignCount > 0) {
+      this.canaryTelemetry.crossOwnerResults += foreignCount;
+      throw new Error(`Provider returned ${foreignCount} event(s) owned by another run`);
+    }
   }
 
   constructor(private readonly config: KernelDaemonConfig) {}
@@ -1301,7 +1317,7 @@ export class KernelDaemon {
                 turnId,
               })
               : [];
-            return [
+            const normalizedEvents = [
               ...(beforeCheckpoint ? [beforeCheckpoint] : []),
               ...providerEvents,
               ...(afterCheckpoint ? [afterCheckpoint] : []),
@@ -1309,7 +1325,9 @@ export class KernelDaemon {
               ...planEvents,
               ...reviewResolutions,
               ...(terminalEvent ? [terminalEvent] : []),
-            ].map((normalizedEvent) => ({
+            ];
+            this.assertProviderEventOwnership(normalizedEvents, runId);
+            return normalizedEvents.map((normalizedEvent) => ({
               type: "provider.event" as const,
               payload: {
                 providerInstanceId: "provider-local" as never,
@@ -1323,11 +1341,13 @@ export class KernelDaemon {
         }
         const afterCheckpoint = root ? await captureKernelCheckpoint({ root, runId, turnId, phase: "after" }) : undefined;
         const workspaceDiff = root ? await captureKernelDiff({ root, runId, turnId }) : undefined;
-        return [
+        const normalizedEvents = [
           ...(beforeCheckpoint ? [beforeCheckpoint] : []),
           ...(afterCheckpoint ? [afterCheckpoint] : []),
           ...(workspaceDiff ? [workspaceDiff] : []),
-        ].map((normalizedEvent) => ({
+        ];
+        this.assertProviderEventOwnership(normalizedEvents, runId);
+        return normalizedEvents.map((normalizedEvent) => ({
           type: "provider.event" as const,
           payload: { providerInstanceId: "provider-local" as never, normalizedEvent },
         }));
@@ -1398,7 +1418,9 @@ export class KernelDaemon {
           const reviewResolutions = result.reviewCommentIds
             ? reviewCommentResolutionEvents({ commentIds: result.reviewCommentIds, runId: effect.runId, turnId: effect.intent.turnId })
             : [];
-          return [...result.events, afterCheckpoint, workspaceDiff, ...reviewResolutions].map((normalizedEvent) => ({
+          const normalizedEvents = [...result.events, afterCheckpoint, workspaceDiff, ...reviewResolutions];
+          this.assertProviderEventOwnership(normalizedEvents, effect.runId);
+          return normalizedEvents.map((normalizedEvent) => ({
             type: "provider.event" as const,
             payload: {
               providerInstanceId: "provider-local" as never,

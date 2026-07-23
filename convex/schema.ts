@@ -18,6 +18,7 @@ export default defineSchema({
   machineTelemetry: defineTable({
     activeLeases: v.number(),
     authFailures: v.number(),
+    crossOwnerResults: v.number(),
     duplicateCommands: v.number(),
     fallbackActivations: v.number(),
     mode: v.union(v.literal("legacy"), v.literal("shadow"), v.literal("kernel")),

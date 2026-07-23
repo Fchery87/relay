@@ -80,6 +80,7 @@ test("heartbeat stores canary telemetry separately from the high-churn machine r
     telemetry: {
       activeLeases: 1,
       authFailures: 0,
+      crossOwnerResults: 0,
       duplicateCommands: 0,
       fallbackActivations: 2,
       mode: "kernel",

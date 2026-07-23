@@ -9,6 +9,7 @@ const projectValidator = v.object({ name: v.string(), path: v.string() });
 const canaryTelemetryValidator = v.object({
   activeLeases: v.number(),
   authFailures: v.number(),
+  crossOwnerResults: v.number(),
   duplicateCommands: v.number(),
   fallbackActivations: v.number(),
   mode: v.union(v.literal("legacy"), v.literal("shadow"), v.literal("kernel")),
