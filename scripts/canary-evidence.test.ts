@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { createCanaryEvidence } from "./canary-evidence";
+import { assertCanaryStageTransition, createCanaryEvidence } from "./canary-evidence";
 
 const telemetry = {
   activeLeases: 0,
@@ -50,4 +50,10 @@ test("canary evidence blocks promotion when telemetry contains an invariant viol
   expect(evidence.promotionBlocked).toBe(true);
   expect(evidence.redactedFailures[0]).not.toContain("sk-test-secret");
   expect(evidence.redactedFailures[0]).toContain("[REDACTED]");
+});
+
+test("canary evidence enforces the supervised rollout order", () => {
+  expect(() => assertCanaryStageTransition("developer", "small-production")).toThrow("must advance");
+  expect(() => assertCanaryStageTransition("internal", "developer")).toThrow("must advance");
+  expect(() => assertCanaryStageTransition("internal", "small-production")).not.toThrow();
 });

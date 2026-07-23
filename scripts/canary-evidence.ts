@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
 
@@ -7,6 +7,13 @@ import type { CanaryTelemetry } from "../apps/daemon/src/runtime-mode";
 
 export const CANARY_STAGES = ["developer", "internal", "small-production", "kernel-default"] as const;
 export type CanaryStage = (typeof CANARY_STAGES)[number];
+
+export function assertCanaryStageTransition(previous: CanaryStage | undefined, next: CanaryStage): void {
+  if (previous === undefined || previous === next) return;
+  const previousIndex = CANARY_STAGES.indexOf(previous);
+  const nextIndex = CANARY_STAGES.indexOf(next);
+  if (nextIndex !== previousIndex + 1) throw new Error(`Canary stage must advance from ${previous} to ${CANARY_STAGES[previousIndex + 1] ?? "completion"}; received ${next}`);
+}
 
 export type CanaryEvidence = {
   readonly schemaVersion: 1;
@@ -37,7 +44,7 @@ export function createCanaryEvidence(input: {
   telemetry?: CanaryTelemetry;
 }): CanaryEvidence {
   const failures = (input.failures ?? []).map(redactSecrets).map((failure) => failure.slice(0, 2_000));
-  const promotionBlocked = Boolean(input.telemetry && (
+  const promotionBlocked = failures.length > 0 || Boolean(input.telemetry && (
     input.telemetry.projectionGaps > 0 ||
     input.telemetry.projectionDivergences > 0 ||
     input.telemetry.sandboxViolations > 0 ||
@@ -91,6 +98,11 @@ async function main(): Promise<void> {
   const stage = valuesAfter("--stage")[0] as CanaryStage | undefined;
   if (!stage || !CANARY_STAGES.includes(stage)) throw new Error(`--stage must be one of: ${CANARY_STAGES.join(", ")}`);
   const output = valuesAfter("--output")[0] ?? "docs/operations/release-evidence/canary-latest.json";
+  const previousPath = valuesAfter("--previous")[0];
+  if (previousPath) {
+    const previous = JSON.parse(await readFile(previousPath, "utf8")) as { stage?: CanaryStage };
+    assertCanaryStageTransition(previous.stage, stage);
+  }
   const runtimeMode = (valuesAfter("--runtime-mode")[0] ?? "kernel") as CanaryEvidence["runtimeMode"];
   if (runtimeMode !== "legacy" && runtimeMode !== "shadow" && runtimeMode !== "kernel") throw new Error("--runtime-mode must be legacy, shadow, or kernel");
   const evidence = createCanaryEvidence({

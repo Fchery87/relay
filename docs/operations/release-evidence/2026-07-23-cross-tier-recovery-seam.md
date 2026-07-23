@@ -295,7 +295,9 @@ real-provider evidence, parity observation, and the release window remain
 operational gates.
 The machine-readable companion command is `bun run canary:evidence`; it writes
 the stage record with versions, topology, migration state, test IDs, redacted
-failures, residual risks, and promotion-blocking telemetry status.
+failures, residual risks, and promotion-blocking telemetry status. When given a
+previous record it enforces the developer → internal → small-production →
+kernel-default progression and blocks records with failures.
 
 Ordinary CI validation is deterministic: `bun run test` recorded 325 passing
 tests, 17 explicit capability-dependent skips, and zero failures. The live
