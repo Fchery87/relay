@@ -35,12 +35,39 @@ export const submit = mutationGeneric({
   },
 });
 
+/** Daemon-side response path used by the canonical command inbox. */
+export const submitByDevice = mutationGeneric({
+  args: { deviceToken: v.string(), elicitationId: v.id("mcpElicitations"), responseJson: v.string() },
+  handler: async (ctx, args) => {
+    if (args.responseJson.length > MAX_JSON_LENGTH) throw new Error("MCP elicitation response exceeds size limit");
+    const parsed: unknown = JSON.parse(args.responseJson);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("MCP elicitation response must be a JSON object");
+    const elicitation = await ctx.db.get("mcpElicitations", args.elicitationId);
+    if (!elicitation || elicitation.status !== "pending") throw new Error("MCP elicitation is not pending");
+    await requireDeviceForThread(ctx, args.deviceToken, elicitation.threadId);
+    await ctx.db.patch(elicitation._id, { responseJson: args.responseJson, status: "submitted" });
+    await ctx.db.patch(elicitation.threadId, { status: elicitation.resumeStatus });
+  },
+});
+
 export const cancel = mutationGeneric({
   args: { elicitationId: v.id("mcpElicitations") },
   handler: async (ctx, args) => {
     const elicitation = await ctx.db.get("mcpElicitations", args.elicitationId);
     if (!elicitation || elicitation.status !== "pending") throw new Error("MCP elicitation is not pending");
     await requireOwnedThread(ctx, await requireUser(ctx), elicitation.threadId);
+    await ctx.db.patch(elicitation._id, { status: "cancelled" });
+    await ctx.db.patch(elicitation.threadId, { status: elicitation.resumeStatus });
+  },
+});
+
+/** Daemon-side cancellation path used by the canonical command inbox. */
+export const cancelByDevice = mutationGeneric({
+  args: { deviceToken: v.string(), elicitationId: v.id("mcpElicitations") },
+  handler: async (ctx, args) => {
+    const elicitation = await ctx.db.get("mcpElicitations", args.elicitationId);
+    if (!elicitation || elicitation.status !== "pending") throw new Error("MCP elicitation is not pending");
+    await requireDeviceForThread(ctx, args.deviceToken, elicitation.threadId);
     await ctx.db.patch(elicitation._id, { status: "cancelled" });
     await ctx.db.patch(elicitation.threadId, { status: elicitation.resumeStatus });
   },

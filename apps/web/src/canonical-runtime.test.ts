@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToUsage } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMcpElicitations, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToUsage } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -188,4 +188,26 @@ test("canonical activity tails project subagent runs without legacy reads", () =
     status: "complete",
     task: "Inspect the repository",
   }]);
+});
+
+test("canonical activity tails project MCP elicitation cards without legacy reads", () => {
+  const event = (sequence: number, type: string, payload: Record<string, unknown>) => ({
+    eventId: `event-${sequence}` as never,
+    sequence,
+    streamVersion: sequence,
+    type: type as never,
+    runId: "run-1" as never,
+    turnId: "turn-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: sequence,
+    payload,
+  });
+  expect(projectionEventsToMcpElicitations([
+    event(3, "activity.completed", { activityId: "elicitation-activity", elicitationId: "elicitation-1", kind: "mcp:elicitation", summary: "Response submitted" }),
+    event(1, "activity.started", { activityId: "elicitation-activity", elicitationId: "elicitation-1", kind: "mcp:elicitation", promptsJson: '[{"id":"date"}]', serverId: "travel", toolName: "book" }),
+  ])).toEqual([{ _id: "elicitation-1", promptsJson: '[{"id":"date"}]', serverId: "travel", status: "submitted", toolName: "book" }]);
+  expect(projectionEventsToMcpElicitations([
+    event(1, "activity.started", { activityId: "cancelled-activity", elicitationId: "elicitation-2", kind: "mcp:elicitation", promptsJson: "[]", serverId: "travel", toolName: "book" }),
+    event(2, "activity.failed", { activityId: "cancelled-activity", elicitationId: "elicitation-2", error: "MCP elicitation was cancelled", kind: "mcp:elicitation" }),
+  ])).toEqual([{ _id: "elicitation-2", promptsJson: "[]", serverId: "travel", status: "cancelled", toolName: "book" }]);
 });

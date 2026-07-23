@@ -127,7 +127,9 @@ type KernelMcpAdapter = {
   }): Promise<unknown>;
   listTools(): Promise<McpModelTool[]>;
   recordTaskStatus?: (input: { serverId: string; status: string; taskId: string; threadId: string }) => Promise<unknown>;
-  requestInput?: (input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }) => Promise<Record<string, unknown>>;
+  requestInput?: (input: { onCreated?: (elicitationId: string) => Promise<void> | void; prompts: unknown[]; serverId: string; threadId: string; toolName: string }) => Promise<Record<string, unknown>>;
+  resolveMcpInput?: (input: { elicitationId: string; responseJson: string }) => Promise<unknown>;
+  cancelMcpInput?: (elicitationId: string) => Promise<unknown>;
 };
 
 // ---------------------------------------------------------------------------
@@ -938,6 +940,7 @@ export class KernelDaemon {
     readonly steering: string[];
   }>();
   private readonly activeCodexTurns = new Map<string, { readonly threadId: string }>();
+  private mcpElicitationSequence = 0;
 
   // Canary telemetry — collected during command processing, reported via heartbeat.
   private canaryTelemetry = {
@@ -984,7 +987,54 @@ export class KernelDaemon {
       ? async (call: Extract<ToolCall, { kind: "mcp" }>) => mcp.callTool({
           ...call,
           onInputRequired: mcp.requestInput
-            ? ({ prompts }) => mcp.requestInput!({ prompts, serverId: call.serverId, threadId: input.runId, toolName: call.name })
+            ? async ({ prompts }) => {
+                const activityId = `mcp-elicitation-${input.runId}-${input.turnId}-${++this.mcpElicitationSequence}`;
+                let elicitationId: string | undefined;
+                const promptsJson = JSON.stringify(prompts).slice(0, 100_000);
+                try {
+                  const response = await mcp.requestInput!({
+                    onCreated: async (createdId) => {
+                      elicitationId = createdId;
+                      const started = await appendAdapterEvent(this.runtime, input.runId, {
+                        eventId: `${activityId}:started`,
+                        type: "activity.started",
+                        payload: {
+                          activityId,
+                          elicitationId: createdId,
+                          kind: "mcp:elicitation",
+                          promptsJson,
+                          serverId: call.serverId,
+                          toolName: call.name,
+                        },
+                      });
+                      if (!started.ok) throw new Error(`Failed to append MCP elicitation event: ${started.reason}`);
+                    },
+                    prompts,
+                    serverId: call.serverId,
+                    threadId: input.runId,
+                    toolName: call.name,
+                  });
+                  if (elicitationId) {
+                    const completed = await appendAdapterEvent(this.runtime, input.runId, {
+                      eventId: `${activityId}:completed`,
+                      type: "activity.completed",
+                      payload: { activityId, elicitationId, kind: "mcp:elicitation", summary: "Response submitted" },
+                    });
+                    if (!completed.ok) throw new Error(`Failed to append MCP elicitation completion: ${completed.reason}`);
+                  }
+                  return response;
+                } catch (error) {
+                  if (elicitationId) {
+                    const failed = await appendAdapterEvent(this.runtime, input.runId, {
+                      eventId: `${activityId}:failed`,
+                      type: "activity.failed",
+                      payload: { activityId, elicitationId, error: error instanceof Error ? error.message : String(error), kind: "mcp:elicitation" },
+                    });
+                    if (!failed.ok) console.error("Kernel daemon: failed to append MCP elicitation failure", failed.reason);
+                  }
+                  throw error;
+                }
+              }
             : undefined,
           onTaskStatus: mcp.recordTaskStatus
             ? async (task) => {
@@ -1640,6 +1690,23 @@ export class KernelDaemon {
           const approvalId = (payload.approvalId ?? "") as string;
           const resolution = (payload.resolution === "deny" ? "deny" : "allow") as "allow" | "deny";
           await this.runtime.resolveApproval({ runId: rId as never, approvalId, resolution });
+          await complete("completed");
+          break;
+        }
+        case "mcp.elicitation.resolve": {
+          const elicitationId = requireBoundedString(payload.elicitationId, "elicitationId", 200);
+          const responseJson = requireBoundedString(payload.responseJson, "responseJson", 100_000);
+          const resolveInput = this.config.adapterDeps?.mcp?.resolveMcpInput;
+          if (!resolveInput) throw new Error("mcp.elicitation.resolve requires the MCP adapter");
+          await resolveInput({ elicitationId, responseJson });
+          await complete("completed");
+          break;
+        }
+        case "mcp.elicitation.cancel": {
+          const elicitationId = requireBoundedString(payload.elicitationId, "elicitationId", 200);
+          const cancelInput = this.config.adapterDeps?.mcp?.cancelMcpInput;
+          if (!cancelInput) throw new Error("mcp.elicitation.cancel requires the MCP adapter");
+          await cancelInput(elicitationId);
           await complete("completed");
           break;
         }

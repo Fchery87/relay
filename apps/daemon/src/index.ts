@@ -154,6 +154,8 @@ if (runtimeMode === "kernel") {
         listTools: () => mcp.listTools(),
         recordTaskStatus: conversationGateway.recordMcpTaskStatus,
         requestInput: conversationGateway.requestMcpInput,
+        resolveMcpInput: conversationGateway.resolveMcpInput,
+        cancelMcpInput: conversationGateway.cancelMcpInput,
       },
       policy,
       platform: config.registration.platform,

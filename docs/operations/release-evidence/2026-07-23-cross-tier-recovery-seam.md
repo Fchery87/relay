@@ -81,13 +81,13 @@ cannot read another owner's snapshot, event stream, run list, or cursor, and
 canonical command ingress rejects another owner's thread. Full detail-panel
 migration and end-to-end browser behavior coverage remain open before this flag
 can be promoted beyond canary. The remaining legacy-backed detail surfaces are
-plans, MCP elicitation state/actions, and slash-command discovery; each still
-lacks a canonical event/state producer or command contract in the kernel
-projection, so they are intentionally not hidden behind a fake projection
-fallback. The projected inspector now derives subagent runs from canonical
-`activity.*` events, including role, task, status, and a bounded result summary,
-so that detail surface no longer issues a legacy tree read during cutover. The
-projection hook also uses a bounded event tail, so
+plan artifacts and slash-command discovery. MCP elicitation cards now derive
+pending/submitted/cancelled state from canonical `activity.*` events, while
+submit/cancel enter through canonical inbox commands and the
+device-authorized daemon adapter. The projected inspector also derives
+subagent runs from canonical `activity.*` events, including role, task, status,
+and a bounded result summary, so those detail surfaces no longer issue legacy
+reads or writes during cutover. The projection hook also uses a bounded event tail, so
 historical comments outside that tail require a follow-up pagination/compaction
 design.
 

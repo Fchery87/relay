@@ -21,6 +21,8 @@ const SUPPORTED_COMMAND_KINDS = new Set([
   "turn.steer",
   "turn.interrupt",
   "approval.resolve",
+  "mcp.elicitation.resolve",
+  "mcp.elicitation.cancel",
   "review.comment.create",
   "checkpoint.restore",
   "checkpoint.compare",

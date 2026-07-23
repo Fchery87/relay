@@ -631,6 +631,10 @@ Git panels now skip their redundant legacy reads when projection mode is enabled
 Canonical run creation preserves projected titles and chat/plan mode for run discovery.
 The projected inspector also derives subagent runs from canonical activity events,
 so that detail surface no longer performs a legacy tree read during cutover.
+MCP elicitation cards now derive their lifecycle from canonical activity events,
+with submit/cancel routed through canonical inbox commands and the
+device-authorized daemon adapter; they no longer use legacy reads or browser
+mutations during cutover.
 remaining checklist stays open until all detail panels and workflow behavior
 tests leave their legacy Convex reads/writes behind the explicit rollback
 adapter.

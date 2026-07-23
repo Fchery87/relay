@@ -44,9 +44,11 @@ The daemon now supplies the active MCP catalog to the kernel provider turn and
 routes MCP calls through the configured `McpRegistry` callback. Task calls use
 the existing governed subagent adapter and append the subagent's bounded
 canonical activity events before returning its typed result to the provider.
-MCP elicitation and task-status callbacks still use the legacy conversation
-gateway until those browser detail surfaces receive canonical projection
-contracts; that is a remaining cutover item, not a reason to bypass governance.
+MCP task-status callbacks still use the legacy conversation gateway; MCP
+elicitation cards now derive their lifecycle from canonical activity events,
+with submit/cancel entering through canonical inbox commands and the
+device-authorized daemon adapter. The task-status callback remains a separate
+cutover item, not a reason to bypass governance.
 The browser inspector derives subagent runs from the canonical activity tail,
 so the subagent detail surface no longer needs the legacy tree query in
 projection mode.

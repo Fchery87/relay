@@ -17,7 +17,10 @@ test("pauses a thread for MCP input and resumes it with a JSON response", async 
   expect(await t.query(api.mcp_elicitations.get, { deviceToken, elicitationId })).toMatchObject({ responseJson: '{"date":"2026-08-01"}', status: "submitted" });
   expect(await t.run((ctx) => ctx.db.get("threads", threadId))).toMatchObject({ status: "running" });
   const cancelledId = await t.mutation(api.mcp_elicitations.create, { deviceToken, promptsJson: "[]", serverId: "travel", threadId, toolName: "book" });
-  await owner.mutation(api.mcp_elicitations.cancel, { elicitationId: cancelledId });
+  await t.mutation(api.mcp_elicitations.cancelByDevice, { deviceToken, elicitationId: cancelledId });
   expect(await t.query(api.mcp_elicitations.get, { deviceToken, elicitationId: cancelledId })).toMatchObject({ status: "cancelled" });
   expect(await t.run((ctx) => ctx.db.get("threads", threadId))).toMatchObject({ status: "running" });
+  const deviceSubmittedId = await t.mutation(api.mcp_elicitations.create, { deviceToken, promptsJson: "[]", serverId: "travel", threadId, toolName: "book" });
+  await t.mutation(api.mcp_elicitations.submitByDevice, { deviceToken, elicitationId: deviceSubmittedId, responseJson: "{}" });
+  expect(await t.query(api.mcp_elicitations.get, { deviceToken, elicitationId: deviceSubmittedId })).toMatchObject({ status: "submitted" });
 });

@@ -10,6 +10,7 @@ import type { Approval, AuditEntry } from "./governance-panel";
 import type { UsageSummary } from "./usage-panel";
 import type { DiffComment } from "./diff-utils";
 import type { SubagentRun } from "./subagent-panel";
+import type { McpElicitation } from "./mcp-elicitation-card";
 
 export type ProjectionRunState = {
   readonly error?: string;
@@ -128,6 +129,31 @@ export function projectionEventsToSubagentRuns(events: ReadonlyArray<EventEnvelo
     runs.set(activityId, existing);
   }
   return [...runs.values()];
+}
+
+/** Convert canonical MCP elicitation activity lifecycles into card state. */
+export function projectionEventsToMcpElicitations(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): McpElicitation[] {
+  const elicitations = new Map<string, McpElicitation>();
+  for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    if (event.type !== "activity.started" && event.type !== "activity.completed" && event.type !== "activity.failed") continue;
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (payload.kind !== "mcp:elicitation") continue;
+    const elicitationId = typeof payload.elicitationId === "string" ? payload.elicitationId : String(payload.activityId ?? event.eventId);
+    const existing = elicitations.get(elicitationId) ?? {
+      _id: elicitationId,
+      promptsJson: typeof payload.promptsJson === "string" ? payload.promptsJson.slice(0, 100_000) : "[]",
+      serverId: typeof payload.serverId === "string" ? payload.serverId : "unknown",
+      status: "pending" as const,
+      toolName: typeof payload.toolName === "string" ? payload.toolName : "unknown",
+    };
+    if (typeof payload.promptsJson === "string") existing.promptsJson = payload.promptsJson.slice(0, 100_000);
+    if (typeof payload.serverId === "string") existing.serverId = payload.serverId;
+    if (typeof payload.toolName === "string") existing.toolName = payload.toolName;
+    if (event.type === "activity.completed") existing.status = "submitted";
+    if (event.type === "activity.failed") existing.status = "cancelled";
+    elicitations.set(elicitationId, existing);
+  }
+  return [...elicitations.values()];
 }
 
 export function projectionEventsToCheckpoints(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ThreadCheckpoint[] {

@@ -334,6 +334,52 @@ test("daemon persists run configuration through a canonical lifecycle event", as
   }
 });
 
+test("daemon routes canonical MCP elicitation commands through the device adapter", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-mcp-daemon-"));
+  const runId = "run-mcp-daemon";
+  const pending = [
+    command("inbox-create-mcp", "run.create", runId, { projectId: "project-mcp" }),
+    command("inbox-resolve-mcp", "mcp.elicitation.resolve", runId, { elicitationId: "elicitation-1", responseJson: '{"date":"2026-08-01"}' }),
+    command("inbox-cancel-mcp", "mcp.elicitation.cancel", runId, { elicitationId: "elicitation-2" }),
+  ];
+  const resolved: string[] = [];
+  const cancelled: string[] = [];
+  const daemon = new KernelDaemon({
+    adapterDeps: {
+      resolveProjectRoot: async () => ".",
+      mcp: {
+        cancelMcpInput: async (elicitationId) => { cancelled.push(elicitationId); },
+        listTools: async () => [],
+        resolveMcpInput: async ({ elicitationId, responseJson }) => { resolved.push(`${elicitationId}:${responseJson}`); },
+        callTool: async () => undefined,
+      },
+    },
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "mcp-test",
+    pollIntervalMs: 60_000,
+    projectionSink: { appendEvents: async () => undefined, upsertSnapshot: async () => undefined, advanceCursor: async () => undefined },
+  });
+  try {
+    await daemon.start();
+    await daemon.pollOnce();
+    expect(resolved).toEqual(['elicitation-1:{"date":"2026-08-01"}']);
+    expect(cancelled).toEqual(["elicitation-2"]);
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+  }
+});
+
 function command(commandId: string, kind: string, runId: string, payload: unknown) {
   return {
     commandId,

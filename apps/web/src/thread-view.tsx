@@ -24,7 +24,7 @@ import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
-import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
+import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMcpElicitations, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSubagentRuns, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
 
 const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -139,7 +139,7 @@ export function ThreadView({
   const comparison = useQuery(latestCheckpointComparison, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const subagentRuns = useQuery(listSubagentTree, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const plan = useQuery(getPlan, isPlanRun && activeThreadId ? { threadId: activeThreadId } : "skip");
-  const mcpElicitations = useQuery(listMcpElicitations, activeThreadId ? { threadId: activeThreadId } : "skip");
+  const mcpElicitations = useQuery(listMcpElicitations, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const slashCommands = useQuery(listSlashCommands, activeThreadId ? { threadId: activeThreadId } : "skip");
   const scrollBottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -246,6 +246,7 @@ export function ThreadView({
   const visibleReviewComments = projectionCutoverEnabled ? projectionEventsToReviewComments(projectionEvents) : diffComments ?? [];
   const visibleGitActions = projectionCutoverEnabled ? projectionEventsToGitActions(projectionEvents) : gitActions ?? [];
   const visibleSubagentRuns = projectionCutoverEnabled ? projectionEventsToSubagentRuns(projectionEvents) : subagentRuns ?? [];
+  const visibleMcpElicitations = projectionCutoverEnabled ? projectionEventsToMcpElicitations(projectionEvents) : mcpElicitations ?? [];
   function canonicalReviewFeedback(): Record<string, unknown> {
     if (!projectionCutoverEnabled) return {};
     const pending = visibleReviewComments.filter((comment) => !comment.resolved);
@@ -312,7 +313,7 @@ export function ThreadView({
         <div className="task-canvas-column">
           <section aria-label="Task canvas" aria-labelledby={`workbench-tab-${activeToolSurface}`} className="run-surface" id="workbench-panel" role="tabpanel">
             {activeToolSurface === "session" ? <>
-              <McpElicitationCards items={mcpElicitations ?? []} onCancel={(elicitationId) => cancelElicitation({ elicitationId })} onSubmit={(input) => submitElicitation(input)} />
+              <McpElicitationCards items={visibleMcpElicitations} onCancel={(elicitationId) => projectionCutoverEnabled ? submitRunCommand("mcp.elicitation.cancel", { elicitationId }) : cancelElicitation({ elicitationId })} onSubmit={(input) => projectionCutoverEnabled ? submitRunCommand("mcp.elicitation.resolve", input) : submitElicitation(input)} />
               <GovernancePanel approvals={visibleApprovals} audit={visibleAudit} onResolve={(input) => projectionCutoverEnabled ? submitRunCommand("approval.resolve", { approvalId: input.approvalId, resolution: input.decision }) : resolve(input)} />
               <ThreadMessages checkpoints={visibleCheckpoints} messages={visibleMessages} onRestore={activeStatus === "running" || activeStatus === "awaiting-approval" || activeStatus === "restoring" ? undefined : (checkpointId) => projectionCutoverEnabled ? submitRunCommand("checkpoint.restore", { checkpointId, commit: visibleCheckpoints.find((checkpoint) => checkpoint._id === checkpointId)?.commit, ref: visibleCheckpoints.find((checkpoint) => checkpoint._id === checkpointId)?.ref }) : restoreCheckpoint({ checkpointId, threadId: activeThreadId })} />
               <div aria-hidden="true" ref={scrollBottomRef} />

@@ -55,6 +55,8 @@ const listMcpServersQuery = makeFunctionReference<"query", { deviceToken: string
 const reportMcpStatusMutation = makeFunctionReference<"mutation", { authorizationUrl?: string; deviceToken: string; error?: string; serverId: string; status: "connecting" | "authorizing" | "connected" | "error"; toolCount: number }, null>("mcp_servers:reportStatus");
 const createMcpElicitationMutation = makeFunctionReference<"mutation", { deviceToken: string; promptsJson: string; serverId: string; threadId: string; toolName: string }, string>("mcp_elicitations:create");
 const getMcpElicitationQuery = makeFunctionReference<"query", { deviceToken: string; elicitationId: string }, { responseJson?: string; status: "pending" | "submitted" | "cancelled" } | null>("mcp_elicitations:get");
+const submitMcpElicitationByDeviceMutation = makeFunctionReference<"mutation", { deviceToken: string; elicitationId: string; responseJson: string }, null>("mcp_elicitations:submitByDevice");
+const cancelMcpElicitationByDeviceMutation = makeFunctionReference<"mutation", { deviceToken: string; elicitationId: string }, null>("mcp_elicitations:cancelByDevice");
 
 export interface MachineGateway {
   heartbeat(input: { deviceToken: string }): Promise<unknown>;
@@ -122,8 +124,9 @@ export function createConvexConversationGateway({ deploymentUrl, deviceToken }: 
     isStopRequested: async (input: { deviceToken: string; threadId: string }) => stopStateSchema.parse(await client.query(getStopStateQuery, input)).requested,
     recordCheckpoint: (input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }) => client.mutation(recordCheckpointMutation, input),
     recordMcpTaskStatus: (input: { serverId: string; status: string; taskId: string; threadId: string }) => client.mutation(appendMcpTaskStatusMutation, { ...input, deviceToken }),
-    requestMcpInput: async (input: { prompts: unknown[]; serverId: string; threadId: string; toolName: string }) => {
+    requestMcpInput: async (input: { onCreated?: (elicitationId: string) => Promise<void> | void; prompts: unknown[]; serverId: string; threadId: string; toolName: string }) => {
       const elicitationId = await client.mutation(createMcpElicitationMutation, { deviceToken, promptsJson: JSON.stringify(input.prompts), serverId: input.serverId, threadId: input.threadId, toolName: input.toolName });
+      await input.onCreated?.(elicitationId);
       for (;;) {
         const elicitation = await client.query(getMcpElicitationQuery, { deviceToken, elicitationId });
         if (elicitation?.status === "submitted" && elicitation.responseJson) {
@@ -135,6 +138,8 @@ export function createConvexConversationGateway({ deploymentUrl, deviceToken }: 
         await Bun.sleep(200);
       }
     },
+    resolveMcpInput: (input: { elicitationId: string; responseJson: string }) => client.mutation(submitMcpElicitationByDeviceMutation, { ...input, deviceToken }),
+    cancelMcpInput: (elicitationId: string) => client.mutation(cancelMcpElicitationByDeviceMutation, { deviceToken, elicitationId }),
     requestTrust: (projectId: string) => client.mutation(requestTrustMutation, { deviceToken, projectId }).then(() => undefined),
     publishCommandCatalog: (commands: Array<{ argumentHint?: string; description: string; name: string; projectPath?: string; scope: "builtin" | "project" | "user" | "skill" }>) => client.mutation(publishCommandCatalogMutation, { commands, deviceToken }).then(() => undefined),
     updateTodos: (input: { items: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>; threadId: string }) => client.mutation(updateTodosMutation, { ...input, deviceToken }).then(() => undefined),
