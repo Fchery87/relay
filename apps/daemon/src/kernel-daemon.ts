@@ -80,6 +80,7 @@ import {
   resumeKernelAgenticTurn,
 } from "./kernel-agentic-turn";
 import { createCheckpoint } from "./checkpoints";
+import { computeDiff } from "./git-review";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1002,6 +1003,9 @@ export class KernelDaemon {
                 ...afterCheckpoint,
               });
               if (!result.ok) throw new Error(`Failed to append Codex after checkpoint: ${result.reason}`);
+              const diff = await captureKernelDiff({ root, runId, turnId });
+              const diffResult = await persistProviderEvent(this.runtime, runId, diff);
+              if (!diffResult.ok) throw new Error(`Failed to append Codex workspace diff: ${diffResult.reason}`);
             },
             onActive: (threadId) => this.activeCodexTurns.set(activeTurnKey(runId, turnId), { threadId }),
             onInactive: () => this.activeCodexTurns.delete(activeTurnKey(runId, turnId)),
@@ -1031,6 +1035,7 @@ export class KernelDaemon {
               claimSteering: async () => activeTurn.steering.splice(0),
             });
             const afterCheckpoint = root && !result.pending ? await captureKernelCheckpoint({ root, runId, turnId, phase: "after" }) : undefined;
+            const workspaceDiff = root && !result.pending ? await captureKernelDiff({ root, runId, turnId }) : undefined;
             const terminalEvent = result.events.at(-1);
             const providerEvents = terminalEvent?.type === "turn.completed" || terminalEvent?.type === "turn.failed" || terminalEvent?.type === "turn.interrupted"
               ? result.events.slice(0, -1)
@@ -1039,6 +1044,7 @@ export class KernelDaemon {
               ...(beforeCheckpoint ? [beforeCheckpoint] : []),
               ...providerEvents,
               ...(afterCheckpoint ? [afterCheckpoint] : []),
+              ...(workspaceDiff ? [workspaceDiff] : []),
               ...(terminalEvent ? [terminalEvent] : []),
             ].map((normalizedEvent) => ({
               type: "provider.event" as const,
@@ -1053,9 +1059,11 @@ export class KernelDaemon {
           }
         }
         const afterCheckpoint = root ? await captureKernelCheckpoint({ root, runId, turnId, phase: "after" }) : undefined;
+        const workspaceDiff = root ? await captureKernelDiff({ root, runId, turnId }) : undefined;
         return [
           ...(beforeCheckpoint ? [beforeCheckpoint] : []),
           ...(afterCheckpoint ? [afterCheckpoint] : []),
+          ...(workspaceDiff ? [workspaceDiff] : []),
         ].map((normalizedEvent) => ({
           type: "provider.event" as const,
           payload: { providerInstanceId: "provider-local" as never, normalizedEvent },
@@ -1113,7 +1121,8 @@ export class KernelDaemon {
             claimSteering: async () => activeTurn.steering.splice(0),
           });
           const afterCheckpoint = await captureKernelCheckpoint({ root, runId: effect.runId, turnId: effect.intent.turnId, phase: "after" });
-          return [...result.events, afterCheckpoint].map((normalizedEvent) => ({
+          const workspaceDiff = await captureKernelDiff({ root, runId: effect.runId, turnId: effect.intent.turnId });
+          return [...result.events, afterCheckpoint, workspaceDiff].map((normalizedEvent) => ({
             type: "provider.event" as const,
             payload: {
               providerInstanceId: "provider-local" as never,
@@ -1521,7 +1530,7 @@ export class KernelDaemon {
           for (const ev of ckptEvents) {
             await appendAdapterEvent(this.runtime, runId ?? `ckpt-${commandId}`, {
               eventId: ev.eventId,
-              type: ev.type as "checkpoint.restored" | "activity.completed",
+              type: ev.type as "checkpoint.restored" | "workspace.diff.updated",
               payload: ev.payload,
             });
           }
@@ -1729,5 +1738,22 @@ async function captureKernelCheckpoint(input: {
     },
     turnId: input.turnId as never,
     type: "checkpoint.captured",
+  } as CanonicalEventDraft;
+}
+
+async function captureKernelDiff(input: {
+  readonly root: string;
+  readonly runId: string;
+  readonly turnId: string;
+}): Promise<CanonicalEventDraft> {
+  const content = await computeDiff({ root: input.root, startCommit: "HEAD" });
+  const boundedContent = content.length > 750_000 ? `${content.slice(0, 750_000)}\n[diff truncated]` : content;
+  return {
+    causationId: `diff-${input.runId}-${input.turnId}` as never,
+    correlationId: `corr-diff-${input.runId}-${input.turnId}` as never,
+    eventId: `ev-diff-${input.runId}-${input.turnId}` as never,
+    payload: { baseCommit: "HEAD", content: boundedContent },
+    turnId: input.turnId as never,
+    type: "workspace.diff.updated",
   } as CanonicalEventDraft;
 }

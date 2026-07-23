@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Production acceptance suite — exercises all 26 canonical event types
+// Production acceptance suite — exercises all 27 canonical event types
 // through the full kernel daemon path using deterministic fakes.
 // ---------------------------------------------------------------------------
 
@@ -9,7 +9,7 @@ import {
   type AppendEventInput,
 } from "@relay/harness-runtime";
 
-describe("Production acceptance — all 26 canonical event types", () => {
+describe("Production acceptance — all 27 canonical event types", () => {
   test("run lifecycle: created, started, stopping, stopped", async () => {
     const runtime = LocalHarnessRuntime.memory();
     const snap = await runtime.createRun({ projectId: "proj-1" });
@@ -212,7 +212,7 @@ describe("Production acceptance — all 26 canonical event types", () => {
     expect(types(events)).toContain("projection.published");
   });
 
-  test("all 26 canonical event types are producible", async () => {
+  test("all 27 canonical event types are producible", async () => {
     const runtime = LocalHarnessRuntime.memory();
     const snap = await runtime.createRun({ projectId: "proj-all" });
     const runId = snap.runId as string;
@@ -223,7 +223,7 @@ describe("Production acceptance — all 26 canonical event types", () => {
       turnId: "turn-all" as never,
     });
 
-    // Emit all 26 types
+    // Emit all 27 types
     const allTypes: Array<{
       type: AppendEventInput["type"];
       payload: Record<string, unknown>;
@@ -254,6 +254,7 @@ describe("Production acceptance — all 26 canonical event types", () => {
       { type: "usage.recorded", payload: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0, modelId: "t" } },
       { type: "checkpoint.restored", payload: { checkpointId: "ckpt-all" as never, commit: "abc" } },
       { type: "checkpoint.compared", payload: { fromCheckpointId: "ckpt-before" as never, toCheckpointId: "ckpt-all" as never, content: "diff" } },
+      { type: "workspace.diff.updated", payload: { baseCommit: "HEAD", content: "diff" } },
       { type: "projection.published", payload: { cursor: 1 } },
     ];
 
@@ -309,7 +310,7 @@ describe("Production acceptance — all 26 canonical event types", () => {
     for (const t of expected) {
       expect(seen.has(t), `Missing canonical event type: ${t}`).toBe(true);
     }
-    expect(seen.size).toBe(26);
+    expect(seen.size).toBe(27);
   });
 });
 

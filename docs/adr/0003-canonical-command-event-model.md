@@ -32,6 +32,7 @@ A decision is needed on the canonical shape of commands, events, and state trans
   approval.requested | approval.resolved
   usage.recorded
   checkpoint.captured | checkpoint.restored | checkpoint.compared
+  workspace.diff.updated
   projection.published
   ```
 

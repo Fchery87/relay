@@ -44,6 +44,7 @@ const CANONICAL_EVENT_TYPES = new Set<CanonicalEventType>([
   "checkpoint.captured",
   "checkpoint.restored",
   "checkpoint.compared",
+  "workspace.diff.updated",
   "projection.published",
 ]);
 
@@ -281,6 +282,7 @@ export function canonicalEventPayloadError(
     "checkpoint.captured": ["checkpointId", "commit", "ref"],
     "checkpoint.restored": ["checkpointId", "commit"],
     "checkpoint.compared": ["fromCheckpointId", "toCheckpointId"],
+    "workspace.diff.updated": ["baseCommit"],
   };
   for (const field of requiredStrings[type as CanonicalEventType] ?? []) {
     if (!isNonEmptyString(payload[field])) {
@@ -363,6 +365,9 @@ export function canonicalEventPayloadError(
   }
   if (type === "checkpoint.compared" && typeof payload.content !== "string") {
     return "checkpoint.compared.content must be a string";
+  }
+  if (type === "workspace.diff.updated" && typeof payload.content !== "string") {
+    return "workspace.diff.updated.content must be a string";
   }
   if (
     type === "projection.published" &&

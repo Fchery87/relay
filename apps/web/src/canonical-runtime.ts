@@ -116,6 +116,13 @@ export type ProjectionCheckpointComparison = {
   readonly status: "queued" | "running" | "complete" | "failed";
 };
 
+export function projectionEventsToDiff(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): string {
+  const latest = [...events].reverse().find((event) => event.type === "workspace.diff.updated");
+  if (!latest || !latest.payload || typeof latest.payload !== "object") return "No changes.";
+  const content = (latest.payload as { content?: unknown }).content;
+  return typeof content === "string" ? content : "No changes.";
+}
+
 export function projectionEventsToCheckpointComparison(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ProjectionCheckpointComparison | null {
   const latest = [...events].reverse().find((event) => event.type === "checkpoint.compared");
   if (!latest) return null;

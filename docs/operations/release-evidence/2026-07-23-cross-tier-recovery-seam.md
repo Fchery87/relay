@@ -65,11 +65,11 @@ Focused client/browser verification passes the canonical runtime, checkpoint,
 and client-runtime suites, including canonical ID
 stability, snapshot reduction, cursor confirmation, reconnect, terminal
 handling, gap failure, ordered message projection, checkpoint metadata, and
-canonical checkpoint comparison. Full detail-panel migration and end-to-end
-browser behavior coverage remain open before this flag can be promoted beyond
-canary; current-worktree diff snapshots and inline diff comments still use
-their explicit legacy adapters because their canonical contracts are not yet
-defined.
+canonical checkpoint comparison, and bounded current-worktree diff projection.
+Full detail-panel migration and end-to-end browser behavior coverage remain
+open before this flag can be promoted beyond canary; inline diff comments still
+use their explicit legacy adapter because a canonical review-comment command
+and event contract is not yet defined.
 
 ## Two real, previously-undetected bugs found and fixed
 

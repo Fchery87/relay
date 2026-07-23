@@ -254,6 +254,7 @@ export function reduceRun(
 
     case "checkpoint.restored":
     case "checkpoint.compared":
+    case "workspace.diff.updated":
     case "projection.published":
       return null;
 

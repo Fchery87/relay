@@ -46,11 +46,10 @@ export async function executeCheckpointRestore(
     },
     {
       eventId: `ckpt-diff-${runId}-${ts}`,
-      type: "activity.completed",
+      type: "workspace.diff.updated",
       payload: {
-        activityId: `diff-${runId}`,
-        kind: "checkpoint-diff",
-        summary: diff.slice(0, 2000),
+        baseCommit: "HEAD",
+        content: diff.length > 750_000 ? `${diff.slice(0, 750_000)}\n[diff truncated]` : diff,
       },
     },
   ];

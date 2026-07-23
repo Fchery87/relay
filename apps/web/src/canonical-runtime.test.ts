@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToMessages } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToMessages } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -85,6 +85,7 @@ test("canonical checkpoint artifacts retain restore metadata and comparison outp
     ref: "refs/relay/checkpoints/run-1/turn-1",
   }]);
   expect(projectionEventsToCheckpointComparison([event(2, "checkpoint.compared", { content: "diff", fromCheckpointId: "abc", toCheckpointId: "def" })])).toEqual({ _id: "comparison:abc:def", content: "diff", status: "complete" });
+  expect(projectionEventsToDiff([event(3, "workspace.diff.updated", { baseCommit: "HEAD", content: "current diff" })])).toBe("current diff");
 });
 
 test("canonical runtime behavior covers create, turn, approval, stop, checkpoint, and reconnect", async () => {

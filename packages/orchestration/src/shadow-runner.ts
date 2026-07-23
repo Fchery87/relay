@@ -162,7 +162,7 @@ function isComparableEvent(type: string): boolean {
     "assistant.delta", "assistant.completed",
     "activity.started", "activity.delta", "activity.completed", "activity.failed",
     "approval.requested", "approval.resolved", "usage.recorded",
-    "checkpoint.captured", "checkpoint.restored", "checkpoint.compared", "projection.published",
+    "checkpoint.captured", "checkpoint.restored", "checkpoint.compared", "workspace.diff.updated", "projection.published",
   ].includes(type);
 }
 

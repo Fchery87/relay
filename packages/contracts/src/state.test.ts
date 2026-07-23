@@ -186,6 +186,7 @@ describe("non-status events", () => {
     { type: "usage.recorded" },
     { type: "checkpoint.restored" },
     { type: "checkpoint.compared" },
+    { type: "workspace.diff.updated" },
     { type: "projection.published" },
   ];
 
