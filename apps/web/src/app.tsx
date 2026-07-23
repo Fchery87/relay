@@ -14,7 +14,7 @@ import { resolveSettingsSection, SettingsView, type SettingsSection } from "./se
 import { shortcutForEvent, useShellState } from "./shell-state";
 import { SubagentPanel, type RoleRecord } from "./subagent-panel";
 import { ThreadView } from "./thread-view";
-import { canonicalCommandEnvelope, canonicalRunData, createThreadRef, listNeedsYou, projectionCutoverEnabled, removeThreadRef, requestAddProjectRef, submitCanonicalCommand, toRunSummaries, type LegacyRunSummary, type MachineSummary, type ProjectionRunSummary } from "./run-data";
+import { canonicalCommandEnvelope, canonicalRunCreationRequest, canonicalRunData, createCanonicalRunRef, createThreadRef, listNeedsYou, projectionCutoverEnabled, removeThreadRef, requestAddProjectRef, submitCanonicalCommand, toRunSummaries, type LegacyRunSummary, type MachineSummary, type ProjectionRunSummary } from "./run-data";
 import { WorkspaceSidebar, type SidebarProject } from "./workspace-sidebar";
 import type { ThinkingLevel } from "@relay/shared";
 
@@ -147,6 +147,7 @@ function Workspace({
   const { paletteOpen, panels, setPaletteOpen, toggle } = useShellState();
   const attention = useQuery(listNeedsYou, {});
   const create = useMutation(createThreadRef);
+  const createCanonical = useMutation(createCanonicalRunRef);
   const submitCanonical = useMutation(submitCanonicalCommand);
   const requestAddProject = useMutation(requestAddProjectRef);
   const machineCount = machines?.length ?? 0;
@@ -173,9 +174,11 @@ function Workspace({
 
   async function startThread(projectId: string, mode: "chat" | "plan") {
     const title = mode === "plan" ? "Untitled plan" : "Untitled task";
-    const threadId = await create({ mode, projectId, title });
+    const threadId = projectionCutoverEnabled
+      ? await createCanonical(canonicalRunCreationRequest({ mode, projectId, title }))
+      : await create({ mode, projectId, title });
     if (projectionCutoverEnabled) {
-      await submitCanonical(canonicalCommandEnvelope({ kind: "run.create", payload: { mode, projectId, title }, runId: threadId, threadId }));
+      await submitCanonical(canonicalCommandEnvelope({ kind: "run.resume", payload: {}, runId: threadId, threadId }));
     }
     void navigate({ to: "/projects/$projectId/threads/$threadId", params: { projectId, threadId }, search: { view: mode === "plan" ? "plan" : "session" } });
   }

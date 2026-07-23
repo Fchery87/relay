@@ -8,6 +8,30 @@ import { createAuthenticatedProject } from "./test_helpers";
 
 const modules = import.meta.glob("./**/*.ts");
 
+test("canonical run creation creates an owned thread and inbox command atomically", async () => {
+  const t = convexTest(schema, modules);
+  const { owner, projectId } = await createAuthenticatedProject(t);
+  const input = {
+    commandId: "cmd-canonical-run-create",
+    correlationId: "corr-canonical-run-create",
+    mode: "plan" as const,
+    projectId,
+    title: "Canonical plan",
+  };
+
+  const threadId = await owner.mutation(api.commands.inbox.createRun, input);
+  const retryThreadId = await owner.mutation(api.commands.inbox.createRun, input);
+  expect(retryThreadId).toBe(threadId);
+
+  const state = await t.run(async (ctx) => ({
+    command: await ctx.db.query("commandInbox").withIndex("by_command_id", (q) => q.eq("commandId", input.commandId)).unique(),
+    thread: await ctx.db.get(threadId),
+  }));
+  expect(state.thread).toMatchObject({ mode: "plan", projectId, status: "idle", title: "Canonical plan" });
+  expect(state.command).toMatchObject({ kind: "run.create", runId: threadId, status: "pending", threadId });
+  expect(JSON.parse(state.command!.payloadJson)).toEqual({ mode: "plan", projectId, title: "Canonical plan" });
+});
+
 test("canonical tool workspace hints must match the authorized project path", async () => {
   const t = convexTest(schema, modules);
   const { owner, projectId } = await createAuthenticatedProject(t);

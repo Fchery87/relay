@@ -18,7 +18,7 @@ import { resolveHandoffStage } from "./handoff-trace-utils";
 import { Composer, type SlashCommandEntry } from "./composer";
 import { InspectorPanel } from "./inspector";
 import { TerminalDrawer } from "./terminal-drawer";
-import { canonicalCommandEnvelope, canonicalCommandId, canonicalRunData, createThreadRef, projectionCutoverEnabled, submitCanonicalCommand, toLegacyRunSummaries, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile, type ProjectionRunSummary } from "./run-data";
+import { canonicalCommandEnvelope, canonicalCommandId, canonicalRunCreationRequest, canonicalRunData, createCanonicalRunRef, createThreadRef, projectionCutoverEnabled, submitCanonicalCommand, toLegacyRunSummaries, updatePermissionProfileRef, type LegacyRunSummary, type PermissionProfile, type ProjectionRunSummary } from "./run-data";
 import { resolveWorkbenchView } from "./router";
 import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
@@ -92,6 +92,7 @@ export function ThreadView({
   const search = useSearch({ strict: false }) as { view?: unknown };
   const threads = toLegacyRunSummaries(useQuery(listThreads, { projectId }) as Array<LegacyRunSummary | ProjectionRunSummary> | undefined);
   const create = useMutation(createThreadRef);
+  const createCanonical = useMutation(createCanonicalRunRef);
   const send = useMutation(sendUserMessage);
   const submitCanonical = useMutation(submitCanonicalCommand);
   const enqueue = useMutation(enqueueCommand);
@@ -168,9 +169,10 @@ export function ThreadView({
 
   async function startThread(mode: "chat" | "plan" = "chat") {
     const title = mode === "plan" ? "Untitled plan" : "Untitled task";
-    const threadId = await create({ mode, projectId, title });
+    const threadId = projectionCutoverEnabled
+      ? await createCanonical(canonicalRunCreationRequest({ mode, projectId, title }))
+      : await create({ mode, projectId, title });
     if (projectionCutoverEnabled) {
-      await submitCanonical(canonicalCommandEnvelope({ kind: "run.create", payload: { mode, projectId, title }, runId: threadId, threadId }));
       await submitCanonical(canonicalCommandEnvelope({ kind: "run.resume", payload: {}, runId: threadId, threadId }));
     }
     void navigate({ to: "/projects/$projectId/threads/$threadId", params: { projectId, threadId }, search: { view: mode === "plan" ? "plan" : "session" } });

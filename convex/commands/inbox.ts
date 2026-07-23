@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { mutationGeneric, queryGeneric } from "convex/server";
+import { DEFAULT_MODEL_ID } from "@relay/shared";
 import type { Id } from "../_generated/dataModel";
-import { requireActiveMachine, requireOwnedThread, requireUser } from "../auth_helpers";
+import { requireActiveMachine, requireOwnedProject, requireOwnedThread, requireUser } from "../auth_helpers";
 
 // ---------------------------------------------------------------------------
 // Command inbox — authenticated remote-command ingress.
@@ -48,6 +49,72 @@ function assertAuthorizedProjectPath(payloadJson: string, authorizedPath: string
   if (typeof projectPath !== "string") throw new Error("projectPath must be a string");
   if (projectPath !== authorizedPath) throw new Error("projectPath must match the authorized project");
 }
+
+export const createRun = mutationGeneric({
+  args: {
+    commandId: v.string(),
+    correlationId: v.string(),
+    mode: v.optional(v.union(v.literal("chat"), v.literal("plan"))),
+    projectId: v.id("projects"),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const project = await requireOwnedProject(ctx, userId, args.projectId);
+    const payloadJson = JSON.stringify({ ...(args.mode ? { mode: args.mode } : {}), projectId: args.projectId, title: args.title });
+    const existing = await ctx.db.query("commandInbox").withIndex("by_command_id", (q) => q.eq("commandId", args.commandId)).first();
+    if (existing) {
+      if (existing.kind !== "run.create" || existing.correlationId !== args.correlationId || existing.payloadJson !== payloadJson) {
+        throw new Error(`Conflicting commandId "${args.commandId}" for canonical run creation`);
+      }
+      if (!existing.threadId) throw new Error(`Canonical run creation command "${args.commandId}" has no thread identity`);
+      return existing.threadId;
+    }
+
+    const threadId = await ctx.db.insert("threads", {
+      ...(args.mode ? { mode: args.mode } : {}),
+      permissionProfile: "workspace-write",
+      projectId: args.projectId,
+      ...(args.mode === "plan" ? { buildModelId: DEFAULT_MODEL_ID, planModelId: DEFAULT_MODEL_ID, planPhase: "planning" as const } : {}),
+      modelId: DEFAULT_MODEL_ID,
+      status: "idle",
+      stopRequested: false,
+      thinkingLevel: "none",
+      title: args.title,
+      usageTotals: { cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, thinkingTokensUnavailableCalls: 0 },
+    });
+    await ctx.db.insert("commandInbox", {
+      commandId: args.commandId,
+      completedAt: undefined,
+      correlationId: args.correlationId,
+      createdAt: Date.now(),
+      kind: "run.create",
+      machineId: project.machineId,
+      ownerId: userId,
+      payloadJson,
+      projectPath: project.path,
+      runId: threadId,
+      status: "pending",
+      threadId,
+    });
+    await ctx.db.insert("auditLog", {
+      action: "command.accepted",
+      actorId: userId,
+      actorKind: "user",
+      causationId: args.commandId,
+      category: "command",
+      correlationId: args.correlationId,
+      machineId: project.machineId,
+      policyVersion: "command-ingress-v1",
+      projectId: args.projectId,
+      requestedScope: project.path,
+      summary: `run.create accepted for ${threadId}`,
+      threadId,
+      effectiveScope: project.path,
+    });
+    return threadId;
+  },
+});
 
 export const submitToInbox = mutationGeneric({
   args: {

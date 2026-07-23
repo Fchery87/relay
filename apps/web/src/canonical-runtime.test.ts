@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMcpElicitations, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToSlashCommands, projectionEventsToSubagentRuns, projectionEventsToUsage } from "./canonical-runtime";
-import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
+import { canonicalCommandEnvelope, canonicalCommandId, canonicalRunCreationRequest, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
   expect(resolveRunData(true).source).toBe("projection");
@@ -15,6 +15,15 @@ test("canonical web runtime is backed by client runtime", () => {
     submitCommand: async () => { throw new Error("not used"); },
   });
   expect(runtime).toBeDefined();
+});
+
+test("canonical run creation requests are stable across retries", () => {
+  const first = canonicalRunCreationRequest({ mode: "plan", projectId: "project-1", title: "Plan" });
+  const retry = canonicalRunCreationRequest({ mode: "plan", projectId: "project-1", title: "Plan" });
+  const changed = canonicalRunCreationRequest({ mode: "plan", projectId: "project-1", title: "Other" });
+  expect(first).toEqual(retry);
+  expect(changed.commandId).not.toBe(first.commandId);
+  expect(first.correlationId).toBe(`corr-${first.commandId}`);
 });
 
 test("canonical commands have stable IDs and immutable envelopes", () => {

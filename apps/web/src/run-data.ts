@@ -45,6 +45,12 @@ export const createThreadRef = makeFunctionReference<
   string
 >("conversations:createThread");
 
+export const createCanonicalRunRef = makeFunctionReference<
+  "mutation",
+  { commandId: string; correlationId: string; mode?: "chat" | "plan"; projectId: string; title: string },
+  string
+>("commands/inbox:createRun");
+
 export const updatePermissionProfileRef = makeFunctionReference<
   "mutation",
   { permissionProfile: PermissionProfile; threadId: string },
@@ -184,6 +190,12 @@ export function canonicalCommandId(runId: string, kind: string, payloadOrSequenc
     ? String(payloadOrSequence)
     : stablePayloadHash(payloadOrSequence ?? {});
   return `cmd-${kind.replaceAll(".", "-")}-${runId.slice(-8)}-${suffix}`;
+}
+
+export function canonicalRunCreationRequest(input: { mode?: "chat" | "plan"; projectId: string; title: string }) {
+  const payload = { ...(input.mode ? { mode: input.mode } : {}), projectId: input.projectId, title: input.title };
+  const commandId = canonicalCommandId(`${input.projectId}:${input.mode ?? "chat"}`, "run.create", payload);
+  return { ...input, commandId, correlationId: `corr-${commandId}` };
 }
 
 export function canonicalCommandEnvelope(input: { kind: string; payload: Record<string, unknown>; runId: string; threadId: string }) {
