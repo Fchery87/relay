@@ -122,12 +122,14 @@ describe("decider", () => {
       kind: "provider.resolve_approval",
       approvalId: "a1",
       resolution: "allow",
+      turnId: undefined,
     }]);
 
     const accepted = decide(
       snap({
         status: "awaiting_approval",
         pendingApprovalId: "a1",
+        activeTurnId: "turn-1",
       }),
       cmd("effect.result", {
         effectId: "effect-approval",
@@ -135,10 +137,12 @@ describe("decider", () => {
         status: "completed",
         approvalId: "a1",
         resolution: "allow",
+        turnId: "turn-1",
       }),
     );
-    expect(accepted.events[0]?.type).toBe("approval.resolved");
+    expect(accepted.events.map((event) => event.type)).toEqual(["approval.resolved", "turn.completed"]);
     expect(accepted.snapshot?.status).toBe("running");
+    expect(accepted.snapshot?.activeTurnId).toBeUndefined();
   });
 
   test("approval.resolve rejects a stale approval identity", () => {

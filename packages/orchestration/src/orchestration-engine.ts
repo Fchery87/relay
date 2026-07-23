@@ -730,6 +730,9 @@ function toEffectSuccessCommand(effect: DurableEffect): InternalCommand {
           ? {
               approvalId: effect.intent.approvalId,
               resolution: effect.intent.resolution,
+              ...(effect.intent.turnId === undefined
+                ? {}
+                : { turnId: effect.intent.turnId }),
             }
           : {}),
     },

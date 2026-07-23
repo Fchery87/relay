@@ -1,5 +1,6 @@
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
+import { z } from "zod";
 
 import { approvalResolutionSchema, queuedCommandSchema, queuedComparisonSchema, queuedMessageSchema, queuedRestoreSchema, queuedSubagentSchema, steeringMessagesSchema, stopStateSchema, type Capability, type MachineRegistration, type SubagentResult, type TokenUsage } from "@relay/shared";
 
@@ -24,9 +25,10 @@ const listThreadIdsQuery = makeFunctionReference<"query", { deviceToken: string 
 const snapshotDiffMutation = makeFunctionReference<"mutation", { content: string; deviceToken: string; threadId: string }>("diffs:snapshot");
 const claimGitActionMutation = makeFunctionReference<"mutation", { deviceToken: string }, { action: "stage" | "commit" | "push"; actionId: string; message?: string; projectPath: string; threadId: string } | null>("git_actions:claim");
 const completeGitActionMutation = makeFunctionReference<"mutation", { actionId: string; deviceToken: string; status: "complete" | "failed" }>("git_actions:complete");
-const createApprovalMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task"; deviceToken: string; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("approvals:create");
+const createApprovalMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task" | "search"; continuationJson?: string; deviceToken: string; risk: "low" | "high" | "critical"; summary: string; threadId: string; turnId?: string }, string>("approvals:create");
 const getApprovalQuery = makeFunctionReference<"query", { approvalId: string; deviceToken: string }, unknown>("approvals:getByDevice");
-const recordAuditMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task"; decision: "allow" | "deny" | "ask"; deviceToken: string; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("audit_log:record");
+const kernelApprovalSchema = z.object({ continuationJson: z.string().optional(), decision: z.enum(["pending", "allow", "deny"]), threadId: z.string(), turnId: z.string().optional() });
+const recordAuditMutation = makeFunctionReference<"mutation", { capability: "read" | "edit" | "exec" | "task" | "search"; decision: "allow" | "deny" | "ask"; deviceToken: string; risk: "low" | "high" | "critical"; summary: string; threadId: string }, string>("audit_log:record");
 const recordUsageMutation = makeFunctionReference<"mutation", { callId: string; deviceToken: string; messageId: string; modelId: string; role: string; threadId: string; usage: TokenUsage }, string>("usage:record");
 const claimSteeringMessagesMutation = makeFunctionReference<"mutation", { deviceToken: string; threadId: string }, unknown>("conversations:claimSteeringMessages");
 const getStopStateQuery = makeFunctionReference<"query", { deviceToken: string; threadId: string }, unknown>("conversations:getStopState");
@@ -204,14 +206,19 @@ export function createConvexGitGateway({ deploymentUrl, deviceToken }: { deploym
 export function createConvexGovernanceGateway({ deploymentUrl, deviceToken }: { deploymentUrl: string; deviceToken: string }) {
   const client = new ConvexHttpClient(deploymentUrl);
   return {
-    recordDecision: (input: { capability: "read" | "edit" | "exec" | "task"; decision: "allow" | "deny"; risk: "low" | "high" | "critical"; summary: string; threadId: string }) => client.mutation(recordAuditMutation, { ...input, deviceToken }),
-    requestApproval: async (input: { capability: "read" | "edit" | "exec" | "task"; risk: "low" | "high" | "critical"; summary: string; threadId: string }) => {
+    recordDecision: (input: { capability: "read" | "edit" | "exec" | "task" | "search"; decision: "allow" | "deny"; risk: "low" | "high" | "critical"; summary: string; threadId: string }) => client.mutation(recordAuditMutation, { ...input, deviceToken }),
+    requestApproval: async (input: { capability: "read" | "edit" | "exec" | "task" | "search"; risk: "low" | "high" | "critical"; summary: string; threadId: string }) => {
       const approvalId = await client.mutation(createApprovalMutation, { ...input, deviceToken });
       for (;;) {
         const approval = approvalResolutionSchema.nullable().parse(await client.query(getApprovalQuery, { approvalId, deviceToken }));
         if (approval?.decision === "allow" || approval?.decision === "deny") return approval.decision;
         await Bun.sleep(200);
       }
+    },
+    createApproval: (input: { capability: "read" | "edit" | "exec" | "task" | "search"; continuationJson: string; risk: "low" | "high" | "critical"; summary: string; threadId: string; turnId: string }) => client.mutation(createApprovalMutation, { ...input, deviceToken }),
+    getApproval: async ({ approvalId }: { approvalId: string }) => {
+      const approval = await client.query(getApprovalQuery, { approvalId, deviceToken });
+      return approval === null ? null : kernelApprovalSchema.parse(approval);
     },
   };
 }

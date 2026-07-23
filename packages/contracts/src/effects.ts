@@ -41,6 +41,7 @@ export type EffectIntent =
       readonly kind: "provider.resolve_approval";
       readonly approvalId: string;
       readonly resolution: "allow" | "deny";
+      readonly turnId?: TurnId;
     }
   | { readonly kind: "provider.stop_session" }
   | { readonly kind: "workspace.create"; readonly repoPath: string }

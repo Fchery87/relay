@@ -582,8 +582,8 @@ Work the **frontier**: any ticket whose blockers are all done. Independent branc
 
 **Blocked by:** Prove the real cross-tier recovery seam. Shadow parity and browser cutover remain blocked for any behavior that is still absent here.
 
-- [x] Kernel provider tool calls execute through the governed sandbox boundary and emit canonical activity events (`apps/daemon/src/kernel-daemon.ts`; policy allow/deny and audit recording are covered; Convex binds the authorized project path onto the daemon claim for workspace resolution; approval suspension remains a separate increment)
-- [ ] Risky tool calls create a canonical approval request, suspend the turn, and resume only after the matching approval resolution
+- [x] Kernel provider tool calls execute through the governed sandbox boundary and emit canonical activity events (`apps/daemon/src/kernel-daemon.ts`; policy allow/deny and audit recording are covered; Convex binds the authorized project path onto the daemon claim for workspace resolution)
+- [x] Risky tool calls create a durable approval with a private continuation, suspend the turn, and resume only after the matching approval resolution (`apps/daemon/src/kernel-daemon.ts`, `convex/approvals.ts`; allow and deny paths are covered; provider continuation with tool results remains a separate gap)
 - [ ] Mid-turn steering is delivered at a real stream/tool boundary without racing the serialized command poller
 - [ ] Interrupt cancels the provider effect and prevents post-interrupt output or terminal duplication
 - [ ] Orchestration-owned before/after-turn checkpoint capture is durable and idempotent

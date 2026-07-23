@@ -35,3 +35,25 @@ test("approval resolution restores the thread status that was paused", async () 
   await owner.mutation(api.approvals.resolve, { approvalId, decision: "deny" });
   expect((await t.run((ctx) => ctx.db.get("threads", threadId)))?.status).toBe("done");
 });
+
+test("kernel approvals retain a private continuation for the matching daemon resolve", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, owner, projectId } = await createAuthenticatedProject(t);
+  const threadId = await t.run((ctx) => ctx.db.insert("threads", { projectId, status: "running", title: "kernel continuation" }));
+  const continuationJson = JSON.stringify({ call: { command: "rm -f output.txt", kind: "bash" }, turnId: "turn-1" });
+
+  const approvalId = await t.mutation(api.approvals.create, {
+    capability: "exec",
+    continuationJson,
+    deviceToken,
+    risk: "high",
+    summary: "rm -f output.txt",
+    threadId,
+    turnId: "turn-1",
+  });
+
+  await expect(owner.query(api.approvals.get, { approvalId })).resolves.not.toMatchObject({ continuationJson });
+  await expect(owner.query(api.approvals.listForThread, { threadId })).resolves.not.toContainEqual(expect.objectContaining({ continuationJson }));
+  await expect(owner.query(api.approvals.listForThreadPaginated, { limit: 10, threadId })).resolves.not.toMatchObject({ page: [expect.objectContaining({ continuationJson })] });
+  await expect(t.query(api.approvals.getByDevice, { approvalId, deviceToken })).resolves.toMatchObject({ continuationJson, turnId: "turn-1" });
+});

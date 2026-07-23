@@ -2,9 +2,10 @@
 
 **Status:** Open tracked follow-up, discovered 2026-07-23 while proving the
 real cross-tier recovery seam (`tickets.md`, "Close kernel turn capability
-gaps"). The first tool-execution increment is complete; approval suspension,
-true in-flight steering/interrupt cancellation, and automatic checkpoint
-capture remain open. Later tickets that assume kernel-mode parity with legacy
+gaps"). Governed tool execution and durable approval suspension/resolution
+are now complete; provider continuation with tool results, true in-flight
+steering/interrupt cancellation, and automatic checkpoint capture remain open.
+Later tickets that assume kernel-mode parity with legacy
 ("Prove shadow parity," "Cut the browser over," "Canary kernel default,"
 "Remove legacy execution paths") must not proceed on a false premise.
 
@@ -15,23 +16,22 @@ Kernel mode's turn execution (`apps/daemon/src/kernel-daemon.ts`,
 but the capability is intentionally incomplete. Concretely, in kernel mode
 today:
 
-- **Governed tool execution (first increment complete).** `executeTurn()`
+- **Governed tool execution.** `executeTurn()`
   calls `provider.toolCalls()` when available and routes calls through
   `executeGovernedToolCall`, the configured policy, governance audit, and
   sandbox/tool executor using the authorized project path carried by the
   canonical command claim. It emits `activity.started`, bounded
   `activity.delta`, `activity.completed`, or `activity.failed` events. The
-  current increment supports policy `allow`/`deny`; an `ask` decision is
-  refused with an explicit activity failure until approval suspension is
-  implemented.
-- **No governance chokepoint or approval cards during a turn.** Nothing
-  produces a real `approval_required` state from tool risk classification.
-  `approval.resolve` (now wired at command-dispatch — see below) can only
-  resolve an approval that something else created, and nothing creates one.
-- **`provider.steer_turn`, `provider.interrupt_turn`,
-  `provider.resolve_approval`, `tool.execute`, and `checkpoint.capture`
-  effect reactors are all registered as no-ops** (`kernel-daemon.ts`, the
-  `noopReactor` registration loop). Their canonical commands/events exist
+  policy `allow`/`deny` decisions execute or refuse through the sandbox; an
+  `ask` decision creates a durable Convex approval containing a private,
+  device-readable continuation and emits `approval.requested` without
+  blocking the daemon poller.
+- **Provider continuation with tool results is still absent.** The current
+  provider bridge consumes tool calls after the provider stream; it does not
+  resume the provider with the resulting tool output.
+- **`provider.steer_turn`, `provider.interrupt_turn`, `tool.execute`, and
+  `checkpoint.capture` effect reactors remain no-ops** (`kernel-daemon.ts`,
+  the `noopReactor` registration loop). Their canonical commands/events exist
   and update run state correctly, but the corresponding real work never
   happens.
 - **`turn.interrupt` doesn't abort an in-flight provider call.**
@@ -52,8 +52,20 @@ before `turn.completed`.
 
 This does not yet make the provider loop fully agentic: tool calls are
 consumed after the current provider stream, and the provider is not resumed
-with tool results. That is deliberate follow-up work alongside approval
-suspension rather than a hidden parity claim.
+with tool results. That remains deliberate follow-up work rather than a
+hidden parity claim.
+
+## Completed increment — durable approval suspension and resolution
+
+An `ask` policy decision now inserts a Convex approval with its continuation
+private to the device-scoped query, emits `approval.requested`, and returns
+without waiting inside the serialized daemon poller. A matching
+`approval.resolve` is handled by a real `provider.resolve_approval` reactor:
+the reactor verifies run identity, resolution, turn identity, and workspace
+authority before resuming the held tool through the same governed executor.
+The decider then appends `approval.resolved` and the matching `turn.completed`
+in canonical order. Focused daemon, orchestration, and Convex tests cover
+allow, deny, private continuation visibility, and stale identity rejection.
 
 ## Confirmed live (2026-07-23): mid-turn steering cannot be delivered today
 
@@ -96,9 +108,9 @@ tool-execution/governance capability described above.
 ## Why this matters for later tickets
 
 - **"Prove shadow parity without duplicate effects"**: shadow mode compares
-  kernel decisions against legacy on the same inputs. Any input that
-  exercises a tool call, an approval, or a mid-turn checkpoint will diverge
-  by construction until this gap closes — not a shadow-mode bug to chase.
+  kernel decisions against legacy on the same inputs. Inputs that exercise
+  provider continuation, mid-turn steering, or a checkpoint will diverge by
+  construction until those gaps close — not a shadow-mode bug to chase.
 - **"Cut the browser over" / "Canary kernel default"**: cutting real users
   onto kernel mode today would silently drop tool use, governance, and
   auto-checkpointing relative to legacy. This is a functional regression,
@@ -109,9 +121,9 @@ tool-execution/governance capability described above.
 
 Per explicit direction: "Prove the real cross-tier recovery seam" is scoped
 to what kernel mode *actually does today* — create/resume/send/streaming,
-steer/interrupt/approval as canonical state transitions (not real
-cancellation/gating), checkpoint.restore/compare, projection/reconnect/
-restart, and fault injection against those. This gap is tracked here as a
+steer/interrupt as canonical state transitions (not real cancellation),
+durable approval suspension/resolution, checkpoint.restore/compare,
+projection/reconnect/restart, and fault injection against those. This gap is tracked here as a
 separate, later piece of work — likely comparable in size to porting
 `governed-tool-executor.ts`/`turn-loop.ts`'s capability into the kernel
 effect-reactor model — not bundled into the seam-proving ticket.

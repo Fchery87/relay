@@ -7,13 +7,16 @@ import { toolContract } from "./tool-registry";
 export interface GovernanceGateway {
   recordDecision(input: { capability: Capability; decision: Exclude<PolicyDecision, "ask">; risk: RiskTier; summary: string; threadId: string }): Promise<unknown>;
   requestApproval(input: { capability: Capability; risk: RiskTier; summary: string; threadId: string }): Promise<"allow" | "deny">;
+  createApproval?(input: { capability: Capability; continuationJson: string; risk: RiskTier; summary: string; threadId: string; turnId: string }): Promise<string>;
+  getApproval?(input: { approvalId: string }): Promise<{ continuationJson?: string; decision: "pending" | "allow" | "deny"; threadId: string; turnId?: string } | null>;
 }
 
 export type GovernedToolResult =
   | { kind: "executed"; output: string; succeeded: boolean }
   | { kind: "refused"; output: string };
 
-export async function executeGovernedToolCall({ call, governance, onCompleted, onMcp, onOutput, onTask, platform, policy, root, skills, threadId }: {
+export async function executeGovernedToolCall({ approvalResolution, call, governance, onCompleted, onMcp, onOutput, onTask, platform, policy, root, skills, threadId }: {
+  approvalResolution?: "allow" | "deny";
   call: ToolCall;
   governance: GovernanceGateway;
   onCompleted(event: { summary: string; tool: CompletedTool }): Promise<void>;
@@ -28,16 +31,24 @@ export async function executeGovernedToolCall({ call, governance, onCompleted, o
 }): Promise<GovernedToolResult> {
   const contract = toolContract(call);
   const classification = classifyToolCall(call);
-  const decision = evaluatePolicy({ ...classification, policy });
+  const decision = approvalResolution ?? evaluatePolicy({ ...classification, policy });
   const summary = summarizeToolCall(call);
   if (decision === "deny") {
-    await governance.recordDecision({ ...classification, decision, summary, threadId });
-    return { kind: "refused", output: refusal({ ...classification, reason: "policy_denied" }) };
+    if (approvalResolution === undefined) {
+      await governance.recordDecision({ ...classification, decision, summary, threadId });
+    }
+    return {
+      kind: "refused",
+      output: refusal({
+        ...classification,
+        reason: approvalResolution === "deny" ? "approval_denied" : "policy_denied",
+      }),
+    };
   }
   if (decision === "ask") {
     const resolution = await governance.requestApproval({ ...classification, summary, threadId });
     if (resolution === "deny") return { kind: "refused", output: refusal({ ...classification, reason: "approval_denied" }) };
-  } else {
+  } else if (approvalResolution === undefined) {
     await governance.recordDecision({ ...classification, decision, summary, threadId });
   }
   // Resolve skill body for skill tool calls

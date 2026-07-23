@@ -35,7 +35,7 @@ import {
 import type { ProjectionSink } from "./sync/convex-projection-sink";
 import type { ModelProvider, ModelProviderRouter } from "./model-provider";
 import type { GovernanceGateway } from "./governed-tool-executor";
-import { executeGovernedToolCall } from "./governed-tool-executor";
+import { executeGovernedToolCall, summarizeToolCall } from "./governed-tool-executor";
 import type { Policy } from "./policy";
 import { classifyToolCall, evaluatePolicy } from "./policy";
 import type { MachinePlatform } from "@relay/shared";
@@ -73,6 +73,7 @@ import {
   parseVersion,
 } from "@relay/local-store";
 import { SLO_DEFINITIONS } from "@relay/local-store";
+import type { ToolCall } from "./tool-executor";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -354,6 +355,89 @@ function withoutCodexScope<TEvent extends NormalizedEvent>(
 // Turn executor — bridges the provider into the kernel's event stream
 // ---------------------------------------------------------------------------
 
+export type KernelTurnAwaitingApproval = {
+  readonly approvalId: string;
+  readonly status: "awaiting_approval";
+};
+
+type KernelApprovalContinuation = {
+  readonly activityId: string;
+  readonly call: ToolCall;
+  readonly turnId: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseKernelApprovalContinuation(json: string): KernelApprovalContinuation {
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error("Kernel approval continuation is not valid JSON");
+  }
+  if (!isRecord(value) || !isRecord(value.call) || typeof value.activityId !== "string" || typeof value.turnId !== "string" || typeof value.call.kind !== "string") {
+    throw new Error("Kernel approval continuation is malformed");
+  }
+  return { activityId: value.activityId, call: value.call as unknown as ToolCall, turnId: value.turnId };
+}
+
+export async function resumeKernelApproval({ approvalId, continuationJson, governance, platform, policy, resolution, root, runId, runtime, turnId }: {
+  approvalId: string;
+  continuationJson: string;
+  governance: GovernanceGateway;
+  platform: MachinePlatform;
+  policy: Policy;
+  resolution: "allow" | "deny";
+  root: string;
+  runId: string;
+  runtime: LocalHarnessRuntime;
+  turnId: string;
+}): Promise<void> {
+  const continuation = parseKernelApprovalContinuation(continuationJson);
+  if (continuation.turnId !== turnId) throw new Error(`Approval ${approvalId} does not match turn ${turnId}`);
+  let outputIndex = 0;
+  try {
+    const result = await executeGovernedToolCall({
+      approvalResolution: resolution,
+      call: continuation.call,
+      governance,
+      onCompleted: async () => undefined,
+      onOutput: async (output) => {
+        await persistProviderEvent(runtime, runId, {
+          eventId: `ev-activity-delta-${runId}-${turnId}-${continuation.activityId}-${outputIndex++}`,
+          type: "activity.delta",
+          turnId: turnId as never,
+          payload: { activityId: continuation.activityId as never, content: sanitizeForProjection(output).slice(0, 4_000) },
+        });
+      },
+      platform,
+      policy,
+      root,
+      threadId: runId,
+    });
+    await persistProviderEvent(runtime, runId, {
+      eventId: `ev-activity-completed-${runId}-${turnId}-${continuation.activityId}`,
+      type: "activity.completed",
+      turnId: turnId as never,
+      payload: {
+        activityId: continuation.activityId as never,
+        summary: result.kind === "refused" ? "Tool refused" : "Tool completed",
+        result: { output: sanitizeForProjection(result.output).slice(0, 4_000), succeeded: result.kind === "executed" && result.succeeded },
+      },
+    });
+  } catch (error) {
+    await persistProviderEvent(runtime, runId, {
+      eventId: `ev-activity-failed-${runId}-${turnId}-${continuation.activityId}`,
+      type: "activity.failed",
+      turnId: turnId as never,
+      payload: { activityId: continuation.activityId as never, error: error instanceof Error ? error.message : String(error) },
+    });
+    throw error;
+  }
+}
+
 export async function executeTurn({
   runId,
   turnId,
@@ -380,7 +464,7 @@ export async function executeTurn({
   projectPath?: string;
   resolveProjectRoot?: (input: { repoPath: string; threadId: string }) => Promise<string>;
   onFirstToken?: (latencyMs: number) => void;
-}): Promise<boolean> {
+}): Promise<boolean | KernelTurnAwaitingApproval> {
   const signal = AbortSignal.timeout(10 * 60 * 1000);
   const turnStart = Date.now();
   let firstTokenEmitted = false;
@@ -448,16 +532,34 @@ export async function executeTurn({
         });
 
         if (evaluatePolicy({ ...classification, policy }) === "ask") {
+          if (!governance.createApproval) {
+            await persistProviderEvent(runtime, runId, {
+              eventId: `ev-activity-failed-${runId}-${turnId}-${activityId}`,
+              type: "activity.failed",
+              turnId: turnId as never,
+              payload: { activityId: activityId as never, error: "Kernel approval creation is not configured; tool refused" },
+            });
+            continue;
+          }
+          const approvalId = await governance.createApproval({
+            ...classification,
+            continuationJson: JSON.stringify({ call, activityId, turnId }),
+            summary: summarizeToolCall(call),
+            threadId: runId,
+            turnId,
+          });
           await persistProviderEvent(runtime, runId, {
-            eventId: `ev-activity-failed-${runId}-${turnId}-${activityId}`,
-            type: "activity.failed",
+            eventId: `ev-approval-requested-${runId}-${turnId}-${activityId}`,
+            type: "approval.requested",
             turnId: turnId as never,
             payload: {
-              activityId: activityId as never,
-              error: "Kernel approval suspension is not available yet; tool refused",
+              approvalId: approvalId as never,
+              capability: classification.capability,
+              risk: classification.risk,
+              details: summarizeToolCall(call),
             },
           });
-          continue;
+          return { approvalId, status: "awaiting_approval" };
         }
 
         try {
@@ -874,6 +976,52 @@ export class KernelDaemon {
     };
     reactors.register("provider.send_turn", providerReactor);
 
+    const approvalReactor: EffectReactor = {
+      execute: async (effect) => {
+        if (effect.intent.kind !== "provider.resolve_approval") {
+          throw new Error(`Unexpected effect kind: ${effect.intent.kind}`);
+        }
+        const governance = this.config.adapterDeps?.governance;
+        const policy = this.config.adapterDeps?.policy;
+        const platform = this.config.adapterDeps?.platform;
+        const resolveProjectRoot = this.config.adapterDeps?.resolveProjectRoot;
+        if (!governance?.getApproval || !governance || !policy || !platform || !resolveProjectRoot) {
+          throw new Error("Kernel approval resolution requires governance, policy, platform, and workspace dependencies");
+        }
+        const approval = await governance.getApproval({ approvalId: effect.intent.approvalId });
+        if (!approval || approval.threadId !== effect.runId) {
+          throw new Error(`Approval ${effect.intent.approvalId} is not available for run ${effect.runId}`);
+        }
+        if (approval.decision !== effect.intent.resolution) {
+          throw new Error(`Approval ${effect.intent.approvalId} resolved as ${approval.decision}, not ${effect.intent.resolution}`);
+        }
+        if (!approval.continuationJson || !effect.intent.turnId) {
+          throw new Error(`Approval ${effect.intent.approvalId} has no resumable kernel continuation`);
+        }
+        const projectPath = this.projectPathByRun.get(effect.runId);
+        if (!projectPath) throw new Error(`Run ${effect.runId} has no authorized project path`);
+        const root = await resolveProjectRoot({ repoPath: projectPath, threadId: effect.runId });
+        await resumeKernelApproval({
+          approvalId: effect.intent.approvalId,
+          continuationJson: approval.continuationJson,
+          governance,
+          platform,
+          policy,
+          resolution: effect.intent.resolution,
+          root,
+          runId: effect.runId,
+          runtime: this.runtime,
+          turnId: effect.intent.turnId,
+        });
+        return [];
+      },
+      recover: async (effect, context) => {
+        if (context.signal.aborted) throw new Error("Approval effect cancelled");
+        return approvalReactor.execute(effect, context);
+      },
+    };
+    reactors.register("provider.resolve_approval", approvalReactor);
+
     // Register no-op reactors for provider lifecycle, workspace, checkpoint,
     // approval, and tool effects — these are routed through the existing
     // adapter infrastructure and don't need new side effects in the daemon.
@@ -881,7 +1029,7 @@ export class KernelDaemon {
       execute: async () => [],
       recover: async () => [],
     };
-    for (const kind of ["provider.start_session", "provider.resume_session", "provider.steer_turn", "provider.interrupt_turn", "provider.resolve_approval", "provider.stop_session", "workspace.create", "workspace.reconcile", "checkpoint.capture", "checkpoint.restore", "tool.execute"] as const) {
+    for (const kind of ["provider.start_session", "provider.resume_session", "provider.steer_turn", "provider.interrupt_turn", "provider.stop_session", "workspace.create", "workspace.reconcile", "checkpoint.capture", "checkpoint.restore", "tool.execute"] as const) {
       reactors.register(kind, noopReactor);
     }
 

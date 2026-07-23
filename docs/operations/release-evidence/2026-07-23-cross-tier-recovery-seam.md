@@ -73,12 +73,14 @@ code paths only through fakes, never over a real network round-trip:
 
 ## Residual risks / not yet covered (as of 2026-07-23)
 
-- The first kernel tool bridge increment is now covered by focused tests:
-  provider tool calls pass through policy/governance/sandbox execution and
-  emit canonical activity events. Real approval suspension/resolution,
-  provider continuation with tool results, mid-turn steering, and actual
-  interrupt cancellation remain open kernel capability gaps, documented
-  separately in `docs/operations/kernel-mode-capability-gaps.md`.
+- The kernel tool bridge is covered by focused tests: provider tool calls pass
+  through policy/governance/sandbox execution and emit canonical activity
+  events. Durable approval suspension/resolution now creates a private
+  continuation, releases the serialized poller, and resumes only for the
+  matching run/turn/resolution. Provider continuation with tool results,
+  mid-turn steering, and actual interrupt cancellation remain open kernel
+  capability gaps, documented separately in
+  `docs/operations/kernel-mode-capability-gaps.md`.
 - A real LLM provider (as opposed to the scripted/fallback provider) is not
   exercised; "protected jobs cover the real provider" is only partially
   true — the protected CI job (`.github/workflows/ci.yml`,
@@ -108,15 +110,15 @@ Continuing the same test file, still against a real isolated backend:
    conflicting, violating the documented "changed immutable fields are
    rejected" invariant. Fixed by including `payloadJson` in the check.
 
-**Major finding, not a quick fix — see [kernel-mode-capability-gaps.md](../kernel-mode-capability-gaps.md):**
+**Earlier major finding (now partly closed; see [kernel-mode-capability-gaps.md](../kernel-mode-capability-gaps.md)):**
 kernel mode's turn loop (`executeTurn()`) only handles text/usage stream
-events. It never calls tool execution or `governed-tool-executor.ts`, and
-the `provider.steer_turn`/`provider.interrupt_turn`/`provider.resolve_approval`/
-`tool.execute`/`checkpoint.capture` effect reactors are all no-ops. Kernel
-mode today cannot read/edit files, run shell commands, gate on governance,
-create a real approval, actually cancel an in-flight provider call on
-interrupt, or auto-checkpoint per turn — despite the corresponding v1
-tickets being marked done (true for the legacy runtime only). Also proven
+events. At the time of this finding it did not call tool execution or
+`governed-tool-executor.ts`, and the approval reactor was a no-op. The tool
+bridge and durable approval suspension/resolution are now covered by the
+focused capability increment below. Kernel mode still cannot actually cancel
+an in-flight provider call on interrupt or auto-checkpoint per turn — despite
+the corresponding v1 tickets being marked done (true for the legacy runtime
+only). Also proven
 live: mid-turn steering is structurally unreachable regardless of this gap,
 because `KernelDaemon.poll()` claims and processes a batch strictly
 sequentially, so a `turn.steer` submitted after `turn.send` is never looked
@@ -138,7 +140,7 @@ Test count: 9 → 12 passing tests in
 additions run against the isolated backend; the full file remains the
 protected live profile).
 
-## Update — 2026-07-23: first kernel capability increment
+## Update — 2026-07-23: kernel capability increments
 
 `apps/daemon/src/kernel-daemon.wiring.test.ts` now proves the first tracked
 capability-gap increment with a real temporary workspace. An allowed provider
@@ -150,10 +152,14 @@ project path and returns that authorized path with the daemon claim, so the
 daemon does not mistake a Convex project document ID for a filesystem
 repository or accept a caller-selected workspace.
 
-Approval requests are deliberately not treated as complete: policy `ask`
-currently emits an explicit activity failure because the serialized kernel
-poller cannot yet suspend a provider effect while concurrently processing the
-matching `approval.resolve` command. Provider continuation with tool results,
-true in-flight steering/interrupt cancellation, and orchestration-owned
-checkpoint capture remain open and continue to block parity claims for those
-behaviors.
+Policy `ask` now creates a durable Convex approval with a device-private
+continuation and emits `approval.requested` without blocking the serialized
+poller. A matching `approval.resolve` runs through the real
+`provider.resolve_approval` reactor, verifies the run/turn/resolution identity,
+executes or refuses the held tool, and allows the decider to append
+`approval.resolved` followed by `turn.completed`. Focused daemon, orchestration,
+and Convex tests cover the allow/deny paths and private continuation boundary.
+
+Provider continuation with tool results, true in-flight steering/interrupt
+cancellation, and orchestration-owned checkpoint capture remain open and
+continue to block parity claims for those behaviors.

@@ -2,7 +2,7 @@ import { mutationGeneric, queryGeneric } from "convex/server";
 import { v } from "convex/values";
 import { requireDeviceForThread, requireOwnedThread, requireUser } from "./auth_helpers";
 
-const capability = v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task"));
+const capability = v.union(v.literal("read"), v.literal("edit"), v.literal("exec"), v.literal("task"), v.literal("search"));
 const decision = v.union(v.literal("allow"), v.literal("deny"), v.literal("ask"));
 const risk = v.union(v.literal("low"), v.literal("high"), v.literal("critical"));
 

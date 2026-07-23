@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { expect, test, describe } from "bun:test";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,7 +26,7 @@ import type {
   CodexSessionAdapter,
   NormalizedEvent,
 } from "@relay/codex-app-server";
-import { executeTurn, executeTurnViaCodex } from "./kernel-daemon";
+import { executeTurn, executeTurnViaCodex, resumeKernelApproval } from "./kernel-daemon";
 import { ScriptedModelProvider } from "./model-provider";
 import type { Policy } from "./policy";
 
@@ -558,6 +558,69 @@ describe("kernel tool bridge", () => {
     expect(types).toContain("activity.started");
     expect(types).toContain("activity.completed");
     expect(types.at(-1)).toBe("turn.completed");
+    await runtime.shutdown();
+  });
+
+  test("creates an approval and suspends the turn before executing an ask-policy tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "relay-kernel-tool-approval-"));
+    const runtime = LocalHarnessRuntime.memory();
+    const created = await runtime.createRun({ projectId: "project", runId: "run-tool-approval" as never });
+    await runtime.resumeRun({ runId: created.runId });
+    const turn = await runtime.sendTurn({ runId: created.runId, prompt: "remove the file" });
+    const approvalRequests: Array<{ continuationJson: string; summary: string }> = [];
+    const policy: Policy = { rules: [{ capability: "exec", decision: "ask", risk: "high" }] };
+
+    const result = await executeTurn({
+      governance: {
+        createApproval: async (input: { continuationJson: string; summary: string }) => {
+          approvalRequests.push(input);
+          return "approval-tool-1";
+        },
+        recordDecision: async () => undefined,
+        requestApproval: async () => "deny",
+      },
+      platform: "linux",
+      policy,
+      prompt: "remove the file",
+      provider: new ScriptedModelProvider({
+        chunks: ["waiting"],
+        toolCalls: [{ command: "rm -f blocked.txt", kind: "bash" }],
+      }),
+      root,
+      runId: created.runId,
+      runtime,
+      turnId: turn.turnId,
+    });
+
+    expect(result).toEqual({ approvalId: "approval-tool-1", status: "awaiting_approval" });
+    expect(approvalRequests).toHaveLength(1);
+    expect(JSON.parse(approvalRequests[0]!.continuationJson)).toMatchObject({
+      call: { command: "rm -f blocked.txt", kind: "bash" },
+      turnId: turn.turnId,
+    });
+    const types = await observeTypes(runtime, created.runId);
+    expect(types).toContain("activity.started");
+    expect(types).toContain("approval.requested");
+    expect(types).not.toContain("turn.completed");
+
+    await writeFile(join(root, "blocked.txt"), "blocked");
+    await resumeKernelApproval({
+      approvalId: "approval-tool-1",
+      continuationJson: approvalRequests[0]!.continuationJson,
+      governance: {
+        recordDecision: async () => undefined,
+        requestApproval: async () => "deny",
+      },
+      platform: "linux",
+      policy,
+      resolution: "allow",
+      root,
+      runId: created.runId,
+      runtime,
+      turnId: turn.turnId,
+    });
+    await expect(access(join(root, "blocked.txt"))).rejects.toThrow();
+    expect((await observeTypes(runtime, created.runId)).filter((type) => type === "activity.completed")).toHaveLength(1);
     await runtime.shutdown();
   });
 });

@@ -224,6 +224,7 @@ export function decide(
         kind: "provider.resolve_approval",
         approvalId: command.payload.approvalId,
         resolution: command.payload.resolution,
+        turnId: snapshot.activeTurnId,
       });
       return { events, effects, snapshot: null };
     }
@@ -312,6 +313,16 @@ export function decide(
           approvalId: command.payload.approvalId as never,
           resolution: command.payload.resolution,
         });
+        if (
+          command.payload.turnId !== undefined &&
+          command.payload.turnId === snapshot.activeTurnId
+        ) {
+          appendEvent(
+            "turn.completed",
+            {},
+            { turnId: command.payload.turnId },
+          );
+        }
         const updated = reduceAndApply(current, events, command.issuedAt);
         return { events, effects, snapshot: updated };
       }

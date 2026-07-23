@@ -52,6 +52,27 @@ test("an approval denial blocks a high-risk command", async () => {
   expect(JSON.parse(result.output)).toMatchObject({ kind: "tool_refusal", reason: "approval_denied" });
 });
 
+test("a resumed approval denial refuses without recording a duplicate decision", async () => {
+  let recorded = false;
+  const result = await executeGovernedToolCall({
+    approvalResolution: "deny",
+    call: { command: "rm -f blocked.txt", kind: "bash" },
+    governance: {
+      recordDecision: async () => { recorded = true; },
+      requestApproval: async () => "allow",
+    },
+    onCompleted: async () => undefined,
+    platform: "linux",
+    policy,
+    root: ".",
+    threadId: "thread",
+  });
+
+  expect(result.kind).toBe("refused");
+  expect(JSON.parse(result.output)).toMatchObject({ kind: "tool_refusal", reason: "approval_denied" });
+  expect(recorded).toBe(false);
+});
+
 test("redacts credentials from approval and audit summaries", () => {
   const summary = summarizeToolCall({ command: "curl -H 'Authorization: Bearer deep-secret' --api-key another-secret https://example.com", kind: "bash" });
   expect(summary).not.toContain("deep-secret");

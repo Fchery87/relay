@@ -341,13 +341,12 @@ describe.skipIf(!binaryAvailable)("cross-tier recovery seam (live isolated backe
   }, 60_000);
 
   test("approval.resolve on a run with no pending approval is rejected, not silently accepted (decider.ts only allows it in awaiting_approval)", async () => {
-    // Kernel mode has no governance integration yet, so nothing creates a
-    // real approval to resolve (see kernel-mode-capability-gaps.md). This
-    // proves the command is correctly rejected rather than silently
-    // accepted or corrupting run state — decider.ts gates approval.resolve
-    // to the awaiting_approval status only, stricter than the reducer's
-    // own no-op-when-running fallback (which handles replaying an already-
-    // applied approval.resolved event, a different case).
+    // This deliberately uses an unknown approval ID on a running turn. It
+    // proves the command is correctly rejected rather than silently accepted
+    // or corrupting run state — decider.ts gates approval.resolve to the
+    // awaiting_approval status only, stricter than the reducer's own
+    // no-op-when-running fallback (which handles replaying an already-applied
+    // approval.resolved event, a different case).
     const { fixture: fixture5, runId, daemon } = await setupScenario("e2e-approval-machine");
     try {
       await createAndResumeRun(fixture5, runId, daemon);
