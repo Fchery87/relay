@@ -1565,6 +1565,9 @@ export class KernelDaemon {
         const terminalEvents = reviewerEvents.flatMap((reviewerEventsForRole) => reviewerEventsForRole);
         const terminal = [...terminalEvents].reverse().find((event) => event.type === "activity.completed" || event.type === "activity.failed");
         const terminalPayload = terminal?.payload ?? {};
+        const allReviewersSucceeded = reviewerEvents.every((reviewerEventsForRole) =>
+          [...reviewerEventsForRole].reverse().some((event) => event.type === "activity.completed"),
+        );
         const findings = workflowKind === "review-jury"
           ? mergeJuryFindings(reviewerEvents.flatMap((reviewerEventsForRole, index) => {
               const completed = [...reviewerEventsForRole].reverse().find((event) => event.type === "activity.completed");
@@ -1594,7 +1597,7 @@ export class KernelDaemon {
           result: {
             artifacts: [],
             findings: findings.map((finding) => `${finding.severity}: ${finding.title}`),
-            status: terminal?.type === "activity.completed" ? "success" : "failed",
+            status: allReviewersSucceeded && terminal?.type === "activity.completed" ? "success" : "failed",
             summary: String(terminalPayload.summary ?? terminalPayload.error ?? "Subagent completed"),
           },
         };
