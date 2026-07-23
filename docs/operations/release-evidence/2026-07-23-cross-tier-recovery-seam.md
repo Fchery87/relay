@@ -311,8 +311,8 @@ kernel-default progression. This makes the local evidence gate fail closed; it
 does not substitute for the credentialed real-provider run or the supervised
 release window.
 
-Ordinary CI validation is deterministic: the current daemon suite recorded
-345 passing tests, one credential-dependent skip, and zero failures.
+Earlier ordinary CI validation recorded 345 passing daemon tests, one
+credential-dependent skip, and zero failures.
 The live self-hosted Convex and MCP transport profiles remain protected and
 are run separately when loopback/process capabilities and, for Convex, the
 pinned backend binary are available.
@@ -337,3 +337,23 @@ The real Codex provider lifecycle remains unverified because this environment
 has no credentialed provider secret. Canary promotion, a complete legacy
 rollback window, and schema narrowing therefore remain release-gated rather
 than inferred from this deterministic/provider-independent evidence.
+
+## Update — 2026-07-23: protected gate cannot pass empty
+
+The final-tree protected run passed 13/13 tests with 51 assertions against the
+isolated self-hosted backend. The protected profile now requires
+`RELAY_CROSS_TIER=1`; ordinary package tests skip it, while an explicit opt-in
+fails when the backend binary or loopback binding is unavailable. This prevents
+the manual protected CI job from reporting success with no live tests executed.
+The real Codex credentialed lifecycle, hosted OS/provider matrix, canary stages,
+and release-window evidence remain separate operational gates.
+
+## Update — 2026-07-23: deterministic acceptance is part of the OS matrix
+
+`bun run conformance:matrix` now includes `bun run test:e2e:harness`, so every
+hosted matrix runner executes the deterministic browser-to-kernel acceptance
+boundary rather than only the package suite. The final local Linux run passed
+59 acceptance tests with 198 assertions, alongside typecheck, deterministic
+tests, production build, bundle budget, Codex schema, and security checks.
+This is local deterministic evidence; Linux/macOS/Windows hosted results and
+the credentialed Codex provider lifecycle remain release gates.
