@@ -52,7 +52,18 @@ jobs:
           unzip -o backend.zip
           echo "$binary_sha256  convex-local-backend" | sha256sum --check --strict
           chmod +x convex-local-backend
-      - run: RELAY_CROSS_TIER=1 bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
+      - name: Run protected cross-tier recovery
+        run: |
+          RELAY_CROSS_TIER=1 bun run scripts/run-protected-evidence.ts \
+            --output "$RUNNER_TEMP/cross-tier-recovery.json" -- \
+            bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
+      - name: Upload cross-tier evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-tier-recovery-${{ github.run_id }}
+          path: ${{ runner.temp }}/cross-tier-recovery.json
+          if-no-files-found: error
 
   # Protected provider job: the real Codex app-server lifecycle is opt-in and
   # requires the repository's OPENAI_API_KEY secret. It is intentionally
@@ -75,4 +86,14 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RELAY_CODEX_ENABLED: "1"
           RELAY_E2E_CODEX: "1"
-        run: bun run scripts/smoke-codex-harness.ts
+        run: |
+          bun run scripts/run-protected-evidence.ts \
+            --output "$RUNNER_TEMP/real-codex-harness.json" -- \
+            bun run scripts/smoke-codex-harness.ts
+      - name: Upload real Codex evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-codex-harness-${{ github.run_id }}
+          path: ${{ runner.temp }}/real-codex-harness.json
+          if-no-files-found: error
