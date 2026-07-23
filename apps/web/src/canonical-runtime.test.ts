@@ -26,3 +26,17 @@ test("canonical commands have stable IDs and immutable envelopes", () => {
   expect(changed.commandId).not.toBe(first.commandId);
   expect(canonicalCommandId("run-1", "turn.send", { prompt: "hello" })).toBe(first.commandId);
 });
+
+test("core browser actions all use the canonical command vocabulary", () => {
+  const commands = [
+    ["run.create", { projectId: "project-1" }],
+    ["turn.send", { prompt: "hello" }],
+    ["approval.resolve", { approvalId: "approval-1", resolution: "deny" }],
+    ["run.stop", { reason: "user" }],
+    ["checkpoint.restore", { checkpointId: "checkpoint-1" }],
+  ] as const;
+  const envelopes = commands.map(([kind, payload]) => canonicalCommandEnvelope({ kind, payload, runId: "run-1", threadId: "run-1" }));
+  expect(envelopes.map((envelope) => envelope.kind)).toEqual(commands.map(([kind]) => kind));
+  expect(new Set(envelopes.map((envelope) => envelope.commandId)).size).toBe(commands.length);
+  expect(envelopes.every((envelope) => envelope.correlationId.startsWith("corr-cmd-"))).toBe(true);
+});

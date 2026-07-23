@@ -61,7 +61,7 @@ through `ClientRuntime`. Confirmed cursors are persisted in browser storage;
 snapshot regression and sequence gaps visibly fail closed. The legacy boundary
 remains the default rollback path.
 
-Focused client/browser verification passes 13 tests, including canonical ID
+Focused client/browser verification passes 14 tests, including canonical ID
 stability, snapshot reduction, cursor confirmation, reconnect, terminal
 handling, and gap failure. Full detail-panel migration and end-to-end browser
 behavior coverage remain open before this flag can be promoted beyond canary.
