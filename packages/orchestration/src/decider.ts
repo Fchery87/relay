@@ -113,9 +113,11 @@ export function decide(
     case "run.create": {
       appendEvent("run.created", {
         environmentId: "local" as never,
+        mode: command.payload.mode,
         projectId: command.payload.projectId as never,
         providerInstanceId: command.payload.providerInstanceId,
         permissionProfile: command.payload.permissionProfile,
+        title: command.payload.title,
       });
       const updated = reduceAndApply(current, events, command.issuedAt);
       return { events, effects, snapshot: updated };

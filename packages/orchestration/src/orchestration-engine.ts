@@ -343,12 +343,15 @@ export class OrchestrationEngine {
   // -- creation helpers -------------------------------------------------------
 
   async createRun(input: {
+    readonly mode?: "chat" | "plan";
     readonly projectId: string;
     readonly permissionProfile?: "read-only" | "workspace-write" | "full-access";
     readonly runId?: string;
+    readonly title?: string;
   }): Promise<RunSnapshot> {
     const runId = (input.runId ?? `run-${crypto.randomUUID()}`) as never;
     const initialSnapshot: RunSnapshot = {
+      mode: input.mode,
       runId,
       projectId: input.projectId as never,
       status: "created",
@@ -356,6 +359,7 @@ export class OrchestrationEngine {
       streamVersion: 0,
       restartCount: 0,
       permissionProfile: input.permissionProfile ?? "workspace-write",
+      title: input.title,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -368,8 +372,10 @@ export class OrchestrationEngine {
       actor: { kind: "system", id: "harness" },
       issuedAt: Date.now(),
       payload: {
+        mode: input.mode,
         projectId: input.projectId,
         permissionProfile: input.permissionProfile,
+        title: input.title,
       },
     };
     return (

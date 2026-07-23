@@ -302,6 +302,8 @@ export function canonicalEventPayloadError(
         return `run.created.${field} must be a non-empty string`;
       }
     }
+    if (payload.mode !== undefined && payload.mode !== "chat" && payload.mode !== "plan") return "run.created.mode is invalid";
+    if (payload.title !== undefined && !isNonEmptyString(payload.title)) return "run.created.title must be a non-empty string";
     if (
       payload.permissionProfile !== undefined &&
       !PERMISSION_PROFILES.has(payload.permissionProfile as PermissionProfile)

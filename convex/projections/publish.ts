@@ -221,6 +221,7 @@ export const listProjectionRuns = query({
         let snapshot: {
           budgetUsd?: unknown;
           modelId?: unknown;
+          mode?: unknown;
           permissionProfile?: unknown;
           status?: unknown;
           thinkingLevel?: unknown;
@@ -228,12 +229,14 @@ export const listProjectionRuns = query({
         } = {};
         try { snapshot = JSON.parse(s.snapshotJson) as typeof snapshot; } catch { /* use bounded defaults */ }
         const modelId = typeof snapshot.modelId === "string" ? snapshot.modelId : undefined;
+        const mode = snapshot.mode === "chat" || snapshot.mode === "plan" ? snapshot.mode : undefined;
         const thinkingLevel = snapshot.thinkingLevel === "none" || snapshot.thinkingLevel === "low" || snapshot.thinkingLevel === "medium" || snapshot.thinkingLevel === "high" ? snapshot.thinkingLevel : undefined;
         const permissionProfile = snapshot.permissionProfile === "read-only" || snapshot.permissionProfile === "workspace-write" || snapshot.permissionProfile === "full-access" ? snapshot.permissionProfile : undefined;
         const budgetUsd = snapshot.budgetUsd === null || (typeof snapshot.budgetUsd === "number" && Number.isFinite(snapshot.budgetUsd)) ? snapshot.budgetUsd : undefined;
         return {
           ...(budgetUsd === undefined ? {} : { budgetUsd }),
           ...(modelId === undefined ? {} : { modelId }),
+          ...(mode === undefined ? {} : { mode }),
           ...(permissionProfile === undefined ? {} : { permissionProfile }),
           ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
           runId: s.runId,

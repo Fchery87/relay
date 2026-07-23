@@ -31,9 +31,11 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 // ---------------------------------------------------------------------------
 
 export type RunSnapshot = {
+  readonly mode?: "chat" | "plan";
   readonly runId: RunId;
   readonly projectId?: ProjectId;
   readonly status: RunStatus;
+  readonly title?: string;
   readonly sequence: number;
   readonly streamVersion: number;
   /** The turn currently active, if any. */
@@ -113,6 +115,7 @@ export function reduceRun(
       assertTransition(current, "ready");
       return {
         status: "ready",
+        ...(event.payload.mode === undefined ? {} : { mode: event.payload.mode }),
         projectId: event.payload.projectId,
         permissionProfile:
           event.payload.permissionProfile ?? snapshot.permissionProfile,
@@ -121,6 +124,7 @@ export function reduceRun(
         ...(event.payload.providerInstanceId === undefined
           ? {}
           : { providerInstanceId: event.payload.providerInstanceId }),
+        ...(event.payload.title === undefined ? {} : { title: event.payload.title }),
       };
     }
 

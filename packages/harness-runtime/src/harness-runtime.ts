@@ -11,6 +11,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 export type CreateRunInput = {
+  readonly mode?: "chat" | "plan";
   readonly projectId: string;
   readonly permissionProfile?: "read-only" | "workspace-write" | "full-access";
   /**
@@ -22,6 +23,7 @@ export type CreateRunInput = {
    * (tests, internal tooling) that have no external identity to preserve.
    */
   readonly runId?: RunId;
+  readonly title?: string;
 };
 
 export type ResumeRunInput = {

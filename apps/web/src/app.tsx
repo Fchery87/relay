@@ -172,9 +172,10 @@ function Workspace({
   }
 
   async function startThread(projectId: string, mode: "chat" | "plan") {
-    const threadId = await create({ mode, projectId, title: mode === "plan" ? "Untitled plan" : "Untitled task" });
+    const title = mode === "plan" ? "Untitled plan" : "Untitled task";
+    const threadId = await create({ mode, projectId, title });
     if (projectionCutoverEnabled) {
-      await submitCanonical(canonicalCommandEnvelope({ kind: "run.create", payload: { mode, projectId }, runId: threadId, threadId }));
+      await submitCanonical(canonicalCommandEnvelope({ kind: "run.create", payload: { mode, projectId, title }, runId: threadId, threadId }));
     }
     void navigate({ to: "/projects/$projectId/threads/$threadId", params: { projectId, threadId }, search: { view: mode === "plan" ? "plan" : "session" } });
   }

@@ -68,6 +68,7 @@ export class FakeHarnessRuntime implements HarnessRuntime {
     this.opCount++;
     const runId = `run-${randomUUIDv7()}` as never;
     const snapshot: MutableRun = {
+      mode: input.mode,
       runId,
       status: "created",
       sequence: 0,
@@ -75,6 +76,7 @@ export class FakeHarnessRuntime implements HarnessRuntime {
       restartCount: 0,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      title: input.title,
     };
     this.runs.set(runId, {
       snapshot,
@@ -84,7 +86,9 @@ export class FakeHarnessRuntime implements HarnessRuntime {
     });
     const created = this.makeEvent("run.created", snapshot, {
       environmentId: "fake-env",
+      mode: input.mode,
       projectId: input.projectId,
+      title: input.title,
     });
     this.append(snapshot, created);
     // Transition to ready

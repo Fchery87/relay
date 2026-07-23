@@ -1446,6 +1446,9 @@ export class KernelDaemon {
       switch (kind) {
         case "run.create": {
           const projectId = (payload.projectId ?? "default") as string;
+          const mode = payload.mode === undefined ? undefined : payload.mode === "chat" || payload.mode === "plan" ? payload.mode : (() => { throw new Error("mode is invalid"); })();
+          const title = payload.title === undefined ? undefined : requireBoundedString(payload.title, "title", 200);
+          const permissionProfile = payload.permissionProfile === undefined ? undefined : payload.permissionProfile === "read-only" || payload.permissionProfile === "workspace-write" || payload.permissionProfile === "full-access" ? payload.permissionProfile : (() => { throw new Error("permissionProfile is invalid"); })();
           if (typeof payload.projectPath === "string" && payload.projectPath.length > 0 && runId) {
             this.projectPathByRun.set(runId, payload.projectPath);
           }
@@ -1455,7 +1458,7 @@ export class KernelDaemon {
           // client-visible run identity a browser/projection reader knows
           // about can never be found by a later run.resume/turn.send that
           // references the same canonical ID.
-          await this.runtime.createRun({ projectId, runId: runId as never });
+          await this.runtime.createRun({ mode, permissionProfile, projectId, runId: runId as never, title });
           incrementMetric("activeRuns");
           await complete("completed");
           break;

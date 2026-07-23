@@ -23,10 +23,13 @@ describe("run.created", () => {
   test("created → ready", () => {
     const result = reduceRun(baseSnapshot(), {
       type: "run.created",
-      payload: { projectId: "project-1" },
+      occurredAt: 2,
+      payload: { mode: "plan", projectId: "project-1", title: "Plan the migration" },
     } as never);
     expect(result?.status).toBe("ready");
     expect(result?.projectId).toBe("project-1" as never);
+    expect(result?.mode).toBe("plan");
+    expect(result?.title).toBe("Plan the migration");
   });
 
   test("no-op when already ready", () => {
@@ -174,7 +177,7 @@ describe("approval", () => {
 // --- events that don't change status ---
 
 describe("non-status events", () => {
-  const noStatusChange: Array<{ type: string }> = [
+  const noStatusChange: Array<{ payload?: unknown; type: string }> = [
     { type: "turn.steered" },
     { type: "provider.session.stopped" },
     { type: "assistant.delta" },

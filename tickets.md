@@ -628,6 +628,7 @@ Run model, thinking level, permission profile, and usage budget controls now sub
 `run.configure` and consume `run.configuration.updated` through the projected snapshot.
 Projection-backed messages, activity, governance, usage, checkpoint, comparison, and
 Git panels now skip their redundant legacy reads when projection mode is enabled.
+Canonical run creation preserves projected titles and chat/plan mode for run discovery.
 remaining checklist stays open until all detail panels and workflow behavior
 tests leave their legacy Convex reads/writes behind the explicit rollback
 adapter.

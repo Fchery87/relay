@@ -107,9 +107,11 @@ export type CanonicalEventDraft =
 
 export type RunCreatedPayload = {
   readonly environmentId: EnvironmentId;
+  readonly mode?: "chat" | "plan";
   readonly projectId: ProjectId;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly permissionProfile?: PermissionProfile;
+  readonly title?: string;
 };
 
 export type RunCreatedEvent = EventEnvelope<"run.created", RunCreatedPayload>;

@@ -74,6 +74,8 @@ same `run.configure` inbox command and `run.configuration.updated` projection ev
 the browser reads those settings from the projected snapshot when the cutover flag is enabled.
 Projection-backed messages, activity, approvals, audit, usage, checkpoints, comparison,
 and Git panels no longer issue redundant legacy Convex reads while the cutover flag is enabled.
+Canonical run creation also preserves the run title and chat/plan mode in the projected snapshot,
+so projected discovery no longer invents a generic title or defaults every run to chat.
 Full detail-panel migration and end-to-end browser behavior coverage remain
 open before this flag can be promoted beyond canary; the projection hook still
 uses a bounded event tail, so historical comments outside that tail require a

@@ -215,7 +215,7 @@ test("daemon persists run configuration through a canonical lifecycle event", as
   const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-config-daemon-"));
   const runId = "run-config-daemon";
   const pending = [
-    command("inbox-create-config", "run.create", runId, { projectId: "project-config" }),
+    command("inbox-create-config", "run.create", runId, { mode: "plan", projectId: "project-config", title: "Configured plan" }),
     command("inbox-resume-config", "run.resume", runId, {}),
   ];
   const projected: Array<{ payloadJson: string; type: string }> = [];
@@ -253,6 +253,8 @@ test("daemon persists run configuration through a canonical lifecycle event", as
     expect(projected.map((event) => event.type)).toContain("run.configuration.updated");
     const configuration = projected.find((event) => event.type === "run.configuration.updated");
     expect(configuration ? JSON.parse(configuration.payloadJson) : undefined).toEqual({ budgetUsd: 7, modelId: "configured-model", permissionProfile: "read-only", thinkingLevel: "high" });
+    const created = projected.find((event) => event.type === "run.created");
+    expect(created ? JSON.parse(created.payloadJson) : undefined).toMatchObject({ mode: "plan", projectId: "project-config", title: "Configured plan" });
   } finally {
     await daemon.stop();
     await rm(daemonHome, { force: true, recursive: true });
