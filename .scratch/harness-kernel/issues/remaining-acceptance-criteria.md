@@ -49,7 +49,7 @@ irreversible gates; deterministic local coverage is not substituted for them.
 ## Ticket 15 — Security closure
 
 - [x] Write and test a threat model covering browser/Convex/daemon trust boundaries
-- [ ] Harden secrets: tokens never on argv, credentials encrypted at rest — device tokens are hashed/scoped and credential files are owner-only, but an OS-backed encryption/keychain implementation remains an explicit platform gate
+- [x] Harden secrets: tokens never on argv, credentials encrypted at rest — device tokens are hashed/scoped in Convex and stored through macOS Keychain, Linux Secret Service (`secret-tool`), or Windows user-scoped DPAPI; legacy plaintext metadata migrates on load and unavailable stores fail closed (`apps/daemon/src/device-credentials.ts`)
 - [x] Harden device identity: scoped tokens, minimal trust root
 - [x] Complete authorization semantics: owner/project/device scoping for all queries
 - [x] Complete audit semantics: every governance decision, command, and projection mutation is logged with actor, correlation/causation, requested/effective scope, and policy version

@@ -177,8 +177,14 @@ invalidates all existing sessions.
 ### 7. Sign up and pair
 
 A fresh backend has an empty database — create a new account in the web app
-and pair the daemon again (see the README development flow). Device
-credentials land in `~/.config/relay/device.json` on Linux.
+and pair the daemon again (see the README development flow). The daemon keeps
+only deployment metadata in `device.json`; the device token is stored in the
+platform's protected credential facility. Linux requires `secret-tool` and an
+active Secret Service provider (for example, GNOME Keyring or KWallet), macOS
+uses Keychain, and Windows uses the current user's DPAPI profile. If the
+platform facility is unavailable, pairing and startup fail closed rather than
+writing a plaintext token. Existing legacy `device.json` files are migrated to
+the protected store on the next daemon startup.
 
 ## Day-to-day
 
