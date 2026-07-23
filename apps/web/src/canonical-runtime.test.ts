@@ -64,3 +64,28 @@ test("canonical event tails project ordered user and assistant messages", () => 
     { _id: "assistant:turn-1", content: "hello world", role: "assistant", status: "complete" },
   ]);
 });
+
+test("canonical runtime behavior covers create, turn, approval, stop, checkpoint, and reconnect", async () => {
+  const submitted: string[] = [];
+  let sequence = 0;
+  const runtime = createCanonicalRuntime({
+    fetchSnapshot: async () => ({ runId: "run-1" as never, status: "running", sequence, streamVersion: sequence, restartCount: 0, createdAt: 1, updatedAt: 1 }),
+    fetchEvents: async () => [],
+    submitCommand: async (command) => {
+      submitted.push(command.kind);
+      sequence += 1;
+      return { runId: "run-1" as never, status: "running", sequence, streamVersion: sequence, restartCount: 0, createdAt: 1, updatedAt: sequence };
+    },
+  });
+
+  await runtime.connect("run-1");
+  await runtime.submit("run-1", "run.create", { projectId: "project-1" });
+  await runtime.submit("run-1", "turn.send", { prompt: "hello" });
+  await runtime.submit("run-1", "approval.resolve", { approvalId: "approval-1", resolution: "allow" });
+  await runtime.submit("run-1", "run.stop", { reason: "user" });
+  await runtime.submit("run-1", "checkpoint.restore", { checkpointId: "checkpoint-1" });
+  await runtime.resume("run-1");
+
+  expect(submitted).toEqual(["run.create", "turn.send", "approval.resolve", "run.stop", "checkpoint.restore"]);
+  expect(runtime.get("run-1")?.cursor).toBe(5);
+});

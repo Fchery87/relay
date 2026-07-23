@@ -623,7 +623,7 @@ explicit rollback adapter.
 - [x] Browser actions submit canonical command envelopes with stable command IDs (`canonicalCommandEnvelope` and the reversible projection flag route core actions through `commands/inbox:submitToInbox`)
 - [x] Browser state consumes snapshots plus ordered events and stores a confirmed cursor (`useProjectionRun` + `ClientRuntime` + `ProjectionCursorManager`)
 - [x] Reconnect resumes without gaps or duplicates and visibly fails closed on a gap (`packages/client-runtime/src/client-runtime.test.ts`)
-- [ ] Behavior tests cover create, turn, approval, stop, checkpoint, and reconnect
+- [x] Behavior tests cover create, turn, approval, stop, checkpoint, and reconnect (`apps/web/src/canonical-runtime.test.ts` plus the `ClientRuntime` reconnect/gap suite)
 - [x] Legacy reads remain available as an explicit rollback boundary during canary (`VITE_RELAY_PROJECTION_ENABLED` defaults to the legacy boundary)
 - [ ] Projection parity and cross-owner authorization remain green throughout cutover
 
