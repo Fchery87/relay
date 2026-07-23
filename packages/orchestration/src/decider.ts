@@ -58,6 +58,7 @@ const INTERNAL_COMMAND_STATES: Readonly<
   "checkpoint.result": new Set(RUN_STATUSES),
   "effect.result": new Set(RUN_STATUSES),
   "projection.ack": new Set(RUN_STATUSES),
+  "workflow.start": new Set(RUN_STATUSES),
 };
 
 export class CommandStateError extends Error {
@@ -298,6 +299,15 @@ export function decide(
     case "projection.ack": {
       // Internal commands carry reactor results — no new events by default.
       return { events: [], effects: [], snapshot: null };
+    }
+
+    case "workflow.start": {
+      effects.push({
+        kind: "workflow.create_child",
+        workflowKind: command.payload.workflowKind,
+        input: command.payload.task,
+      });
+      return { events: [], effects, snapshot: null };
     }
 
     case "checkpoint.result": {

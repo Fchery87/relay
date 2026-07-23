@@ -8,6 +8,7 @@ import type {
   TurnId,
 } from "./ids";
 import type { CanonicalEventDraft } from "./events";
+import type { TaskSpec } from "./tasks";
 
 // ---------------------------------------------------------------------------
 // Command envelope
@@ -138,7 +139,8 @@ export type InternalCommand =
   | WorkspaceResultCommand
   | CheckpointResultCommand
   | EffectResultCommand
-  | ProjectionAckCommand;
+  | ProjectionAckCommand
+  | WorkflowStartCommand;
 export type InternalCommandType = InternalCommand["type"];
 
 export type ProviderEventPayload = {
@@ -200,6 +202,15 @@ export type ProjectionAckPayload = { readonly cursor: number };
 export type ProjectionAckCommand = CommandEnvelope<
   "projection.ack",
   ProjectionAckPayload
+>;
+
+export type WorkflowStartPayload = {
+  readonly workflowKind: string;
+  readonly task: TaskSpec;
+};
+export type WorkflowStartCommand = CommandEnvelope<
+  "workflow.start",
+  WorkflowStartPayload
 >;
 
 /** Every command the harness can process. */

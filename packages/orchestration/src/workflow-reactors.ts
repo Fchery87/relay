@@ -1,19 +1,28 @@
-import type { DurableEffect, EffectReactor, ReactorRegistry, TaskSpec } from "@relay/contracts";
+import type { DurableEffect, EffectReactor, ReactorCommandDraft, ReactorContext, ReactorRegistry, TaskSpec } from "@relay/contracts";
 import { DurableTaskStore, type StoreDatabase } from "@relay/local-store";
 
+export type WorkflowChildExecutor = (input: {
+  readonly effect: DurableEffect;
+  readonly task: TaskSpec;
+  readonly context: ReactorContext;
+}) => Promise<WorkflowChildExecution>;
+
+export type WorkflowChildExecution = {
+  readonly commands: ReadonlyArray<ReactorCommandDraft>;
+  readonly result?: unknown;
+};
+
 /** Default durable implementations for workflow effects emitted by adapters. */
-export function createWorkflowReactors(db: StoreDatabase): ReactorRegistry {
+export function createWorkflowReactors(db: StoreDatabase, options?: { readonly executeChild?: WorkflowChildExecutor }): ReactorRegistry {
   const tasks = new DurableTaskStore(db);
   const createChild: EffectReactor = {
-    execute: async (effect) => {
+    execute: async (effect, context) => {
       if (effect.intent.kind !== "workflow.create_child") throw new Error("Unexpected workflow effect");
-      tasks.put(toTaskSpec(effect), Date.now());
-      return [];
+      return (await executeChild(effect, tasks, options?.executeChild, context)).commands;
     },
-    recover: async (effect) => {
+    recover: async (effect, context) => {
       if (effect.intent.kind !== "workflow.create_child") throw new Error("Unexpected workflow effect");
-      tasks.put(toTaskSpec(effect), Date.now());
-      return [];
+      return (await executeChild(effect, tasks, options?.executeChild, context)).commands;
     },
   };
   const completeChild: EffectReactor = {
@@ -56,6 +65,31 @@ function toTaskSpec(effect: DurableEffect): TaskSpec {
     maxAttempts: 3,
     workflowKind: effect.intent.workflowKind,
   };
+}
+
+async function executeChild(
+  effect: DurableEffect,
+  tasks: DurableTaskStore,
+  executor: WorkflowChildExecutor | undefined,
+  context: ReactorContext,
+): Promise<WorkflowChildExecution> {
+  const task = toTaskSpec(effect);
+  const existing = tasks.get(task.taskId);
+  tasks.put(task, Date.now());
+  if (!executor) return { commands: [] };
+  if (existing?.state === "completed") return { commands: [] };
+  const owner = `workflow-${effect.effectId}`;
+  const generation = tasks.claim(task.taskId, owner, 10 * 60 * 1000, Date.now());
+  try {
+    const execution = await executor({ effect, task, context });
+    if (!tasks.complete(task.taskId, owner, generation, execution.result ?? { completed: true }, Date.now())) {
+      throw new Error(`Child task completion was fenced: ${task.taskId}`);
+    }
+    return execution;
+  } catch (error) {
+    tasks.fail(task.taskId, owner, generation, error instanceof Error ? error.message : String(error), Date.now());
+    throw error;
+  }
 }
 
 function isTaskSpec(value: unknown): value is TaskSpec {

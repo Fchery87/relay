@@ -20,7 +20,8 @@ import {
   type RetentionResult,
 } from "@relay/local-store";
 import type { RunDiagnostic, StoreDatabase, OutboxRow } from "@relay/local-store";
-import { createWorkflowReactors, OrchestrationEngine } from "@relay/orchestration";
+import { createWorkflowReactors, OrchestrationEngine, type WorkflowChildExecutor } from "@relay/orchestration";
+import { DurableTaskStore } from "@relay/local-store";
 import {
   type HarnessRuntime,
   type CreateRunInput,
@@ -49,6 +50,7 @@ export type LocalHarnessRuntimeConfig = {
   readonly reactorNow?: () => number;
   /** Enable sandbox enforcement for process and filesystem access. */
   readonly sandbox?: SandboxConfig;
+  readonly workflowChildExecutor?: WorkflowChildExecutor;
 };
 
 /** Sandbox configuration — restricts process execution and filesystem access. */
@@ -70,7 +72,9 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     private readonly db: StoreDatabase,
     private readonly config?: LocalHarnessRuntimeConfig,
   ) {
-    const workflowReactors = createWorkflowReactors(db);
+    const workflowReactors = createWorkflowReactors(db, {
+      executeChild: config?.workflowChildExecutor,
+    });
     this.engine = new OrchestrationEngine(db, {
       maxConcurrentRuns: config?.maxConcurrentRuns ?? 4,
       reactors: { ...workflowReactors, ...config?.reactors },
@@ -139,6 +143,33 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       throw new Error(`Expected a turn receipt for command ${commandId}`);
     }
     return { turnId: receipt.turnId, commandId: receipt.commandId };
+  }
+
+  async startWorkflow(input: {
+    readonly runId: string;
+    readonly workflowKind: string;
+    readonly task: import("@relay/contracts").TaskSpec;
+  }): Promise<RunSnapshot> {
+    return this.engine.submit({
+      schemaVersion: 1,
+      commandId: `cmd-workflow-${input.task.taskId}` as never,
+      type: "workflow.start",
+      runId: input.runId as never,
+      correlationId: `corr-workflow-${input.task.taskId}` as never,
+      actor: { kind: "system", id: "kernel-workflow" },
+      issuedAt: Date.now(),
+      payload: { workflowKind: input.workflowKind, task: input.task },
+    });
+  }
+
+  async runWorkflow(input: {
+    readonly runId: string;
+    readonly workflowKind: string;
+    readonly task: import("@relay/contracts").TaskSpec;
+  }): Promise<import("@relay/contracts").TaskSpec | undefined> {
+    await this.startWorkflow(input);
+    await this.engine.drainWorkflowEffects();
+    return new DurableTaskStore(this.db).get(input.task.taskId);
   }
 
   async steerTurn(input: SteerTurnInput): Promise<void> {

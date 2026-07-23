@@ -1113,28 +1113,32 @@ export class KernelDaemon {
     const resolveProjectRoot = this.config.adapterDeps?.resolveProjectRoot;
     const onTask = resolveProjectRoot && input.projectPath
       ? async (call: Extract<ToolCall, { kind: "task" }>) => {
-          const events = await executeSubagent(
-            {
-              capabilities: call.capabilities,
-              modelId: input.modelId,
-              projectPath: input.projectPath!,
+          const task = await this.runtime.runWorkflow({
+            runId: input.runId,
+            workflowKind: "subagent",
+            task: {
+              taskId: `task-${input.runId}-${input.turnId}-${call.role}` as never,
+              runId: input.runId as never,
+              role: "builder",
               roleName: call.role,
-              task: call.task,
+              objective: call.task,
+              dependencies: [],
+              capabilityCeiling: "workspace-write",
+              capabilities: call.capabilities,
+              contextBudget: 8_000,
+              workspaceMode: "isolated-worktree",
+              state: "ready",
+              attempt: 0,
+              maxAttempts: 3,
+              projectPath: input.projectPath,
               threadId: input.runId,
+              turnId: input.turnId,
+              modelId: input.modelId,
             },
-            {
-              platform: this.config.adapterDeps?.platform ?? "linux",
-              provider: this.provider,
-              resolveProjectRoot,
-            },
-            `kernel-${input.runId}-${input.turnId}`,
-          );
-          const terminal = [...events].reverse().find((event) => event.type === "activity.completed" || event.type === "activity.failed");
-          const payload = terminal?.payload ?? {};
-          const status = terminal?.type === "activity.completed" ? "success" : "failed";
+          });
+          const result = task?.result as { readonly status?: string; readonly summary?: string; readonly error?: string } | undefined;
           return {
-            events: canonicalizeSubagentEvents(events, input.runId, input.turnId),
-            output: JSON.stringify({ artifacts: [], findings: [], status, summary: String(payload.summary ?? payload.error ?? "Subagent completed") }),
+            output: JSON.stringify({ artifacts: [], findings: [], status: result?.status ?? "failed", summary: result?.summary ?? result?.error ?? "Subagent completed" }),
           };
         }
       : undefined;
@@ -1509,6 +1513,54 @@ export class KernelDaemon {
     this.runtime = LocalHarnessRuntime.open(dbPath, {
       maxConcurrentRuns: resolveMaxConcurrentRuns(Bun.env as Record<string, string | undefined>),
       reactors: reactors.build(),
+      workflowChildExecutor: async ({ effect, task, context }) => {
+        const deps = this.config.adapterDeps;
+        if (!deps?.resolveProjectRoot) throw new Error("workflow child execution requires resolveProjectRoot adapter dep");
+        if (context.signal.aborted) throw new Error("workflow child execution was cancelled");
+        const capabilities: Capability[] = task.capabilities?.filter(
+          (capability): capability is Capability => ["read", "edit", "exec", "task"].includes(capability),
+        ) as Capability[] ?? (task.capabilityCeiling === "read-only"
+          ? ["read", "task"]
+          : ["read", "edit", "exec", "task"]);
+        const events = await executeSubagent(
+          {
+            task: task.objective,
+            roleName: task.roleName ?? task.role,
+            capabilities,
+            projectPath: task.projectPath ?? this.projectPathByRun.get(effect.runId as string) ?? ".",
+            threadId: task.threadId ?? (effect.runId as string),
+            modelId: task.modelId,
+          },
+          {
+            provider: this.provider,
+            platform: deps.platform ?? "linux",
+            resolveProjectRoot: deps.resolveProjectRoot,
+          },
+          `workflow-${effect.effectId}`,
+        );
+        const normalizedEvents = canonicalizeSubagentEvents(
+          events,
+          effect.runId as string,
+          task.turnId ?? task.threadId ?? (effect.runId as string),
+        );
+        const terminal = [...events].reverse().find((event) => event.type === "activity.completed" || event.type === "activity.failed");
+        const terminalPayload = terminal?.payload ?? {};
+        return {
+          commands: normalizedEvents.map((normalizedEvent) => ({
+          type: "provider.event" as const,
+          payload: {
+            providerInstanceId: "provider-local" as never,
+            normalizedEvent,
+          },
+          })),
+          result: {
+            artifacts: [],
+            findings: [],
+            status: terminal?.type === "activity.completed" ? "success" : "failed",
+            summary: String(terminalPayload.summary ?? terminalPayload.error ?? "Subagent completed"),
+          },
+        };
+      },
     });
 
     // 3. Create Convex adapters (or use test-injected fakes)
@@ -2086,42 +2138,31 @@ export class KernelDaemon {
           break;
         }
         case "subagent.run": {
-          const deps = this.config.adapterDeps;
-          if (!deps?.resolveProjectRoot) {
-            throw new Error(
-              "subagent.run requires resolveProjectRoot adapter dep",
-            );
-          }
-          const subEvents = await executeSubagent(
-            {
-              task: (payload.task ?? "") as string,
+          if (!runId) throw new Error("subagent.run requires a parent runId");
+          const taskId = (payload.taskId ?? `subagent-${commandId}`) as string;
+          await this.runtime.runWorkflow({
+            runId,
+            workflowKind: "subagent",
+            task: {
+              taskId: taskId as never,
+              runId: runId as never,
+              role: "builder",
               roleName: (payload.roleName ?? "worker") as string,
+              objective: (payload.task ?? "") as string,
+              dependencies: [],
+              capabilityCeiling: (payload.capabilityCeiling ?? "workspace-write") as string,
               capabilities: (payload.capabilities ?? []) as Capability[],
-              projectPath: (payload.projectPath ?? ".") as string,
-              threadId: (payload.threadId ?? "") as string,
+              contextBudget: 8_000,
+              workspaceMode: "isolated-worktree",
+              state: "ready",
+              attempt: 0,
+              maxAttempts: 3,
+              projectPath: (payload.projectPath ?? projectPath ?? ".") as string,
+              threadId: (payload.threadId ?? runId) as string,
+              turnId: payload.turnId as string | undefined,
               modelId: payload.modelId as string | undefined,
             },
-            {
-              provider: this.provider,
-              platform: deps.platform ?? "linux",
-              resolveProjectRoot: deps.resolveProjectRoot,
-            },
-            runId ?? `sub-${commandId}`,
-          );
-          for (const ev of subEvents) {
-            const eventType = ev.type as
-              | "activity.started"
-              | "activity.delta"
-              | "activity.completed"
-              | "activity.failed"
-              | "usage.recorded"
-              | "checkpoint.captured";
-            await appendAdapterEvent(this.runtime, runId ?? `sub-${commandId}`, {
-              eventId: ev.eventId,
-              type: eventType,
-              payload: ev.payload,
-            });
-          }
+          });
           await complete("completed");
           break;
         }

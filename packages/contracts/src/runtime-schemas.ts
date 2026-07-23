@@ -16,6 +16,7 @@ const COMMAND_TYPES = new Set<CommandType>([
   "checkpoint.result",
   "effect.result",
   "projection.ack",
+  "workflow.start",
 ]);
 
 const CANONICAL_EVENT_TYPES = new Set<CanonicalEventType>([
@@ -235,6 +236,15 @@ export function assertCommandSchema(value: unknown): asserts value is Command {
       break;
     case "projection.ack":
       assertFiniteNumber(value.payload.cursor, "projection.ack cursor");
+      break;
+    case "workflow.start":
+      assertString(value.payload.workflowKind, "workflow.start workflowKind");
+      if (!isRecord(value.payload.task)) {
+        throw new CommandSchemaError("workflow.start task is invalid");
+      }
+      assertString(value.payload.task.taskId, "workflow.start task.taskId");
+      assertString(value.payload.task.runId, "workflow.start task.runId");
+      assertString(value.payload.task.objective, "workflow.start task.objective");
       break;
     case "run.resume":
     case "workspace.result":

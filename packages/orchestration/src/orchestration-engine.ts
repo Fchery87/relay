@@ -154,6 +154,12 @@ export class OrchestrationEngine {
     return drain;
   }
 
+  /** Drain workflow child effects concurrently with a parent provider effect. */
+  drainWorkflowEffects(): Promise<number> {
+    if (this.closed) return Promise.reject(new Error("Orchestration engine is closed"));
+    return this.performDrain(["workflow.create_child", "workflow.complete_child"]);
+  }
+
   private async performDrain(kinds?: ReadonlyArray<EffectIntent["kind"]>): Promise<number> {
     const batchSize = this.config.reactorBatchSize ?? 32;
     const workerCount = Math.min(this.config.maxConcurrentRuns, batchSize);

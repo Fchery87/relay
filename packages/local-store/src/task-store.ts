@@ -69,11 +69,12 @@ export class DurableTaskStore {
       throw new Error("Invalid task lease");
     }
     const row = this.db
-      .query("SELECT lease_generation,state,lease_expires_at FROM durable_tasks WHERE task_id=?")
-      .get(taskId as string) as { lease_generation: number; state: string; lease_expires_at: number | null } | null;
+      .query("SELECT lease_generation,state,lease_expires_at,attempt FROM durable_tasks WHERE task_id=?")
+      .get(taskId as string) as { lease_generation: number; state: string; lease_expires_at: number | null; attempt: number } | null;
     if (
       !row ||
       (!["pending", "ready"].includes(row.state) &&
+        !(row.state === "failed" && row.attempt < (this.get(taskId)?.maxAttempts ?? 0)) &&
         !(row.state === "running" && row.lease_expires_at !== null && row.lease_expires_at <= now))
     ) {
       throw new Error("Task is not claimable");
@@ -175,6 +176,12 @@ function sameTaskIdentity(left: TaskSpec, right: TaskSpec): boolean {
     providerInstanceId: left.providerInstanceId,
     maxAttempts: left.maxAttempts,
     workflowKind: left.workflowKind,
+    roleName: left.roleName,
+    capabilities: left.capabilities,
+    projectPath: left.projectPath,
+    threadId: left.threadId,
+    turnId: left.turnId,
+    modelId: left.modelId,
   }) === JSON.stringify({
     taskId: right.taskId,
     parentTaskId: right.parentTaskId,
@@ -188,5 +195,11 @@ function sameTaskIdentity(left: TaskSpec, right: TaskSpec): boolean {
     providerInstanceId: right.providerInstanceId,
     maxAttempts: right.maxAttempts,
     workflowKind: right.workflowKind,
+    roleName: right.roleName,
+    capabilities: right.capabilities,
+    projectPath: right.projectPath,
+    threadId: right.threadId,
+    turnId: right.turnId,
+    modelId: right.modelId,
   });
 }
