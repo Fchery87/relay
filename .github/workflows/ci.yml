@@ -70,7 +70,8 @@ jobs:
   # separate from the isolated-backend job and never runs on PR/push CI.
   real-codex-harness:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    strategy: { matrix: { os: [ubuntu-latest, macos-latest, windows-latest] } }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -86,6 +87,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RELAY_CODEX_ENABLED: "1"
           RELAY_E2E_CODEX: "1"
+        shell: bash
         run: |
           bun run scripts/run-protected-evidence.ts \
             --output "$RUNNER_TEMP/real-codex-harness.json" -- \
@@ -94,6 +96,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: real-codex-harness-${{ github.run_id }}
+          name: real-codex-harness-${{ matrix.os }}-${{ github.run_id }}
           path: ${{ runner.temp }}/real-codex-harness.json
           if-no-files-found: error

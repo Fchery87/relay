@@ -18,6 +18,14 @@ test("protected evidence captures a passing command with redacted output", async
   expect(evidence.stdout).toContain("[REDACTED]");
 });
 
+test("protected evidence records the runner platform and runtime", async () => {
+  const evidence = await captureProtectedRun(["bun", "-e", "console.log('ok')"]);
+
+  expect(evidence.platform).toBe(process.platform);
+  expect(evidence.arch).toBe(process.arch);
+  expect(evidence.runtime).toBe(Bun.version);
+});
+
 test("protected evidence preserves a failing exit code and bounded stderr", async () => {
   const evidence = await captureProtectedRun([
     "bun",

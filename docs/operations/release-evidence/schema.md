@@ -32,11 +32,13 @@ repository still requires real credentialed Codex, hosted macOS/Windows
 results, shadow/canary observation, and a supervised kernel-default release
 window before the final gates can truthfully be set to `true`.
 
-The protected CI jobs run through `scripts/run-protected-evidence.ts`. They
-upload `cross-tier-recovery-<run-id>` and `real-codex-harness-<run-id>` JSON
-artifacts even when the underlying command fails. Those artifacts prove what
-the protected runner observed; they do not change the corresponding release
-gate until an operator reviews and records the result.
+The protected CI jobs run through `scripts/run-protected-evidence.ts`. Each
+artifact includes the runner `platform`, `arch`, and Bun `runtime`, and the
+workflow uploads `cross-tier-recovery-<run-id>` plus one
+`real-codex-harness-<os>-<run-id>` artifact for each supported hosted OS. The
+artifacts are uploaded even when the underlying command fails. They prove what
+each protected runner observed; they do not change the corresponding release
+gate until an operator reviews the complete matrix and records the result.
 
 ## Convex narrowing guard
 

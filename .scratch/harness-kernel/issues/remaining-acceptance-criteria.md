@@ -71,8 +71,8 @@ irreversible gates; deterministic local coverage is not substituted for them.
 
 - [x] Establish service-level objectives and load profiles
 - [x] Optimize from measured signals: bounded batches, lean projections, no hot pollers
-- [ ] Run supported OS conformance matrix (Linux/macOS/Windows) — local Linux completed in `docs/operations/release-evidence/2026-07-23-linux-conformance.md`; hosted macOS/Windows execution remains required
-- [ ] Run provider conformance matrix (Codex app-server + deterministic fake) — deterministic fake and local Linux acceptance pass; credentialed Codex remains protected
+- [ ] Run supported OS conformance matrix (Linux/macOS/Windows) — local Linux completed in `docs/operations/release-evidence/2026-07-23-linux-conformance.md`; the ordinary CI matrix and hosted macOS/Windows execution remain required
+- [ ] Run provider conformance matrix (Codex app-server + deterministic fake) — deterministic fake and local Linux acceptance pass; the manual protected Codex job now runs on all three hosted OS families, but credentialed results remain required
 - [ ] Execute the production acceptance scenario on the supported OS matrix — deterministic production acceptance passed on local Linux; hosted OS results remain required
 
 ---

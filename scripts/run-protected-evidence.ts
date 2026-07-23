@@ -10,6 +10,9 @@ export type ProtectedRunEvidence = Readonly<{
   schemaVersion: 1;
   startedAt: string;
   finishedAt: string;
+  platform: NodeJS.Platform;
+  arch: string;
+  runtime: string;
   command: ReadonlyArray<string>;
   status: "pass" | "fail";
   exitCode: number;
@@ -38,6 +41,9 @@ export async function captureProtectedRun(command: ReadonlyArray<string>): Promi
     schemaVersion: 1,
     startedAt,
     finishedAt: new Date().toISOString(),
+    platform: process.platform,
+    arch: process.arch,
+    runtime: Bun.version,
     command: command.map((argument) => bounded(argument, MAX_COMMAND_ARG_LENGTH)),
     status: exitCode === 0 ? "pass" : "fail",
     exitCode,
