@@ -96,7 +96,17 @@ export const cleanupLegacyPairings = internalMutation({
   handler: async (ctx, args) => {
     const limit = Math.min(100, Math.max(1, Math.floor(args.limit ?? 100)));
     const now = Date.now();
-    const pairings = await ctx.db.query("pairings").order("asc").take(limit);
+    // Read only eligibility ranges. A creation-time scan can get stuck behind
+    // unrelated waiting records and never reach an old claimed record.
+    const expiredPairings = await ctx.db
+      .query("pairings")
+      .withIndex("by_expires_at", (q) => q.lte("expiresAt", now))
+      .take(limit);
+    const claimedPairings = await ctx.db
+      .query("pairings")
+      .withIndex("by_status", (q) => q.eq("status", "claimed"))
+      .take(limit);
+    const pairings = [...new Map([...expiredPairings, ...claimedPairings].map((pairing) => [pairing._id, pairing])).values()];
     let deleted = 0;
     for (const pairing of pairings) {
       if (!pairing.deviceNonce && (pairing.status === "claimed" || pairing.expiresAt <= now)) {
@@ -104,6 +114,10 @@ export const cleanupLegacyPairings = internalMutation({
         deleted += 1;
       }
     }
-    return { deleted, scanned: pairings.length, mayHaveMore: pairings.length === limit };
+    return {
+      deleted,
+      scanned: pairings.length,
+      mayHaveMore: expiredPairings.length === limit || claimedPairings.length === limit,
+    };
   },
 });

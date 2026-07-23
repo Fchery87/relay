@@ -157,6 +157,31 @@ test("legacy claimed pairings without a nonce cannot register a new machine", as
   await expect(t.mutation(internal.migrations.cleanupLegacyPairings, { limit: 100 })).resolves.toMatchObject({ deleted: 1 });
 });
 
+test("legacy pairing cleanup reaches claimed records behind waiting records", async () => {
+  const t = convexTest(schema, modules);
+  const legacyPairingId = await t.run(async (ctx) => {
+    for (let index = 0; index < 101; index += 1) {
+      await ctx.db.insert("pairings", {
+        codeHash: `waiting-code-${index}`,
+        deviceTokenHash: `waiting-token-${index}`,
+        deviceNonce: `waiting-nonce-${index}`,
+        expiresAt: Date.now() + 60_000,
+        status: "waiting",
+      });
+    }
+
+    return await ctx.db.insert("pairings", {
+      codeHash: "legacy-claimed-code",
+      deviceTokenHash: "legacy-claimed-token",
+      expiresAt: Date.now() + 60_000,
+      status: "claimed",
+    });
+  });
+
+  await expect(t.mutation(internal.migrations.cleanupLegacyPairings, { limit: 100 })).resolves.toMatchObject({ deleted: 1, scanned: 1 });
+  await expect(t.run((ctx) => ctx.db.get(legacyPairingId))).resolves.toBeNull();
+});
+
 test("rejects registration with wrong device nonce", async () => {
   const t = convexTest(schema, modules);
   const owner = await createAuthenticatedUser(t);

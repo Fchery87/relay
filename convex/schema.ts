@@ -41,7 +41,7 @@ export default defineSchema({
     expiresAt: v.number(),
     ownerId: v.optional(v.id("users")),
     status: v.union(v.literal("waiting"), v.literal("claimed")),
-  }).index("by_code_hash", ["codeHash"]).index("by_device_token_hash", ["deviceTokenHash"]).index("by_nonce", ["deviceNonce"]),
+  }).index("by_code_hash", ["codeHash"]).index("by_device_token_hash", ["deviceTokenHash"]).index("by_nonce", ["deviceNonce"]).index("by_expires_at", ["expiresAt"]).index("by_status", ["status"]),
   projects: defineTable({
     archivedAt: v.optional(v.number()),
     error: v.optional(v.string()),
