@@ -1,14 +1,22 @@
 import type { ProviderDriver, ProviderAvailability, ProviderSession, ProviderSessionReceipt, ProviderSessionScope, ProviderTurnInput, ProviderTurnReceipt, ProviderSteerInput, ProviderInterruptInput, ProviderRequestResolution, ScopedProviderEvent } from "@relay/provider-runtime";
 import { createCodexSessionAdapter, type SessionAdapterConfig } from "./codex-session-adapter";
 
-export type CodexDriverConfig = Omit<SessionAdapterConfig, "onEvent" | "onRequest">;
+/**
+ * The driver deliberately exposes the durable request resolver. Without it,
+ * Codex server-initiated approvals, dynamic tools, and MCP elicitations would
+ * be rejected at the provider boundary instead of entering Relay governance.
+ */
+export type CodexDriverConfig = Omit<SessionAdapterConfig, "onEvent">;
 export const codexDriver: ProviderDriver<CodexDriverConfig> = {
   async inspect(config: unknown): Promise<ProviderAvailability> {
     if (!config || typeof config !== "object") return { available: false, capabilities: [], reason: "invalid configuration" };
     return { available: true, capabilities: ["turns", "steering", "interrupt", "approval"] };
   },
   async create(config: CodexDriverConfig, scope: ProviderSessionScope): Promise<ProviderSession> {
-    const adapter = createCodexSessionAdapter({ ...config, onRequest: async ({ method, params }) => ({ error: { code: -32601, message: `No durable resolver registered for ${method}` , data: params } }) });
+    const adapter = createCodexSessionAdapter({
+      ...config,
+      onRequest: config.onRequest ?? (async ({ method, params }) => ({ error: { code: -32601, message: `No durable resolver registered for ${method}`, data: params } })),
+    });
     let receipt: ProviderSessionReceipt | undefined;
     const queue: ScopedProviderEvent[] = [];
     let generation = 1;
