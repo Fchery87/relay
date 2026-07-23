@@ -296,3 +296,9 @@ operational gates.
 The machine-readable companion command is `bun run canary:evidence`; it writes
 the stage record with versions, topology, migration state, test IDs, redacted
 failures, residual risks, and promotion-blocking telemetry status.
+
+Ordinary CI validation is deterministic: `bun run test` recorded 325 passing
+tests, 17 explicit capability-dependent skips, and zero failures. The live
+self-hosted Convex and MCP transport profiles remain protected and are run
+separately when loopback/process capabilities and, for Convex, the pinned
+backend binary are available.

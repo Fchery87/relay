@@ -10,7 +10,7 @@
     "connect": "bun run src/connect.ts",
     "dev": "bun run src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test --parallel=1 --max-concurrency=1"
   },
   "dependencies": {
     "@relay/codex-app-server": "workspace:*",

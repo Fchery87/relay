@@ -7,8 +7,9 @@
 // talking over HTTP to a real (but throwaway, isolated) backend process.
 //
 // Skips automatically when the self-hosted Convex backend binary isn't
-// installed (see docs/operations/self-hosted-convex.md) — "protected job"
-// tier per tickets.md, not part of the ordinary fast/deterministic suite.
+// installed or loopback binding is unavailable (see
+// docs/operations/self-hosted-convex.md) — "protected job" tier per
+// tickets.md, not part of the ordinary fast/deterministic suite.
 // Never touches the developer's real backend or its data — see
 // scripts/lib/isolated-self-hosted-convex.ts.
 //
@@ -16,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -33,7 +35,15 @@ import { createCheckpoint } from "./checkpoints";
 import { createConvexProjectionSink } from "./sync/convex-projection-sink";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
-const binaryAvailable = (await findSelfHostedBackendBinary()) !== null;
+async function canBindLoopback(): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(0, "127.0.0.1", () => server.close(() => resolve(true)));
+  });
+}
+
+const binaryAvailable = (await findSelfHostedBackendBinary()) !== null && await canBindLoopback();
 
 /**
  * Poll a projected-state condition, forcing an immediate outbox flush each
