@@ -1510,8 +1510,8 @@ export class KernelDaemon {
           const ckptEvents = await executeCheckpointRestore(
             {
               commit: (payload.commit ?? "HEAD") as string,
-              projectPath: (payload.projectPath ?? ".") as string,
-              threadId: (payload.threadId ?? "") as string,
+              projectPath: (payload.projectPath ?? projectPath ?? this.projectPathByRun.get(runId ?? "") ?? ".") as string,
+              threadId: (payload.threadId ?? runId ?? "") as string,
             },
             {
               resolveProjectRoot: this.config.adapterDeps.resolveProjectRoot,
@@ -1535,9 +1535,11 @@ export class KernelDaemon {
           const cmpEvents = await executeCheckpointComparison(
             {
               fromCommit: (payload.fromCommit ?? "HEAD~1") as string,
+              fromCheckpointId: (payload.fromCheckpointId ?? payload.fromCommit ?? "from") as string,
               toCommit: (payload.toCommit ?? "HEAD") as string,
-              projectPath: (payload.projectPath ?? ".") as string,
-              threadId: (payload.threadId ?? "") as string,
+              toCheckpointId: (payload.toCheckpointId ?? payload.toCommit ?? "to") as string,
+              projectPath: (payload.projectPath ?? projectPath ?? this.projectPathByRun.get(runId ?? "") ?? ".") as string,
+              threadId: (payload.threadId ?? runId ?? "") as string,
             },
             {
               resolveProjectRoot: this.config.adapterDeps.resolveProjectRoot,
@@ -1547,7 +1549,7 @@ export class KernelDaemon {
           for (const ev of cmpEvents) {
             await appendAdapterEvent(this.runtime, runId ?? `cmp-${commandId}`, {
               eventId: ev.eventId,
-              type: "activity.completed" as const,
+              type: ev.type as "checkpoint.compared",
               payload: ev.payload,
             });
           }

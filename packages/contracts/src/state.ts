@@ -253,6 +253,7 @@ export function reduceRun(
       };
 
     case "checkpoint.restored":
+    case "checkpoint.compared":
     case "projection.published":
       return null;
 

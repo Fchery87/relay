@@ -11,7 +11,9 @@ export type CheckpointComparisonAdapterDeps = {
 
 export type CheckpointComparisonInput = {
   fromCommit: string;
+  fromCheckpointId: string;
   toCommit: string;
+  toCheckpointId: string;
   projectPath: string;
   threadId: string;
 };
@@ -32,15 +34,18 @@ export async function executeCheckpointComparison(
     toCommit: input.toCommit,
     root,
   });
+  // Keep the canonical projection bounded like every other cloud-facing
+  // artifact. The legacy comparison path may retain the complete diff.
+  const content = diff.length > 750_000 ? `${diff.slice(0, 750_000)}\n[diff truncated]` : diff;
 
   return [
     {
       eventId: `cmp-done-${runId}-${ts}`,
-      type: "activity.completed",
+      type: "checkpoint.compared",
       payload: {
-        activityId: `cmp-${runId}`,
-        kind: "checkpoint-comparison",
-        summary: diff.slice(0, 2000),
+        content,
+        fromCheckpointId: input.fromCheckpointId as never,
+        toCheckpointId: input.toCheckpointId as never,
       },
     },
   ];

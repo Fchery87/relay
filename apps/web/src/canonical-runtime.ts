@@ -98,10 +98,35 @@ export function projectionEventsToThreadEvents(events: ReadonlyArray<EventEnvelo
 export function projectionEventsToCheckpoints(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ThreadCheckpoint[] {
   return events.flatMap((event) => {
     if (event.type !== "checkpoint.captured") return [];
-    const checkpointId = event.payload && typeof event.payload === "object" ? (event.payload as { checkpointId?: unknown }).checkpointId : undefined;
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as { checkpointId?: unknown; commit?: unknown; ref?: unknown } : {};
+    const checkpointId = payload.checkpointId;
     if (typeof checkpointId !== "string") return [];
-    return [{ _id: checkpointId, messageId: event.turnId as string ?? event.eventId as string }];
+    return [{
+      _id: checkpointId,
+      commit: typeof payload.commit === "string" ? payload.commit : undefined,
+      messageId: event.turnId as string ?? event.eventId as string,
+      ref: typeof payload.ref === "string" ? payload.ref : undefined,
+    }];
   });
+}
+
+export type ProjectionCheckpointComparison = {
+  readonly _id: string;
+  readonly content?: string;
+  readonly status: "queued" | "running" | "complete" | "failed";
+};
+
+export function projectionEventsToCheckpointComparison(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ProjectionCheckpointComparison | null {
+  const latest = [...events].reverse().find((event) => event.type === "checkpoint.compared");
+  if (!latest) return null;
+  const payload = latest.payload && typeof latest.payload === "object" ? latest.payload as { content?: unknown; fromCheckpointId?: unknown; toCheckpointId?: unknown } : {};
+  const from = typeof payload.fromCheckpointId === "string" ? payload.fromCheckpointId : "from";
+  const to = typeof payload.toCheckpointId === "string" ? payload.toCheckpointId : "to";
+  return {
+    _id: `comparison:${from}:${to}`,
+    content: typeof payload.content === "string" ? payload.content : undefined,
+    status: "complete",
+  };
 }
 
 export function projectionEventsToApprovals(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): Approval[] {

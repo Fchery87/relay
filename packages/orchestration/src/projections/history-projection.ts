@@ -161,6 +161,7 @@ function applyEvent(
     }
 
     case "checkpoint.restored":
+    case "checkpoint.compared":
     case "run.created":
     case "run.started":
     case "run.stopping":

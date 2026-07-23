@@ -9,7 +9,7 @@ export type ThreadMessage = {
   status: "complete" | "queued" | "streaming";
 };
 
-export type ThreadCheckpoint = { _id: string; messageId: string };
+export type ThreadCheckpoint = { _id: string; commit?: string; messageId: string; ref?: string };
 
 export function ThreadMessages({ checkpoints = [], messages, onRestore }: { checkpoints?: readonly ThreadCheckpoint[]; messages: readonly ThreadMessage[]; onRestore?: (checkpointId: string) => Promise<unknown> }) {
   const checkpointByMessage = new Map(checkpoints.map((checkpoint) => [checkpoint.messageId, checkpoint]));

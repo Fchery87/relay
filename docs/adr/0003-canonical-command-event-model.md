@@ -31,7 +31,7 @@ A decision is needed on the canonical shape of commands, events, and state trans
   activity.started | activity.delta | activity.completed | activity.failed
   approval.requested | approval.resolved
   usage.recorded
-  checkpoint.captured | checkpoint.restored
+  checkpoint.captured | checkpoint.restored | checkpoint.compared
   projection.published
   ```
 

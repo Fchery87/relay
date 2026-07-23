@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToMessages } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToMessages } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -34,6 +34,7 @@ test("core browser actions all use the canonical command vocabulary", () => {
     ["approval.resolve", { approvalId: "approval-1", resolution: "deny" }],
     ["run.stop", { reason: "user" }],
     ["checkpoint.restore", { checkpointId: "checkpoint-1" }],
+    ["checkpoint.compare", { fromCheckpointId: "checkpoint-1", fromCommit: "abc", toCheckpointId: "checkpoint-2", toCommit: "def" }],
   ] as const;
   const envelopes = commands.map(([kind, payload]) => canonicalCommandEnvelope({ kind, payload, runId: "run-1", threadId: "run-1" }));
   expect(envelopes.map((envelope) => envelope.kind)).toEqual(commands.map(([kind]) => kind));
@@ -63,6 +64,27 @@ test("canonical event tails project ordered user and assistant messages", () => 
     { _id: "user:turn-1", content: "say hello", role: "user", status: "complete" },
     { _id: "assistant:turn-1", content: "hello world", role: "assistant", status: "complete" },
   ]);
+});
+
+test("canonical checkpoint artifacts retain restore metadata and comparison output", () => {
+  const event = (sequence: number, type: string, payload: Record<string, unknown>) => ({
+    eventId: `event-${sequence}` as never,
+    sequence,
+    streamVersion: sequence,
+    type: type as never,
+    runId: "run-1" as never,
+    turnId: "turn-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: sequence,
+    payload,
+  });
+  expect(projectionEventsToCheckpoints([event(1, "checkpoint.captured", { checkpointId: "checkpoint-1", commit: "abc", ref: "refs/relay/checkpoints/run-1/turn-1" })])).toEqual([{
+    _id: "checkpoint-1",
+    commit: "abc",
+    messageId: "turn-1",
+    ref: "refs/relay/checkpoints/run-1/turn-1",
+  }]);
+  expect(projectionEventsToCheckpointComparison([event(2, "checkpoint.compared", { content: "diff", fromCheckpointId: "abc", toCheckpointId: "def" })])).toEqual({ _id: "comparison:abc:def", content: "diff", status: "complete" });
 });
 
 test("canonical runtime behavior covers create, turn, approval, stop, checkpoint, and reconnect", async () => {

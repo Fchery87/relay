@@ -185,6 +185,7 @@ describe("non-status events", () => {
     { type: "activity.failed" },
     { type: "usage.recorded" },
     { type: "checkpoint.restored" },
+    { type: "checkpoint.compared" },
     { type: "projection.published" },
   ];
 

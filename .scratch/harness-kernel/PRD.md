@@ -133,7 +133,7 @@ type CommandEnvelope<TType extends string, TPayload> = {
 };
 ```
 
-**Canonical event union** (provider-native notification names are never encoded as canonical types): `run.created | run.started | run.stopping | run.stopped | run.failed`, `provider.session.started | resumed | stopped`, `turn.started | steered | completed | failed | interrupted`, `assistant.delta | completed`, `activity.started | delta | completed | failed`, `approval.requested | resolved`, `usage.recorded`, `checkpoint.captured | restored`, `projection.published`.
+**Canonical event union** (provider-native notification names are never encoded as canonical types): `run.created | run.started | run.stopping | run.stopped | run.failed`, `provider.session.started | resumed | stopped`, `turn.started | steered | completed | failed | interrupted`, `assistant.delta | completed`, `activity.started | delta | completed | failed`, `approval.requested | resolved`, `usage.recorded`, `checkpoint.captured | restored | compared`, `projection.published`.
 
 **Run state machine** (owned by one pure `reduceRun(state, event)` reducer — the only function that defines run-status semantics; exhaustive switch checks): `created → ready → running → awaiting_approval → stopping → stopped / completed / failed`.
 

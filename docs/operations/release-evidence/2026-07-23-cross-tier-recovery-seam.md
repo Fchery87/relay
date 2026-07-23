@@ -61,12 +61,15 @@ through `ClientRuntime`. Confirmed cursors are persisted in browser storage;
 snapshot regression and sequence gaps visibly fail closed. The legacy boundary
 remains the default rollback path.
 
-Focused client/browser verification passes 15 tests, including canonical ID
+Focused client/browser verification passes the canonical runtime, checkpoint,
+and client-runtime suites, including canonical ID
 stability, snapshot reduction, cursor confirmation, reconnect, terminal
-handling, gap failure, and ordered message projection. Full detail-panel migration and end-to-end browser
-behavior coverage remain open before this flag can be promoted beyond canary;
-the diff/comment and checkpoint-comparison workflows still use their explicit
-legacy adapters while their canonical event-backed equivalents are completed.
+handling, gap failure, ordered message projection, checkpoint metadata, and
+canonical checkpoint comparison. Full detail-panel migration and end-to-end
+browser behavior coverage remain open before this flag can be promoted beyond
+canary; current-worktree diff snapshots and inline diff comments still use
+their explicit legacy adapters because their canonical contracts are not yet
+defined.
 
 ## Two real, previously-undetected bugs found and fixed
 

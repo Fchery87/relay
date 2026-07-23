@@ -614,7 +614,8 @@ parity tests.
 
 Progress: the reversible `VITE_RELAY_PROJECTION_ENABLED=1` boundary now
 selects projection run discovery, routes create/turn/stop/approval/restore
-actions through stable canonical inbox envelopes, and feeds projection
+actions through stable canonical inbox envelopes, routes checkpoint comparison
+through the canonical `checkpoint.compared` event, and feeds projection
 snapshots/events through `ClientRuntime` with durable cursors and fail-closed
 gap handling. The remaining checklist stays open until all detail panels and
 workflow behavior tests leave their legacy Convex reads/writes behind the

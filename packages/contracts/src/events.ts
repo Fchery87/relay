@@ -72,6 +72,7 @@ export type CanonicalEvent =
   // --- workspace / checkpoint ---
   | CheckpointCapturedEvent
   | CheckpointRestoredEvent
+  | CheckpointComparedEvent
   // --- projection synchronisation ---
   | ProjectionPublishedEvent;
 
@@ -276,6 +277,17 @@ export type CheckpointRestoredPayload = {
 export type CheckpointRestoredEvent = EventEnvelope<
   "checkpoint.restored",
   CheckpointRestoredPayload
+>;
+
+export type CheckpointComparedPayload = {
+  readonly fromCheckpointId: CheckpointId;
+  readonly toCheckpointId: CheckpointId;
+  readonly content: string;
+};
+
+export type CheckpointComparedEvent = EventEnvelope<
+  "checkpoint.compared",
+  CheckpointComparedPayload
 >;
 
 // --- projection ---
