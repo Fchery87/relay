@@ -33,10 +33,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Install self-hosted Convex backend
         run: |
+          pin_manifest="$GITHUB_WORKSPACE/docs/operations/self-hosted-convex-pin.json"
+          archive_sha256="$(node -e 'console.log(require(process.argv[1]).releaseArchiveSha256)' "$pin_manifest")"
+          binary_sha256="$(node -e 'console.log(require(process.argv[1]).binarySha256)' "$pin_manifest")"
           mkdir -p "$HOME/.local/share/convex-selfhost"
           cd "$HOME/.local/share/convex-selfhost"
-          curl -sLO https://github.com/get-convex/convex-backend/releases/latest/download/convex-local-backend-x86_64-unknown-linux-gnu.zip
-          unzip -o convex-local-backend-x86_64-unknown-linux-gnu.zip
+          curl -sSfL https://github.com/get-convex/convex-backend/releases/latest/download/convex-local-backend-x86_64-unknown-linux-gnu.zip -o backend.zip
+          echo "$archive_sha256  backend.zip" | sha256sum --check --strict
+          unzip -o backend.zip
+          echo "$binary_sha256  convex-local-backend" | sha256sum --check --strict
           chmod +x convex-local-backend
       - run: RELAY_CROSS_TIER=1 bun test apps/daemon/src/cross-tier-recovery.e2e.test.ts
 
