@@ -159,6 +159,58 @@ test("daemon captures idempotent before and after checkpoints around a turn", as
   }
 });
 
+test("daemon routes Git actions through canonical lifecycle events", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-git-daemon-"));
+  const projectRoot = await mkdtemp(join(tmpdir(), "relay-kernel-git-project-"));
+  const runId = "run-git-daemon";
+  const pending = [
+    command("inbox-create-git", "run.create", runId, { projectId: "project-git" }),
+    command("inbox-resume-git", "run.resume", runId, {}),
+  ];
+  const projected: Array<{ eventId: string; type: string }> = [];
+  const daemon = new KernelDaemon({
+    adapterDeps: { platform: "linux", resolveProjectRoot: async () => projectRoot },
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "git-test",
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async ({ events }) => { projected.push(...events.map((event) => ({ eventId: event.eventId, type: event.type }))); },
+      upsertSnapshot: async () => undefined,
+      advanceCursor: async () => undefined,
+    },
+  });
+
+  try {
+    await runCommand({ command: "git init && git config user.email relay@example.test && git config user.name Relay && git commit --allow-empty -m baseline && printf 'change\n' > change.txt", platform: "linux", root: projectRoot });
+    await daemon.start();
+    await daemon.pollOnce();
+    pending.push(command("inbox-git-stage", "git.action", runId, { action: "stage", projectPath: projectRoot }));
+    await daemon.pollOnce();
+    const deadline = Date.now() + 2_000;
+    while (!projected.some((event) => event.type === "git.action.updated") && Date.now() < deadline) {
+      await daemon.flushOnce();
+      await Bun.sleep(10);
+    }
+    expect(projected.filter((event) => event.type === "git.action.updated")).toHaveLength(2);
+    const status = await runCommand({ command: "git diff --cached --name-only", platform: "linux", root: projectRoot });
+    expect(status.stdout.trim()).toBe("change.txt");
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+    await rm(projectRoot, { force: true, recursive: true });
+  }
+});
+
 function command(commandId: string, kind: string, runId: string, payload: unknown) {
   return {
     commandId,

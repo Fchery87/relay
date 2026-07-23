@@ -146,6 +146,23 @@ export function projectionEventsToReviewComments(events: ReadonlyArray<EventEnve
   return [...comments.values()];
 }
 
+export type ProjectionGitAction = {
+  readonly _id: string;
+  readonly action: "stage" | "commit" | "push";
+  readonly status: "queued" | "running" | "complete" | "failed";
+};
+
+export function projectionEventsToGitActions(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ProjectionGitAction[] {
+  const actions = new Map<string, ProjectionGitAction>();
+  for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    if (event.type !== "git.action.updated") continue;
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (typeof payload.actionId !== "string" || (payload.action !== "stage" && payload.action !== "commit" && payload.action !== "push") || (payload.status !== "running" && payload.status !== "complete" && payload.status !== "failed")) continue;
+    actions.set(payload.actionId, { _id: payload.actionId, action: payload.action, status: payload.status });
+  }
+  return [...actions.values()];
+}
+
 export function projectionEventsToCheckpointComparison(events: ReadonlyArray<EventEnvelope<CanonicalEventType, unknown>>): ProjectionCheckpointComparison | null {
   const latest = [...events].reverse().find((event) => event.type === "checkpoint.compared");
   if (!latest) return null;

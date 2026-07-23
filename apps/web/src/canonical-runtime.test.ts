@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToMessages, projectionEventsToReviewComments } from "./canonical-runtime";
+import { createCanonicalRuntime, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments } from "./canonical-runtime";
 import { canonicalCommandEnvelope, canonicalCommandId, resolveRunData } from "./run-data";
 
 test("the run-data boundary switches between projection and legacy rollback explicitly", () => {
@@ -35,6 +35,7 @@ test("core browser actions all use the canonical command vocabulary", () => {
     ["run.stop", { reason: "user" }],
     ["checkpoint.restore", { checkpointId: "checkpoint-1" }],
     ["checkpoint.compare", { fromCheckpointId: "checkpoint-1", fromCommit: "abc", toCheckpointId: "checkpoint-2", toCommit: "def" }],
+    ["git.action", { action: "stage" }],
   ] as const;
   const envelopes = commands.map(([kind, payload]) => canonicalCommandEnvelope({ kind, payload, runId: "run-1", threadId: "run-1" }));
   expect(envelopes.map((envelope) => envelope.kind)).toEqual(commands.map(([kind]) => kind));
@@ -132,4 +133,18 @@ test("canonical runtime behavior covers create, turn, approval, stop, checkpoint
 
   expect(submitted).toEqual(["run.create", "turn.send", "approval.resolve", "run.stop", "checkpoint.restore"]);
   expect(runtime.get("run-1")?.cursor).toBe(5);
+});
+
+test("canonical event tails project Git action lifecycle", () => {
+  const event = (sequence: number, status: string) => ({
+    eventId: `event-${sequence}` as never,
+    sequence,
+    streamVersion: sequence,
+    type: "git.action.updated" as never,
+    runId: "run-1" as never,
+    correlationId: "corr-1" as never,
+    occurredAt: sequence,
+    payload: { action: "commit", actionId: "git-1", status },
+  });
+  expect(projectionEventsToGitActions([event(1, "running"), event(2, "complete")])).toEqual([{ _id: "git-1", action: "commit", status: "complete" }]);
 });

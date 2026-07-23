@@ -24,7 +24,7 @@ import { WorkbenchTabs, type WorkbenchTab } from "./workbench-tabs";
 import { formatOutgoingMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type TextAttachment } from "./message-attachments";
 import { GitActionConfirmation, type GitAction } from "./git-action-confirmation";
 import { ContextInspector } from "./context-inspector";
-import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
+import { projectionEventsToApprovals, projectionEventsToAudit, projectionEventsToCheckpointComparison, projectionEventsToCheckpoints, projectionEventsToDiff, projectionEventsToGitActions, projectionEventsToMessages, projectionEventsToReviewComments, projectionEventsToThreadEvents, projectionEventsToUsage, useProjectionRun } from "./canonical-runtime";
 
 const listThreads = canonicalRunData.listRuns;
 const listMessages = makeFunctionReference<"query", { threadId: string }, ThreadMessage[]>("conversations:listThreadMessages");
@@ -241,6 +241,7 @@ export function ThreadView({
   const visibleDiff = projectionCutoverEnabled ? projectionEventsToDiff(projectionEvents) : diff?.content ?? "No changes.";
   const visibleUsage = projectionCutoverEnabled ? projectionEventsToUsage(projectionEvents) : usage ?? EMPTY_USAGE_SUMMARY;
   const visibleReviewComments = projectionCutoverEnabled ? projectionEventsToReviewComments(projectionEvents) : diffComments ?? [];
+  const visibleGitActions = projectionCutoverEnabled ? projectionEventsToGitActions(projectionEvents) : gitActions ?? [];
   function canonicalReviewFeedback(): Record<string, unknown> {
     if (!projectionCutoverEnabled) return {};
     const pending = visibleReviewComments.filter((comment) => !comment.resolved);
@@ -256,7 +257,7 @@ export function ThreadView({
     planPhase: activeThread.planPhase,
     status: activeStatus,
   }) : "request";
-  const latestGitAction = gitActions?.at(-1);
+  const latestGitAction = visibleGitActions.at(-1);
   const diffSummary = summarizeFiles(splitFiles(visibleDiff));
   const gitActionRunning = latestGitAction?.status === "queued" || latestGitAction?.status === "running";
   const needsOperator = activeStatus === "awaiting-approval" || (isPlanRun && activeThread?.planPhase === "review");
@@ -351,7 +352,7 @@ export function ThreadView({
           {inspector}
         </ContextInspector>
       </div>
-      <GitActionConfirmation action={pendingGitAction} commitMessage={commitMessage} onCancel={() => setPendingGitAction(undefined)} onConfirm={() => { if (!pendingGitAction) return; void enqueueGit({ action: pendingGitAction, message: pendingGitAction === "commit" ? commitMessage.trim() : undefined, threadId: activeThreadId }).finally(() => setPendingGitAction(undefined)); }} projectName={projectName} />
+      <GitActionConfirmation action={pendingGitAction} commitMessage={commitMessage} onCancel={() => setPendingGitAction(undefined)} onConfirm={() => { if (!pendingGitAction) return; const payload = { action: pendingGitAction, ...(pendingGitAction === "commit" ? { message: commitMessage.trim() } : {}) }; void (projectionCutoverEnabled ? submitRunCommand("git.action", payload) : enqueueGit({ ...payload, threadId: activeThreadId })).finally(() => setPendingGitAction(undefined)); }} projectName={projectName} />
     </> : <div className="task-empty-state"><span aria-hidden="true" className="empty-contact">◇</span><h2>No active task</h2><p>Start a task to direct Relay across this repository and machine.</p><div><button className="button-primary" onClick={() => void startThread()} type="button">New task</button><button onClick={() => void startThread("plan")} type="button">Start with a plan</button></div></div>}
   </section>;
 }

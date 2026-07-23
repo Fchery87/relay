@@ -74,6 +74,7 @@ export type CanonicalEvent =
   | CheckpointRestoredEvent
   | CheckpointComparedEvent
   | WorkspaceDiffUpdatedEvent
+  | GitActionUpdatedEvent
   | ReviewCommentCreatedEvent
   | ReviewCommentResolvedEvent
   // --- projection synchronisation ---
@@ -302,6 +303,17 @@ export type WorkspaceDiffUpdatedEvent = EventEnvelope<
   "workspace.diff.updated",
   WorkspaceDiffUpdatedPayload
 >;
+
+export type GitActionUpdatedPayload = {
+  readonly action: "stage" | "commit" | "push";
+  readonly actionId: string;
+  readonly commit?: string;
+  readonly error?: string;
+  readonly message?: string;
+  readonly status: "running" | "complete" | "failed";
+};
+
+export type GitActionUpdatedEvent = EventEnvelope<"git.action.updated", GitActionUpdatedPayload>;
 
 export type ReviewCommentCreatedPayload = {
   readonly commentId: string;

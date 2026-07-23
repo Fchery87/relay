@@ -622,6 +622,8 @@ gap handling. Inline review comments now use canonical
 `review.comment.created`/`review.comment.resolved` events, and unresolved
 projected comments are included in the next canonical turn before successful
 turn completion resolves only the comments received by that turn. The
+stage/commit/push controls now submit canonical `git.action` commands and
+project `git.action.updated` lifecycle events under the same boundary.
 remaining checklist stays open until all detail panels and workflow behavior
 tests leave their legacy Convex reads/writes behind the explicit rollback
 adapter.

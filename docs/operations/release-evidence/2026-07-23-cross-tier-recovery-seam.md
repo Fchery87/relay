@@ -66,7 +66,9 @@ and client-runtime suites, including canonical ID
 stability, snapshot reduction, cursor confirmation, reconnect, terminal
 handling, gap failure, ordered message projection, checkpoint metadata, and
 canonical checkpoint comparison, bounded current-worktree diff projection, and
-canonical review-comment creation/resolution projection.
+canonical review-comment creation/resolution projection. Git stage/commit/push
+controls now use the same canonical command boundary and project bounded
+`git.action.updated` lifecycle events.
 Full detail-panel migration and end-to-end browser behavior coverage remain
 open before this flag can be promoted beyond canary; the projection hook still
 uses a bounded event tail, so historical comments outside that tail require a

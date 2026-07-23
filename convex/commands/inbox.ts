@@ -16,6 +16,7 @@ const SUPPORTED_COMMAND_KINDS = new Set([
   "run.resume",
   "run.stop",
   "turn.send",
+  "git.action",
   "turn.steer",
   "turn.interrupt",
   "approval.resolve",

@@ -81,7 +81,7 @@ import {
 } from "./kernel-agentic-turn";
 import { buildTurnPrompt, type ReviewComment } from "./agent-loop";
 import { createCheckpoint } from "./checkpoints";
-import { computeDiff } from "./git-review";
+import { commitChanges, computeDiff, pushChanges, stageAll } from "./git-review";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1563,6 +1563,41 @@ export class KernelDaemon {
           });
           span.tags["turnLatencyMs"] = String(Date.now() - turnStart);
           span.tags["turnSucceeded"] = "queued";
+          await complete("completed");
+          break;
+        }
+        case "git.action": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("git.action requires runId");
+          if (!this.config.adapterDeps?.resolveProjectRoot) throw new Error("git.action requires resolveProjectRoot adapter dep");
+          const action = payload.action;
+          if (action !== "stage" && action !== "commit" && action !== "push") throw new Error("git.action requires a supported action");
+          const actionMessage = typeof payload.message === "string" && payload.message.trim() ? payload.message.trim() : undefined;
+          const root = await this.config.adapterDeps.resolveProjectRoot({
+            repoPath: (typeof payload.projectPath === "string" ? payload.projectPath : projectPath ?? this.projectPathByRun.get(rId)) ?? ".",
+            threadId: rId,
+          });
+          const actionId = externalCommandId;
+          const appendGitEvent = (status: "running" | "complete" | "failed", details: { commit?: string; error?: string } = {}) => appendAdapterEvent(this.runtime, rId, {
+            eventId: `ev-git-action-${actionId}-${status}`,
+            type: "git.action.updated",
+            payload: { action, actionId, status, ...(actionMessage ? { message: sanitizeForProjection(actionMessage) } : {}), ...details },
+          });
+          const started = await appendGitEvent("running");
+          if (!started.ok) throw new Error(`Failed to append Git action start: ${started.reason}`);
+          try {
+            let commit: string | undefined;
+            if (action === "stage") await stageAll({ root });
+            if (action === "commit") commit = await commitChanges({ message: actionMessage ?? "Relay changes", root });
+            if (action === "push") await pushChanges({ root });
+            const completed = await appendGitEvent("complete", commit ? { commit } : {});
+            if (!completed.ok) throw new Error(`Failed to append Git action completion: ${completed.reason}`);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const failed = await appendGitEvent("failed", { error: sanitizeForProjection(message) });
+            if (!failed.ok) console.error("Kernel daemon: failed to append Git action failure", failed.reason);
+            throw error;
+          }
           await complete("completed");
           break;
         }
