@@ -40,3 +40,20 @@ test("claimed commands carry the authorized project path for daemon workspace re
   expect(claimed).toHaveLength(1);
   expect(claimed[0]).toMatchObject({ projectPath: "/repo" });
 });
+
+test("command ingress rejects another owner's thread", async () => {
+  const t = convexTest(schema, modules);
+  const { projectId } = await createAuthenticatedProject(t, "f".repeat(32));
+  const threadId = await t.run((ctx) => ctx.db.insert("threads", { projectId, status: "running", title: "private thread" }));
+  const strangerId = await t.run((ctx) => ctx.db.insert("users", {}));
+  const stranger = t.withIdentity({ subject: `${strangerId}|session` });
+
+  await expect(stranger.mutation(api.commands.inbox.submitToInbox, {
+    commandId: "cmd-cross-owner",
+    correlationId: "corr-cross-owner",
+    kind: "turn.send",
+    payloadJson: JSON.stringify({ prompt: "steal this run", turnId: "turn-cross-owner" }),
+    runId: threadId,
+    threadId,
+  })).rejects.toThrow(/does not belong to the current user/);
+});

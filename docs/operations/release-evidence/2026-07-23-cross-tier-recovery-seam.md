@@ -76,10 +76,17 @@ Projection-backed messages, activity, approvals, audit, usage, checkpoints, comp
 and Git panels no longer issue redundant legacy Convex reads while the cutover flag is enabled.
 Canonical run creation also preserves the run title and chat/plan mode in the projected snapshot,
 so projected discovery no longer invents a generic title or defaults every run to chat.
-Full detail-panel migration and end-to-end browser behavior coverage remain
-open before this flag can be promoted beyond canary; the projection hook still
-uses a bounded event tail, so historical comments outside that tail require a
-follow-up pagination/compaction design.
+Projection read authorization now has direct Convex coverage: a second owner
+cannot read another owner's snapshot, event stream, run list, or cursor, and
+canonical command ingress rejects another owner's thread. Full detail-panel
+migration and end-to-end browser behavior coverage remain open before this flag
+can be promoted beyond canary. The remaining legacy-backed detail surfaces are
+plans, subagent trees, MCP elicitation state/actions, and slash-command
+discovery; each still lacks a canonical event/state producer or command contract
+in the kernel projection, so they are intentionally not hidden behind a fake
+projection fallback. The projection hook also uses a bounded event tail, so
+historical comments outside that tail require a follow-up pagination/compaction
+design.
 
 ## Two real, previously-undetected bugs found and fixed
 

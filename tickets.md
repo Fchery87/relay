@@ -638,7 +638,7 @@ adapter.
 - [x] Reconnect resumes without gaps or duplicates and visibly fails closed on a gap (`packages/client-runtime/src/client-runtime.test.ts`)
 - [x] Behavior tests cover create, turn, approval, stop, checkpoint, and reconnect (`apps/web/src/canonical-runtime.test.ts` plus the `ClientRuntime` reconnect/gap suite)
 - [x] Legacy reads remain available as an explicit rollback boundary during canary (`VITE_RELAY_PROJECTION_ENABLED` defaults to the legacy boundary)
-- [ ] Projection parity and cross-owner authorization remain green throughout cutover
+- [ ] Projection parity and cross-owner authorization remain green throughout cutover (direct owner-isolation coverage now passes in `convex/projections.convex.test.ts` and `convex/commands-inbox.convex.test.ts`; the checkbox still requires canary-time parity evidence)
 
 ## Canary kernel default with legacy rollback
 
