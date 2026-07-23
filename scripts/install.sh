@@ -16,6 +16,16 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf -- "$tmp_dir"' EXIT
 curl -fsSL "$base_url/$asset" -o "$tmp_dir/$asset"
 curl -fsSL "$base_url/checksums.txt" -o "$tmp_dir/checksums.txt"
+curl -fsSL "$base_url/checksums.txt.sig" -o "$tmp_dir/checksums.txt.sig"
+curl -fsSL "$base_url/release-public-key.pem" -o "$tmp_dir/release-public-key.pem"
+if ! command -v openssl >/dev/null; then
+  printf 'OpenSSL is required to verify the signed release\n' >&2
+  exit 1
+fi
+if ! openssl dgst -sha256 -verify "$tmp_dir/release-public-key.pem" -signature "$tmp_dir/checksums.txt.sig" "$tmp_dir/checksums.txt" >/dev/null 2>&1; then
+  printf 'Release signature verification failed\n' >&2
+  exit 1
+fi
 expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$tmp_dir/checksums.txt")"
 if [ -z "$expected" ]; then
   printf 'Missing checksum for %s\n' "$asset" >&2

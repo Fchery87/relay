@@ -11,7 +11,15 @@ Relay uses Cloudflare Pages for its Vite SPA, Convex for backend/authentication,
 
 ## Releases and installation
 
-Tag a commit as `vX.Y.Z` to publish the five daemon binaries, installers, and `checksums.txt` through GitHub Releases.
+Tag a commit as `vX.Y.Z` to publish the five daemon binaries, installers, `checksums.txt`, and its detached signature through GitHub Releases. Release builds fail closed unless `RELAY_RELEASE_SIGNING_KEY_PATH` points to the offline signing key; the public verification key is published beside the artifacts.
+
+```sh
+RELAY_RELEASE_SIGNING_KEY_PATH=/secure/release-signing-key.pem \
+RELAY_RELEASE_VERSION=vX.Y.Z \
+bun run release:build
+```
+
+The installers verify `checksums.txt.sig` before accepting the platform binary. Keep the private key out of CI logs, argv, and the repository.
 
 Linux/macOS:
 ```bash
