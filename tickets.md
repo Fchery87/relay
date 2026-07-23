@@ -667,6 +667,9 @@ duplicates, pending effects, projection backlog/gaps/divergence, auth,
 sandbox, recovery, and provider-fallback counters, and invariant violations
 write a redacted `kernel-canary-rollback.json` marker and stop the kernel. The
 existing `RELAY_RUNTIME_MODE=legacy` restart path remains the rollback action.
+`bun run canary:evidence` records a bounded, redacted JSON evidence record for
+each supervised stage and exits non-zero when invariant telemetry blocks
+promotion.
 The rollout-stage, real-provider, and release-window checkboxes below still
 require supervised operational runs and are intentionally not inferred from
 unit tests.

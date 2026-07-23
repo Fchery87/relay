@@ -14,6 +14,7 @@
     "conformance:matrix": "bun run scripts/run-conformance-matrix.ts",
     "crash:matrix": "bun run scripts/run-crash-matrix.ts --profile=pr",
     "test:e2e:harness": "bun run scripts/production-acceptance.ts",
+    "canary:evidence": "bun run scripts/canary-evidence.ts",
     "eval:harness": "bun run scripts/eval-harness.ts",
     "load:client": "bun run scripts/load-client-runtime.ts",
     "daemon:build:native": "bun build --compile apps/daemon/src/cli.ts --outfile dist/relay",

@@ -293,3 +293,6 @@ legacy restart path remains available. This closes the code-readiness portion
 of the canary ticket. Actual developer/internal/production canary stages,
 real-provider evidence, parity observation, and the release window remain
 operational gates.
+The machine-readable companion command is `bun run canary:evidence`; it writes
+the stage record with versions, topology, migration state, test IDs, redacted
+failures, residual risks, and promotion-blocking telemetry status.
