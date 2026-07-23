@@ -299,8 +299,28 @@ failures, residual risks, and promotion-blocking telemetry status. When given a
 previous record it enforces the developer → internal → small-production →
 kernel-default progression and blocks records with failures.
 
-Ordinary CI validation is deterministic: `bun run test` recorded 325 passing
-tests, 17 explicit capability-dependent skips, and zero failures. The live
-self-hosted Convex and MCP transport profiles remain protected and are run
-separately when loopback/process capabilities and, for Convex, the pinned
-backend binary are available.
+Ordinary CI validation is deterministic: the current daemon suite recorded
+330 passing tests, 17 explicit capability-dependent skips, and zero failures.
+The live self-hosted Convex and MCP transport profiles remain protected and
+are run separately when loopback/process capabilities and, for Convex, the
+pinned backend binary are available.
+
+## Update — 2026-07-23: current-tree operational closure
+
+Commit `e97fb22` passed the protected isolated-backend seam with 12/12 tests
+and 47 assertions. The run covered ordered projection reconnect, daemon and
+backend restart, duplicate/conflicting commands, lost response, lease expiry,
+stale completion fencing, projection duplicate/reorder/partial faults, and a
+real Git checkpoint restore.
+
+The same commit's local-store operational gap is now implemented:
+`relay diagnostics export` produces a bounded, anonymized, payload-free state
+dump; retention requires a hash-verified history snapshot before pruning
+canonical events; checkpoint metadata is only collectible after explicit
+Git-ref cleanup marking; and filesystem pressure pauses new kernel command
+claims while retaining the recovery reserve.
+
+The real Codex provider lifecycle remains unverified because this environment
+has no credentialed provider secret. Canary promotion, a complete legacy
+rollback window, and schema narrowing therefore remain release-gated rather
+than inferred from this deterministic/provider-independent evidence.
