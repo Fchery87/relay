@@ -30,7 +30,7 @@ export type LegacyRunSummary = {
 };
 
 export type NeedsYouItem = {
-  kind: "approval" | "plan-review" | "elicitation" | "failed";
+  kind: "approval" | "plan-review" | "elicitation" | "failed" | "trust";
   projectId: string;
   projectName: string;
   threadId: string;
@@ -38,6 +38,7 @@ export type NeedsYouItem = {
 };
 
 export const listNeedsYou = makeFunctionReference<"query", Record<string, never>, NeedsYouItem[]>("attention:listNeedsYou");
+export const listProjectionNeedsYou = makeFunctionReference<"query", Record<string, never>, NeedsYouItem[]>("projections/publish:listNeedsYou");
 
 export const createThreadRef = makeFunctionReference<
   "mutation",
@@ -62,6 +63,12 @@ export const removeThreadRef = makeFunctionReference<
   { threadId: string },
   null
 >("conversations:removeThread");
+
+export const deleteCanonicalRunRef = makeFunctionReference<
+  "mutation",
+  { threadId: string },
+  null
+>("commands/inbox:deleteRun");
 
 export const requestAddProjectRef = makeFunctionReference<
   "mutation",

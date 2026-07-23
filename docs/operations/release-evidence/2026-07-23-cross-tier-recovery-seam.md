@@ -7,9 +7,10 @@ and [2026-07-23-baseline.md](2026-07-23-baseline.md) for the prior snapshot.
 
 ## What this proves
 
-A real client command (submitted the way the browser will once cut over —
-see `apps/web/src/run-data.ts`'s `submitCanonicalCommand`, not yet wired to
-a caller) travels through the real `commands/inbox:submitToInbox` mutation,
+A real client command (submitted the way the browser does when the reversible
+projection flag is enabled — see `apps/web/src/run-data.ts`'s
+`submitCanonicalCommand`) travels through the real
+`commands/inbox:submitToInbox` mutation,
 is claimed by a real `KernelDaemon` via the real `createConvexCommandSource`,
 processed through the real local orchestration engine, and published back
 to Convex via the real `createConvexProjectionSink` — with **no fakes and
@@ -74,6 +75,10 @@ same `run.configure` inbox command and `run.configuration.updated` projection ev
 the browser reads those settings from the projected snapshot when the cutover flag is enabled.
 Projection-backed messages, activity, approvals, audit, usage, checkpoints, comparison,
 and Git panels no longer issue redundant legacy Convex reads while the cutover flag is enabled.
+The projected attention inbox now derives approval, plan-review, failed, and pending
+MCP-elicitation items from snapshots and canonical activity events; projected run
+deletion uses an owner-scoped canonical cleanup boundary that removes queued commands,
+legacy companion rows, and projection rows together.
 Canonical run creation also preserves the run title and chat/plan mode in the projected snapshot,
 so projected discovery no longer invents a generic title or defaults every run to chat.
 Projection read authorization now has direct Convex coverage: a second owner
@@ -153,7 +158,7 @@ code paths only through fakes, never over a real network round-trip:
   catalog to provider turns, routes MCP calls through `McpRegistry`, and
   routes task calls through the governed subagent adapter with canonical
   activity events. MCP elicitation and task-status callbacks now also emit
-  canonical activity lifecycle events; remaining browser detail-surface
+  canonical activity lifecycle events; remaining browser workflow
   parity is still pending its own projection coverage.
 - A real LLM provider (as opposed to the scripted/fallback provider) has not
   produced a passing lifecycle record in this environment. The separate

@@ -32,6 +32,46 @@ test("canonical run creation creates an owned thread and inbox command atomicall
   expect(JSON.parse(state.command!.payloadJson)).toEqual({ mode: "plan", projectId, title: "Canonical plan" });
 });
 
+test("canonical run deletion removes legacy and projection state in one owner-scoped boundary", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await createAuthenticatedProject(t, "z".repeat(32));
+  const threadId = await t.run(async (ctx) => ctx.db.insert("threads", {
+    projectId: fixture.projectId,
+    status: "done",
+    stopRequested: false,
+    title: "Delete me",
+  }));
+  await t.run(async (ctx) => {
+    await ctx.db.insert("messages", { content: "hello", role: "user", status: "complete", threadId });
+    await ctx.db.insert("projectionEvents", { eventId: "delete-event", machineId: fixture.machineId, occurredAt: 1, ownerId: fixture.userId, payloadJson: "{}", publishedAt: 1, projectId: fixture.projectId, runId: threadId, sequence: 1, type: "run.created" });
+    await ctx.db.insert("projectionSnapshots", { machineId: fixture.machineId, ownerId: fixture.userId, projectId: fixture.projectId, runId: threadId, sequence: 1, snapshotJson: "{}", updatedAt: 1 });
+    await ctx.db.insert("commandInbox", { commandId: "delete-command", correlationId: "delete-correlation", createdAt: 1, kind: "run.resume", machineId: fixture.machineId, ownerId: fixture.userId, payloadJson: "{}", projectPath: "/repo", runId: threadId, status: "pending", threadId });
+  });
+
+  await fixture.owner.mutation(api.commands.inbox.deleteRun, { threadId });
+
+  await expect(t.run(async (ctx) => ({
+    command: await ctx.db.query("commandInbox").withIndex("by_command_id", (q) => q.eq("commandId", "delete-command")).first(),
+    event: await ctx.db.query("projectionEvents").withIndex("by_event_id", (q) => q.eq("eventId", "delete-event")).first(),
+    snapshot: await ctx.db.query("projectionSnapshots").withIndex("by_run", (q) => q.eq("runId", threadId)).first(),
+    thread: await ctx.db.get(threadId),
+  }))).resolves.toEqual({ command: null, event: null, snapshot: null, thread: null });
+  await expect(t.run((ctx) => ctx.db.query("auditLog").withIndex("by_thread", (q) => q.eq("threadId", threadId)).collect())).resolves.toEqual([
+    expect.objectContaining({ action: "run.deleted", category: "command", threadId }),
+  ]);
+});
+
+test("canonical run deletion rejects another owner's run", async () => {
+  const t = convexTest(schema, modules);
+  const { projectId } = await createAuthenticatedProject(t, "y".repeat(32));
+  const threadId = await t.run((ctx) => ctx.db.insert("threads", { projectId, status: "done", title: "Private run" }));
+  const strangerId = await t.run((ctx) => ctx.db.insert("users", {}));
+  const stranger = t.withIdentity({ subject: `${strangerId}|session` });
+
+  await expect(stranger.mutation(api.commands.inbox.deleteRun, { threadId })).rejects.toThrow(/does not belong to the current user/);
+  await expect(t.run((ctx) => ctx.db.get(threadId))).resolves.toBeTruthy();
+});
+
 test("canonical tool workspace hints must match the authorized project path", async () => {
   const t = convexTest(schema, modules);
   const { owner, projectId } = await createAuthenticatedProject(t);

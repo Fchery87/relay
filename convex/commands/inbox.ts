@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutationGeneric, queryGeneric } from "convex/server";
+import { makeFunctionReference, mutationGeneric, queryGeneric } from "convex/server";
 import { DEFAULT_MODEL_ID } from "@relay/shared";
 import type { Id } from "../_generated/dataModel";
 import { requireActiveMachine, requireOwnedProject, requireOwnedThread, requireUser } from "../auth_helpers";
@@ -31,6 +31,7 @@ const SUPPORTED_COMMAND_KINDS = new Set([
   "checkpoint.compare",
   "subagent.run",
 ]);
+const removeUsageForThread = makeFunctionReference<"mutation", { threadId: string }, null>("usage:removeForThreadBatch");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -113,6 +114,55 @@ export const createRun = mutationGeneric({
       effectiveScope: project.path,
     });
     return threadId;
+  },
+});
+
+/** Delete a run through the canonical browser boundary during projection cutover. */
+export const deleteRun = mutationGeneric({
+  args: { threadId: v.id("threads") },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const thread = await requireOwnedThread(ctx, userId, args.threadId);
+    const project = await ctx.db.get(thread.projectId);
+    if (!project) throw new Error("Project not found");
+
+    const commands = await ctx.db.query("commandInbox").withIndex("by_machine", (q) => q.eq("machineId", project.machineId)).filter((q) => q.eq(q.field("threadId"), args.threadId)).collect();
+    for (const command of commands) await ctx.db.delete(command._id);
+    for await (const server of ctx.db.query("mcpServers").withIndex("by_approval_thread_id", (q) => q.eq("approvalThreadId", args.threadId))) await ctx.db.delete(server._id);
+    for await (const elicitation of ctx.db.query("mcpElicitations").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(elicitation._id);
+    for await (const plan of ctx.db.query("plans").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(plan._id);
+    for await (const run of ctx.db.query("subagentRuns").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(run._id);
+    for await (const event of ctx.db.query("events").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(event._id);
+    for await (const comparison of ctx.db.query("checkpointComparisons").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comparison._id);
+    for await (const action of ctx.db.query("checkpointActions").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(action._id);
+    for await (const checkpoint of ctx.db.query("checkpoints").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(checkpoint._id);
+    for await (const message of ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(message._id);
+    for await (const comment of ctx.db.query("diffComments").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(comment._id);
+    for await (const approval of ctx.db.query("approvals").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(approval._id);
+    for await (const audit of ctx.db.query("auditLog").withIndex("by_thread", (q) => q.eq("threadId", args.threadId))) await ctx.db.delete(audit._id);
+    for await (const event of ctx.db.query("projectionEvents").withIndex("by_run_sequence", (q) => q.eq("runId", args.threadId))) {
+      if (event.ownerId === userId && event.machineId === project.machineId) await ctx.db.delete(event._id);
+    }
+    for await (const snapshot of ctx.db.query("projectionSnapshots").withIndex("by_run", (q) => q.eq("runId", args.threadId))) {
+      if (snapshot.ownerId === userId && snapshot.machineId === project.machineId) await ctx.db.delete(snapshot._id);
+    }
+    await ctx.db.insert("auditLog", {
+      action: "run.deleted",
+      actorId: userId,
+      actorKind: "user",
+      category: "command",
+      correlationId: `delete:${args.threadId}`,
+      machineId: project.machineId,
+      policyVersion: "command-ingress-v1",
+      projectId: project._id,
+      requestedScope: project.path,
+      effectiveScope: project.path,
+      summary: `Deleted run ${args.threadId}`,
+      threadId: args.threadId,
+    });
+    await ctx.scheduler.runAfter(0, removeUsageForThread, { threadId: args.threadId });
+    await ctx.db.delete(args.threadId);
+    return null;
   },
 });
 

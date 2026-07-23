@@ -313,6 +313,75 @@ export const listProjectionRuns = query({
   },
 });
 
+/**
+ * Owner-scoped attention inbox for the projection data plane.
+ *
+ * Run status and plan review are promoted into snapshots. MCP elicitation is
+ * an activity lifecycle, so its pending state is derived from the bounded
+ * event tail for each projected run. Project trust requests remain a project
+ * concern and are included without consulting legacy thread state.
+ */
+export const listNeedsYou = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUser(ctx);
+    const items: Array<{ kind: "approval" | "plan-review" | "elicitation" | "failed" | "trust"; projectId: string; projectName: string; threadId: string; title: string }> = [];
+    const maxItems = 100;
+
+    const machines = await ctx.db.query("machines").withIndex("by_owner", (q) => q.eq("ownerId", userId)).collect();
+    for (const machine of machines) {
+      const projects = await ctx.db.query("projects").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).collect();
+      for (const project of projects) {
+        if (items.length >= maxItems) return items;
+        if (project.trustState === "requested") {
+          items.push({ kind: "trust", projectId: project._id, projectName: project.name, threadId: "", title: `Trust ${project.name}` });
+        }
+
+        const snapshots = await ctx.db.query("projectionSnapshots").withIndex("by_project", (q) => q.eq("projectId", project._id)).take(200);
+        for (const snapshotDocument of snapshots) {
+          if (items.length >= maxItems) return items;
+          if (snapshotDocument.ownerId !== userId || snapshotDocument.machineId !== machine._id) continue;
+
+          let snapshot: { mode?: unknown; planPhase?: unknown; status?: unknown; title?: unknown } = {};
+          try { snapshot = JSON.parse(snapshotDocument.snapshotJson) as typeof snapshot; } catch { continue; }
+          const title = typeof snapshot.title === "string" ? snapshot.title : `Run ${snapshotDocument.runId.slice(-8)}`;
+          const shared = { projectId: project._id, projectName: project.name, threadId: snapshotDocument.runId, title };
+          if (snapshot.status === "awaiting_approval" || snapshot.status === "awaiting-approval") {
+            items.push({ ...shared, kind: "approval" });
+            continue;
+          }
+          if (snapshot.mode === "plan" && snapshot.planPhase === "review") {
+            items.push({ ...shared, kind: "plan-review" });
+            continue;
+          }
+          if (snapshot.status === "failed") {
+            items.push({ ...shared, kind: "failed" });
+            continue;
+          }
+
+          const events = await ctx.db.query("projectionEvents")
+            .withIndex("by_project_run", (q) => q.eq("projectId", project._id).eq("runId", snapshotDocument.runId))
+            .order("asc")
+            .take(200);
+          const elicitationStates = new Map<string, "pending" | "resolved">();
+          for (const event of events) {
+            if (event.ownerId !== userId || event.machineId !== machine._id) continue;
+            if (event.type !== "activity.started" && event.type !== "activity.completed" && event.type !== "activity.failed") continue;
+            let payload: { activityId?: unknown; elicitationId?: unknown; kind?: unknown } = {};
+            try { payload = JSON.parse(event.payloadJson) as typeof payload; } catch { continue; }
+            if (payload.kind !== "mcp:elicitation") continue;
+            const id = typeof payload.elicitationId === "string" ? payload.elicitationId : typeof payload.activityId === "string" ? payload.activityId : undefined;
+            if (!id) continue;
+            elicitationStates.set(id, event.type === "activity.started" ? "pending" : "resolved");
+          }
+          if ([...elicitationStates.values()].some((state) => state === "pending")) items.push({ ...shared, kind: "elicitation" });
+        }
+      }
+    }
+    return items;
+  },
+});
+
 /** Observable projection metrics — backlog, gaps, retries, cursor lag. */
 export const projectionMetrics = query({
   args: {},

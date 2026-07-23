@@ -14,7 +14,7 @@ import { resolveSettingsSection, SettingsView, type SettingsSection } from "./se
 import { shortcutForEvent, useShellState } from "./shell-state";
 import { SubagentPanel, type RoleRecord } from "./subagent-panel";
 import { ThreadView } from "./thread-view";
-import { canonicalCommandEnvelope, canonicalRunCreationRequest, canonicalRunData, createCanonicalRunRef, createThreadRef, listNeedsYou, projectionCutoverEnabled, removeThreadRef, requestAddProjectRef, submitCanonicalCommand, toRunSummaries, type LegacyRunSummary, type MachineSummary, type ProjectionRunSummary } from "./run-data";
+import { canonicalCommandEnvelope, canonicalRunCreationRequest, canonicalRunData, createCanonicalRunRef, createThreadRef, deleteCanonicalRunRef, listNeedsYou, listProjectionNeedsYou, projectionCutoverEnabled, removeThreadRef, requestAddProjectRef, submitCanonicalCommand, toRunSummaries, type LegacyRunSummary, type MachineSummary, type ProjectionRunSummary } from "./run-data";
 import { WorkspaceSidebar, type SidebarProject } from "./workspace-sidebar";
 import type { ThinkingLevel } from "@relay/shared";
 
@@ -73,6 +73,7 @@ export function UnconfiguredWorkspace() {
 function SidebarRuns({ activeThreadId, onSelectRun, projectId }: { activeThreadId?: string; onSelectRun: (projectId: string, threadId: string) => void; projectId: string }) {
   const runs = toRunSummaries(useQuery(canonicalRunData.listRuns, { projectId }) as Array<LegacyRunSummary | ProjectionRunSummary> | undefined);
   const removeThread = useMutation(removeThreadRef);
+  const deleteCanonicalRun = useMutation(deleteCanonicalRunRef);
   const navigate = useNavigate();
   const [pendingDelete, setPendingDelete] = useState<{ threadId: string; title: string } | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -116,7 +117,8 @@ function SidebarRuns({ activeThreadId, onSelectRun, projectId }: { activeThreadI
           onSubmit={async (e) => {
             e.preventDefault();
             if (!pendingDelete) return;
-            await removeThread({ threadId: pendingDelete.threadId });
+            if (projectionCutoverEnabled) await deleteCanonicalRun({ threadId: pendingDelete.threadId });
+            else await removeThread({ threadId: pendingDelete.threadId });
             if (activeThreadId === pendingDelete.threadId) navigate({ to: `/projects/${projectId}` });
             setPendingDelete(null);
           }}
@@ -145,7 +147,7 @@ function Workspace({
   const navigate = useNavigate();
   const params = useParams({ strict: false }) as { projectId?: string; threadId?: string };
   const { paletteOpen, panels, setPaletteOpen, toggle } = useShellState();
-  const attention = useQuery(listNeedsYou, {});
+  const attention = useQuery(projectionCutoverEnabled ? listProjectionNeedsYou : listNeedsYou, {});
   const create = useMutation(createThreadRef);
   const createCanonical = useMutation(createCanonicalRunRef);
   const submitCanonical = useMutation(submitCanonicalCommand);

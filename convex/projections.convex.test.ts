@@ -77,6 +77,60 @@ test("projection reads fail closed across owners", async () => {
   await expect(stranger.query(api.projections.publish.listRunEvents, { afterSequence: 0, limit: 20, runId: "run-owner-only" })).rejects.toThrow("Access denied");
 });
 
+test("projection attention derives blocked runs from snapshots and activity events", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await createAuthenticatedProject(t, "h".repeat(32));
+  const runIds = ["run-approval", "run-plan", "run-failed", "run-elicitation", "run-healthy"];
+  await t.mutation(api.projections.publish.appendEvents, {
+    deviceToken: fixture.deviceToken,
+    events: runIds.map((runId, index) => ({
+      eventId: `created-${runId}`,
+      occurredAt: index + 1,
+      payloadJson: "{}",
+      projectId: fixture.projectId,
+      runId,
+      sequence: 1,
+      type: "run.created",
+    })),
+  });
+  await t.mutation(api.projections.publish.appendEvents, {
+    deviceToken: fixture.deviceToken,
+    events: [{
+      eventId: "elicitation-started",
+      occurredAt: 10,
+      payloadJson: JSON.stringify({ activityId: "activity-1", elicitationId: "elicitation-1", kind: "mcp:elicitation" }),
+      projectId: fixture.projectId,
+      runId: "run-elicitation",
+      sequence: 2,
+      type: "activity.started",
+    }],
+  });
+  for (const [runId, snapshot] of [
+    ["run-approval", { status: "awaiting_approval", title: "approval" }],
+    ["run-plan", { mode: "plan", planPhase: "review", status: "running", title: "plan" }],
+    ["run-failed", { status: "failed", title: "failed" }],
+    ["run-elicitation", { status: "running", title: "question" }],
+    ["run-healthy", { status: "running", title: "healthy" }],
+  ] as const) {
+    await t.mutation(api.projections.publish.upsertSnapshot, {
+      deviceToken: fixture.deviceToken,
+      projectId: fixture.projectId,
+      runId,
+      sequence: runId === "run-elicitation" ? 2 : 1,
+      snapshotJson: JSON.stringify(snapshot),
+    });
+  }
+
+  const items = await fixture.owner.query(api.projections.publish.listNeedsYou, {});
+  expect(items).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "approval", threadId: "run-approval", title: "approval" }),
+    expect.objectContaining({ kind: "plan-review", threadId: "run-plan", title: "plan" }),
+    expect.objectContaining({ kind: "failed", threadId: "run-failed", title: "failed" }),
+    expect.objectContaining({ kind: "elicitation", threadId: "run-elicitation", title: "question" }),
+  ]));
+  expect(items.find((item) => item.threadId === "run-healthy")).toBeUndefined();
+});
+
 test("projection outbox flush is recorded with its bounded scope", async () => {
   const t = convexTest(schema, modules);
   const fixture = await createAuthenticatedProject(t, "g".repeat(32));
