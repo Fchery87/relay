@@ -47,11 +47,13 @@ type KernelAgenticTurnInput = {
   readonly messages: ChatMessage[];
   readonly platform: MachinePlatform;
   readonly policy: Policy;
+  readonly planPhase?: "planning" | "review" | "building" | "complete";
   readonly provider: TurnModelProvider;
   readonly governance: GovernanceGateway;
   readonly root?: string;
   readonly runId: string;
   readonly signal: AbortSignal;
+  readonly system?: string;
   readonly turnId: string;
   readonly tools?: McpModelTool[];
   readonly onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
@@ -138,7 +140,7 @@ async function runKernelAgenticLoop(
     messages: input.messages,
     provider: input.provider,
     signal: input.signal,
-    system: "",
+    system: input.system ?? "",
     tools: input.tools ?? [],
   });
 
@@ -173,6 +175,7 @@ function createCallbacks(input: {
   readonly root?: string;
   readonly runId: string;
   readonly resolution?: "allow" | "deny";
+  readonly planPhase?: "planning" | "review" | "building" | "complete";
   readonly skipActivityStart?: string;
   readonly tools?: McpModelTool[];
   readonly onMcp?: (call: Extract<ToolCall, { kind: "mcp" }>) => Promise<unknown>;
@@ -213,6 +216,24 @@ function createCallbacks(input: {
           type: "activity.failed",
         }));
         return { content: "Authorized workspace unavailable; tool refused", isError: true, toolUseId };
+      }
+
+      if (input.planPhase === "planning" && !isPlanningAllowed(call)) {
+        const classification = classifyToolCall(call);
+        await input.governance.recordDecision({
+          ...classification,
+          decision: "deny",
+          summary: `${summarizeToolCall(call)} (planning phase)`,
+          threadId: input.runId,
+        });
+        input.events.push(event({
+          eventId: `ev-agentic-${input.runId}-${input.turnId}-${activityId}-planning-refusal`,
+          payload: { activityId, result: { output: "Planning phase is read-only", succeeded: false }, summary: "Planning phase refused mutation" },
+          runId: input.runId,
+          turnId: input.turnId,
+          type: "activity.completed",
+        }));
+        return { content: "Planning phase is read-only; mutation refused", isError: true, toolUseId };
       }
 
       if (input.resolution === undefined && evaluatePolicy({ ...classification, policy: input.policy }) === "ask") {
@@ -328,6 +349,10 @@ function createCallbacks(input: {
     },
     ...(input.claimSteering ? { claimSteering: input.claimSteering } : {}),
   };
+}
+
+function isPlanningAllowed(call: ToolCall): boolean {
+  return call.kind === "read" || call.kind === "grep" || call.kind === "glob" || call.kind === "web_search" || call.kind === "web_fetch" || call.kind === "skill" || call.kind === "todo";
 }
 
 function event(input: {

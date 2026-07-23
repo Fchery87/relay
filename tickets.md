@@ -638,6 +638,12 @@ mutations during cutover.
 The kernel also publishes the trusted slash-command catalog in a bounded run
 configuration event, and the projected composer consumes it without the legacy
 catalog query.
+Plan mode now publishes a canonical `plan.updated` artifact, uses revisioned
+`plan.update`/`plan.approve` commands for projected edits and approval, and
+routes the approved artifact through the build phase; the legacy plan row
+remains only behind the rollback boundary.
+Kernel MCP task status now projects bounded canonical activity lifecycle events
+instead of writing through the legacy conversation gateway.
 remaining checklist stays open until all detail panels and workflow behavior
 tests leave their legacy Convex reads/writes behind the explicit rollback
 adapter.

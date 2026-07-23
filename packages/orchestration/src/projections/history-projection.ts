@@ -165,6 +165,7 @@ function applyEvent(
     case "workspace.diff.updated":
     case "git.action.updated":
     case "run.configuration.updated":
+    case "plan.updated":
     case "review.comment.created":
     case "review.comment.resolved":
     case "run.created":

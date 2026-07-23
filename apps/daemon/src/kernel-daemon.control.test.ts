@@ -386,6 +386,165 @@ test("daemon routes canonical MCP elicitation commands through the device adapte
   }
 });
 
+test("kernel plan mode projects an editable artifact and builds the approved revision", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-plan-daemon-"));
+  const runId = "run-plan-daemon";
+  const pending = [
+    command("inbox-create-plan", "run.create", runId, { mode: "plan", projectId: "project-plan" }),
+    command("inbox-resume-plan", "run.resume", runId, {}),
+  ];
+  const projected: Array<{ payloadJson: string; type: string }> = [];
+  const provider: TurnModelProvider = {
+    modelId: "plan-test",
+    async *streamTurn({ system }) {
+      yield { kind: "text", text: system.includes("PLANNING PHASE") ? "draft plan" : "built result" };
+      yield { kind: "stop", reason: "end_turn" };
+    },
+  };
+  const daemon = new KernelDaemon({
+    adapterDeps: { platform: "linux", resolveProjectRoot: async () => "." },
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "plan-test",
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async ({ events }) => { projected.push(...events.map((event) => ({ payloadJson: event.payloadJson, type: event.type }))); },
+      upsertSnapshot: async () => undefined,
+      advanceCursor: async () => undefined,
+    },
+    providerRouter: {
+      kind: "model-router",
+      resolve: () => ({ modelId: "plan-test", async *streamReply() {} }),
+      resolveTurn: () => provider,
+    },
+  });
+
+  const waitFor = async (predicate: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 2_000;
+    while (!predicate() && Date.now() < deadline) {
+      await daemon.flushOnce();
+      await Bun.sleep(10);
+    }
+    expect(predicate()).toBe(true);
+  };
+
+  try {
+    await daemon.start();
+    await daemon.pollOnce();
+    pending.push(command("inbox-plan-send", "turn.send", runId, { prompt: "Plan the change" }));
+    await daemon.pollOnce();
+    await waitFor(() => projected.some((event) => event.type === "plan.updated" && JSON.parse(event.payloadJson).phase === "review"));
+
+    pending.push(command("inbox-plan-update", "plan.update", runId, { content: "edited plan", expectedRevision: 0 }));
+    await daemon.pollOnce();
+    await waitFor(() => projected.some((event) => event.type === "plan.updated" && JSON.parse(event.payloadJson).revision === 1));
+
+    pending.push(command("inbox-plan-approve", "plan.approve", runId, { content: "edited plan", expectedRevision: 1 }));
+    await daemon.pollOnce();
+    await waitFor(() => projected.some((event) => event.type === "plan.updated" && JSON.parse(event.payloadJson).phase === "complete"));
+
+    const phases = projected.filter((event) => event.type === "plan.updated").map((event) => JSON.parse(event.payloadJson).phase);
+    expect(phases).toEqual(["planning", "review", "review", "building", "complete"]);
+    expect(projected.filter((event) => event.type === "plan.updated").map((event) => JSON.parse(event.payloadJson).content).filter(Boolean)).toEqual(["draft plan", "edited plan", "edited plan"]);
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+  }
+});
+
+test("kernel MCP task status is projected as canonical activity", async () => {
+  const daemonHome = await mkdtemp(join(tmpdir(), "relay-kernel-mcp-task-daemon-"));
+  const projectRoot = await mkdtemp(join(tmpdir(), "relay-kernel-mcp-task-project-"));
+  const runId = "run-mcp-task-daemon";
+  const pending = [
+    command("inbox-create-mcp-task", "run.create", runId, { projectId: "project-mcp-task", projectPath: projectRoot }, projectRoot),
+    command("inbox-resume-mcp-task", "run.resume", runId, {}, projectRoot),
+  ];
+  const projected: Array<{ payloadJson: string; type: string }> = [];
+  const legacyStatuses: string[] = [];
+  let turnCalls = 0;
+  const provider: TurnModelProvider = {
+    modelId: "mcp-task-test",
+    async *streamTurn() {
+      if (turnCalls++ === 0) {
+        yield { kind: "tool_use", call: { arguments: {}, kind: "mcp", name: "long_task", risk: "low", serverId: "server" }, id: "mcp-task-1" };
+        yield { kind: "stop", reason: "tool_use" };
+        return;
+      }
+      yield { kind: "text", text: "task complete" };
+      yield { kind: "stop", reason: "end_turn" };
+    },
+  };
+  const daemon = new KernelDaemon({
+    adapterDeps: {
+      governance: { recordDecision: async () => undefined, requestApproval: async () => "deny" },
+      mcp: {
+        callTool: async ({ onTaskStatus }) => {
+          await onTaskStatus?.({ id: "task-1", status: "working" });
+          await onTaskStatus?.({ id: "task-1", status: "completed" });
+          return { ok: true };
+        },
+        listTools: async () => [],
+        recordTaskStatus: async ({ status }) => { legacyStatuses.push(status); },
+      },
+      policy: { rules: [{ capability: "exec", decision: "allow", risk: "low" }] },
+      platform: "linux",
+      resolveProjectRoot: async () => projectRoot,
+    },
+    commandGateway: {
+      submitCommand: async () => "inbox-id",
+      claimBatch: async () => pending.splice(0, 5),
+      completeCommand: async () => undefined,
+      renewLease: async () => undefined,
+    },
+    daemonHome,
+    deploymentUrl: "http://unused",
+    deviceToken: "device",
+    heartbeatIntervalMs: 60_000,
+    machineId: "machine",
+    machineName: "mcp-task-test",
+    pollIntervalMs: 60_000,
+    projectionSink: {
+      appendEvents: async ({ events }) => { projected.push(...events.map((event) => ({ payloadJson: event.payloadJson, type: event.type }))); },
+      upsertSnapshot: async () => undefined,
+      advanceCursor: async () => undefined,
+    },
+    providerRouter: {
+      kind: "model-router",
+      resolve: () => ({ modelId: "mcp-task-test", async *streamReply() {} }),
+      resolveTurn: () => provider,
+    },
+  });
+  try {
+    await runCommand({ command: "git init && git config user.email relay@example.test && git config user.name Relay && git commit --allow-empty -m baseline", platform: "linux", root: projectRoot });
+    await daemon.start();
+    await daemon.pollOnce();
+    pending.push(command("inbox-mcp-task-send", "turn.send", runId, { projectPath: projectRoot, prompt: "run the task" }, projectRoot));
+    await daemon.pollOnce();
+    const deadline = Date.now() + 2_000;
+    while (!projected.some((event) => event.type === "activity.completed" && JSON.parse(event.payloadJson).kind === "mcp:task") && Date.now() < deadline) {
+      await daemon.flushOnce();
+      await Bun.sleep(10);
+    }
+    const taskEvents = projected.filter((event) => JSON.parse(event.payloadJson).kind === "mcp:task");
+    expect(taskEvents.map((event) => event.type)).toEqual(["activity.started", "activity.delta", "activity.completed"]);
+    expect(legacyStatuses).toEqual([]);
+  } finally {
+    await daemon.stop();
+    await rm(daemonHome, { force: true, recursive: true });
+    await rm(projectRoot, { force: true, recursive: true });
+  }
+});
+
 function command(commandId: string, kind: string, runId: string, payload: unknown, projectPath?: string) {
   return {
     commandId,

@@ -222,6 +222,9 @@ export const listProjectionRuns = query({
           budgetUsd?: unknown;
           modelId?: unknown;
           mode?: unknown;
+          planPhase?: unknown;
+          planModelId?: unknown;
+          buildModelId?: unknown;
           permissionProfile?: unknown;
           status?: unknown;
           thinkingLevel?: unknown;
@@ -230,6 +233,9 @@ export const listProjectionRuns = query({
         try { snapshot = JSON.parse(s.snapshotJson) as typeof snapshot; } catch { /* use bounded defaults */ }
         const modelId = typeof snapshot.modelId === "string" ? snapshot.modelId : undefined;
         const mode = snapshot.mode === "chat" || snapshot.mode === "plan" ? snapshot.mode : undefined;
+        const planPhase = snapshot.planPhase === "planning" || snapshot.planPhase === "review" || snapshot.planPhase === "building" || snapshot.planPhase === "complete" ? snapshot.planPhase : undefined;
+        const planModelId = typeof snapshot.planModelId === "string" ? snapshot.planModelId : undefined;
+        const buildModelId = typeof snapshot.buildModelId === "string" ? snapshot.buildModelId : undefined;
         const thinkingLevel = snapshot.thinkingLevel === "none" || snapshot.thinkingLevel === "low" || snapshot.thinkingLevel === "medium" || snapshot.thinkingLevel === "high" ? snapshot.thinkingLevel : undefined;
         const permissionProfile = snapshot.permissionProfile === "read-only" || snapshot.permissionProfile === "workspace-write" || snapshot.permissionProfile === "full-access" ? snapshot.permissionProfile : undefined;
         const budgetUsd = snapshot.budgetUsd === null || (typeof snapshot.budgetUsd === "number" && Number.isFinite(snapshot.budgetUsd)) ? snapshot.budgetUsd : undefined;
@@ -237,6 +243,9 @@ export const listProjectionRuns = query({
           ...(budgetUsd === undefined ? {} : { budgetUsd }),
           ...(modelId === undefined ? {} : { modelId }),
           ...(mode === undefined ? {} : { mode }),
+          ...(planPhase === undefined ? {} : { planPhase }),
+          ...(planModelId === undefined ? {} : { planModelId }),
+          ...(buildModelId === undefined ? {} : { buildModelId }),
           ...(permissionProfile === undefined ? {} : { permissionProfile }),
           ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
           runId: s.runId,

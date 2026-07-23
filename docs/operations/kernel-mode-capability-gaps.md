@@ -44,11 +44,12 @@ The daemon now supplies the active MCP catalog to the kernel provider turn and
 routes MCP calls through the configured `McpRegistry` callback. Task calls use
 the existing governed subagent adapter and append the subagent's bounded
 canonical activity events before returning its typed result to the provider.
-MCP task-status callbacks still use the legacy conversation gateway; MCP
-elicitation cards now derive their lifecycle from canonical activity events,
-with submit/cancel entering through canonical inbox commands and the
-device-authorized daemon adapter. The task-status callback remains a separate
-cutover item, not a reason to bypass governance.
+MCP task-status callbacks now derive their lifecycle from canonical
+`activity.started`/`activity.delta`/`activity.completed` or `activity.failed`
+events; the kernel no longer writes those updates through the legacy
+conversation gateway. MCP elicitation cards continue to derive their lifecycle
+from canonical activity events, with submit/cancel entering through canonical
+inbox commands and the device-authorized daemon adapter.
 The browser inspector derives subagent runs from the canonical activity tail,
 so the subagent detail surface no longer needs the legacy tree query in
 projection mode.
@@ -57,6 +58,12 @@ Kernel run creation also publishes the trusted built-in, user, and project
 slash-command catalog as a bounded configuration event. The composer consumes
 that event in projection mode, so slash discovery no longer needs its legacy
 Convex query during cutover.
+
+Plan mode now follows the same seam. Kernel run creation emits `plan.updated`
+state, planner completion produces a revisioned draft artifact, and projected
+browser edits/approval use `plan.update` and `plan.approve` inbox commands. The
+approved artifact selects the build model and is marked complete by the build
+turn; legacy plan rows remain available only behind the rollback boundary.
 
 ## Completed increment — durable approval suspension and resolution
 

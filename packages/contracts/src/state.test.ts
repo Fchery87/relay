@@ -215,6 +215,28 @@ describe("run metadata", () => {
     expect(result).toMatchObject({ budgetUsd: 5, modelId: "model-1", permissionProfile: "read-only", thinkingLevel: "high", updatedAt: 2 });
   });
 
+  test("plan updates persist phase, model pair, and revisioned artifact", () => {
+    const result = reduceRun(baseSnapshot({ status: "running" }), {
+      occurredAt: 2,
+      type: "plan.updated",
+      payload: {
+        buildModelId: "builder",
+        content: "1. Implement it",
+        phase: "review",
+        planModelId: "planner",
+        revision: 1,
+        status: "draft",
+      },
+    } as never);
+    expect(result).toMatchObject({
+      buildModelId: "builder",
+      plan: { content: "1. Implement it", revision: 1, status: "draft" },
+      planModelId: "planner",
+      planPhase: "review",
+      updatedAt: 2,
+    });
+  });
+
   test("turn lifecycle owns activeTurnId", () => {
     const started = reduceRun(baseSnapshot({ status: "running" }), {
       type: "turn.started",

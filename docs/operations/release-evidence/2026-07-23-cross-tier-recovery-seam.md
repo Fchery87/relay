@@ -80,8 +80,10 @@ Projection read authorization now has direct Convex coverage: a second owner
 cannot read another owner's snapshot, event stream, run list, or cursor, and
 canonical command ingress rejects another owner's thread. Full detail-panel
 migration and end-to-end browser behavior coverage remain open before this flag
-can be promoted beyond canary. The remaining legacy-backed detail surface is
-the plan artifact workflow. Slash-command discovery now derives its bounded
+can be promoted beyond canary. Plan artifacts now derive from the canonical
+`plan.updated` event: planning emits a revisioned draft, browser edits and
+approval enter through canonical commands, and the approved artifact drives the
+build phase. Slash-command discovery now derives its bounded
 catalog from a canonical run-configuration event emitted during kernel run
 creation. MCP elicitation cards now derive pending/submitted/cancelled state
 from canonical `activity.*` events, while submit/cancel enter through
@@ -92,6 +94,9 @@ and a bounded result summary, so those detail surfaces no longer issue legacy
 reads or writes during cutover. The projection hook also uses a bounded event tail, so
 historical comments outside that tail require a follow-up pagination/compaction
 design.
+Kernel MCP task-status callbacks are also canonical: task progress is emitted
+as bounded activity lifecycle events and no longer uses the legacy task-status
+write in kernel mode.
 
 ## Two real, previously-undetected bugs found and fixed
 
@@ -147,8 +152,9 @@ code paths only through fakes, never over a real network round-trip:
   matching run/turn/resolution. The kernel daemon now passes the active MCP
   catalog to provider turns, routes MCP calls through `McpRegistry`, and
   routes task calls through the governed subagent adapter with canonical
-  activity events. MCP elicitation/task-status callbacks and browser detail
-  surfaces remain legacy-backed pending their own projection contracts.
+  activity events. MCP elicitation and task-status callbacks now also emit
+  canonical activity lifecycle events; remaining browser detail-surface
+  parity is still pending its own projection coverage.
 - A real LLM provider (as opposed to the scripted/fallback provider) has not
   produced a passing lifecycle record in this environment. The separate
   protected `real-codex-harness` job exists in `.github/workflows/ci.yml`, but

@@ -125,6 +125,9 @@ export function ThreadView({
   const activeThreadId = requestedThreadId ?? threads?.[0]?._id;
   const activeThread = threads?.find((thread) => thread._id === activeThreadId);
   const projectionRun = useProjectionRun(projectionCutoverEnabled ? activeThreadId : undefined);
+  const projectedPlanPhase = projectionRun.state?.snapshot?.planPhase;
+  const activePlanPhase = projectionCutoverEnabled ? projectedPlanPhase : activeThread?.planPhase;
+  const projectedPlan = projectionRun.state?.snapshot?.plan;
   const requestedThreadMissing = Boolean(requestedThreadId && threads && !activeThread);
   const isPlanRun = activeThread?.mode === "plan";
   const messages = useQuery(listMessages, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
@@ -138,7 +141,7 @@ export function ThreadView({
   const checkpoints = useQuery(listCheckpoints, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const comparison = useQuery(latestCheckpointComparison, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const subagentRuns = useQuery(listSubagentTree, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
-  const plan = useQuery(getPlan, isPlanRun && activeThreadId ? { threadId: activeThreadId } : "skip");
+  const plan = useQuery(getPlan, isPlanRun && activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const mcpElicitations = useQuery(listMcpElicitations, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const slashCommands = useQuery(listSlashCommands, activeThreadId && !projectionCutoverEnabled ? { threadId: activeThreadId } : "skip");
   const scrollBottomRef = useRef<HTMLDivElement>(null);
@@ -168,6 +171,7 @@ export function ThreadView({
     const threadId = await create({ mode, projectId, title });
     if (projectionCutoverEnabled) {
       await submitCanonical(canonicalCommandEnvelope({ kind: "run.create", payload: { mode, projectId, title }, runId: threadId, threadId }));
+      await submitCanonical(canonicalCommandEnvelope({ kind: "run.resume", payload: {}, runId: threadId, threadId }));
     }
     void navigate({ to: "/projects/$projectId/threads/$threadId", params: { projectId, threadId }, search: { view: mode === "plan" ? "plan" : "session" } });
   }
@@ -224,7 +228,7 @@ export function ThreadView({
     setCommand("");
   }
 
-  const hasPlan = isPlanRun && activeThread?.planPhase !== undefined;
+  const hasPlan = isPlanRun && activePlanPhase !== undefined;
   const activeToolSurface = toolSurface === "plan" && !hasPlan ? "session" : toolSurface;
   const projectedStatus = projectionRun.state?.snapshot?.status;
   // The canonical reducer exposes `stopping`; the legacy view models that as
@@ -260,13 +264,13 @@ export function ThreadView({
   const currentStage = activeThread ? resolveHandoffStage({
     hasPendingApproval: pendingApprovalCount > 0,
     mode: activeThread.mode ?? "chat",
-    planPhase: activeThread.planPhase,
+    planPhase: activePlanPhase,
     status: activeStatus,
   }) : "request";
   const latestGitAction = visibleGitActions.at(-1);
   const diffSummary = summarizeFiles(splitFiles(visibleDiff));
   const gitActionRunning = latestGitAction?.status === "queued" || latestGitAction?.status === "running";
-  const needsOperator = activeStatus === "awaiting-approval" || (isPlanRun && activeThread?.planPhase === "review");
+  const needsOperator = activeStatus === "awaiting-approval" || (isPlanRun && activePlanPhase === "review");
   const permissionProfile: PermissionProfile = projectionRun.state?.snapshot?.permissionProfile ?? activeThread?.permissionProfile ?? "workspace-write";
   const modelId = projectionRun.state?.snapshot?.modelId ?? activeThread?.modelId ?? DEFAULT_MODEL_ID;
   const thinkingLevel = projectionRun.state?.snapshot?.thinkingLevel ?? activeThread?.thinkingLevel ?? "none";
@@ -324,10 +328,10 @@ export function ThreadView({
               <div className="ship-controls"><button className="ship-stage" disabled={gitActionRunning || diffSummary.fileCount === 0} onClick={() => setPendingGitAction("stage")} type="button">Stage all{diffSummary.fileCount > 0 ? ` (${diffSummary.fileCount})` : ""}</button><div className="ship-commit-group"><input aria-label="Commit message" onChange={(event) => setCommitMessage(event.target.value)} placeholder="Commit message" value={commitMessage} /><button className="button-primary ship-commit" disabled={!commitMessage.trim() || gitActionRunning} onClick={() => setPendingGitAction("commit")} type="button">Commit</button></div><button className="ship-push" disabled={gitActionRunning} onClick={() => setPendingGitAction("push")} type="button">Push<span className="ship-push-impact">remote</span></button></div>
               <p aria-live="polite" className="ship-status" data-status={latestGitAction?.status ?? "idle"}>{latestGitAction ? `${latestGitAction.action}: ${latestGitAction.status}` : "No Git actions yet."}</p>
             </section> : null}
-            {activeToolSurface === "plan" && isPlanRun && activeThread?.planPhase ? <PlanPanel buildModelId={activeThread.buildModelId ?? DEFAULT_MODEL_ID} canConfigureModels={activeThread.status === "idle"} onApprove={(input) => approve({ ...input, threadId: activeThreadId })} onModelPairChange={(input) => savePlanModels({ ...input, threadId: activeThreadId })} onUpdateDraft={(input) => savePlanDraft({ ...input, threadId: activeThreadId })} plan={plan ?? null} planModelId={activeThread.planModelId ?? DEFAULT_MODEL_ID} phase={activeThread?.planPhase ?? "planning"} /> : null}
+            {activeToolSurface === "plan" && isPlanRun && activePlanPhase ? <PlanPanel buildModelId={(projectionCutoverEnabled ? projectionRun.state?.snapshot?.buildModelId : activeThread.buildModelId) ?? DEFAULT_MODEL_ID} canConfigureModels={projectionCutoverEnabled ? projectedPlan === undefined : activeThread.status === "idle"} onApprove={(input) => projectionCutoverEnabled ? submitRunCommand("plan.approve", input) : approve({ ...input, threadId: activeThreadId })} onModelPairChange={(input) => projectionCutoverEnabled ? submitRunCommand("run.configure", input) : savePlanModels({ ...input, threadId: activeThreadId })} onUpdateDraft={(input) => projectionCutoverEnabled ? submitRunCommand("plan.update", input) : savePlanDraft({ ...input, threadId: activeThreadId })} plan={projectionCutoverEnabled ? projectedPlan ?? null : plan ?? null} planModelId={(projectionCutoverEnabled ? projectionRun.state?.snapshot?.planModelId : activeThread.planModelId) ?? DEFAULT_MODEL_ID} phase={activePlanPhase} /> : null}
           </section>
           <TerminalDrawer command={command} events={visibleEvents} onCommandChange={setCommand} onSubmitCommand={submitCommand} open={terminalOpen} />
-          {isPlanRun && activeThread?.planPhase === "review" ? null : (
+          {isPlanRun && activePlanPhase === "review" ? null : (
             <Composer
               attachmentError={attachmentError}
               attachments={attachments}

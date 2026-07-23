@@ -14,6 +14,8 @@ import { requireActiveMachine, requireOwnedThread, requireUser } from "../auth_h
 const SUPPORTED_COMMAND_KINDS = new Set([
   "run.create",
   "run.configure",
+  "plan.update",
+  "plan.approve",
   "run.resume",
   "run.stop",
   "turn.send",

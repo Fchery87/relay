@@ -76,6 +76,7 @@ export type CanonicalEvent =
   | WorkspaceDiffUpdatedEvent
   | GitActionUpdatedEvent
   | RunConfigurationUpdatedEvent
+  | PlanUpdatedEvent
   | ReviewCommentCreatedEvent
   | ReviewCommentResolvedEvent
   // --- projection synchronisation ---
@@ -326,6 +327,20 @@ export type RunConfigurationUpdatedPayload = {
 };
 
 export type RunConfigurationUpdatedEvent = EventEnvelope<"run.configuration.updated", RunConfigurationUpdatedPayload>;
+
+export type PlanPhase = "planning" | "review" | "building" | "complete";
+export type PlanArtifactStatus = "draft" | "approved";
+
+export type PlanUpdatedPayload = {
+  readonly buildModelId?: string;
+  readonly content?: string;
+  readonly phase: PlanPhase;
+  readonly planModelId?: string;
+  readonly revision?: number;
+  readonly status?: PlanArtifactStatus;
+};
+
+export type PlanUpdatedEvent = EventEnvelope<"plan.updated", PlanUpdatedPayload>;
 
 export type ReviewCommentCreatedPayload = {
   readonly commentId: string;

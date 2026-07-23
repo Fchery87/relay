@@ -64,10 +64,13 @@ export const requestAddProjectRef = makeFunctionReference<
 >("projects:requestAdd");
 
 export type ProjectionRunSummary = {
+  buildModelId?: string;
   budgetUsd?: number | null;
   modelId?: string;
   mode?: "chat" | "plan";
   permissionProfile?: PermissionProfile;
+  planModelId?: string;
+  planPhase?: PlanPhase;
   runId: string;
   sequence: number;
   status: string;
@@ -153,7 +156,7 @@ export function toRunSummaries(threads: ReadonlyArray<LegacyRunSummary | Project
 /** Normalize projection summaries for detail surfaces that still read legacy panels during canary. */
 export function toLegacyRunSummaries(threads: ReadonlyArray<LegacyRunSummary | ProjectionRunSummary> | undefined): LegacyRunSummary[] | undefined {
   return threads?.map((thread) => "runId" in thread
-    ? ({ _id: thread.runId, budgetUsd: thread.budgetUsd, modelId: thread.modelId, mode: thread.mode ?? "chat", permissionProfile: thread.permissionProfile, status: thread.status as LegacyRunSummary["status"], thinkingLevel: thread.thinkingLevel, title: thread.title })
+    ? ({ _id: thread.runId, budgetUsd: thread.budgetUsd, buildModelId: thread.buildModelId, modelId: thread.modelId, mode: thread.mode ?? "chat", permissionProfile: thread.permissionProfile, planModelId: thread.planModelId, planPhase: thread.planPhase, status: thread.status as LegacyRunSummary["status"], thinkingLevel: thread.thinkingLevel, title: thread.title })
     : thread);
 }
 

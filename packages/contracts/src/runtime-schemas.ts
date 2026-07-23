@@ -47,6 +47,7 @@ const CANONICAL_EVENT_TYPES = new Set<CanonicalEventType>([
   "workspace.diff.updated",
   "git.action.updated",
   "run.configuration.updated",
+  "plan.updated",
   "review.comment.created",
   "review.comment.resolved",
   "projection.published",
@@ -386,6 +387,15 @@ export function canonicalEventPayloadError(
     if (payload.thinkingLevel !== undefined && payload.thinkingLevel !== "none" && payload.thinkingLevel !== "low" && payload.thinkingLevel !== "medium" && payload.thinkingLevel !== "high") return "run.configuration.updated.thinkingLevel is invalid";
     if (payload.permissionProfile !== undefined && payload.permissionProfile !== "read-only" && payload.permissionProfile !== "workspace-write" && payload.permissionProfile !== "full-access") return "run.configuration.updated.permissionProfile is invalid";
     if (payload.budgetUsd !== undefined && payload.budgetUsd !== null && (typeof payload.budgetUsd !== "number" || !Number.isFinite(payload.budgetUsd) || payload.budgetUsd < 0)) return "run.configuration.updated.budgetUsd is invalid";
+  }
+  if (type === "plan.updated") {
+    if (payload.phase !== "planning" && payload.phase !== "review" && payload.phase !== "building" && payload.phase !== "complete") return "plan.updated.phase is invalid";
+    if (payload.buildModelId !== undefined && !isNonEmptyString(payload.buildModelId)) return "plan.updated.buildModelId must be a non-empty string";
+    if (payload.planModelId !== undefined && !isNonEmptyString(payload.planModelId)) return "plan.updated.planModelId must be a non-empty string";
+    if (payload.content !== undefined && typeof payload.content !== "string") return "plan.updated.content must be a string";
+    if (payload.revision !== undefined && (typeof payload.revision !== "number" || !Number.isInteger(payload.revision) || payload.revision < 0)) return "plan.updated.revision is invalid";
+    if (payload.status !== undefined && payload.status !== "draft" && payload.status !== "approved") return "plan.updated.status is invalid";
+    if (payload.status !== undefined && payload.content === undefined) return "plan.updated.status requires content";
   }
   if (type === "review.comment.created") {
     if (!isNonEmptyString(payload.commentId) || !isNonEmptyString(payload.content) || !isNonEmptyString(payload.filePath)) return "review.comment.created fields must be non-empty strings";

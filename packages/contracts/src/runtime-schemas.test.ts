@@ -45,6 +45,12 @@ describe("provider event ingress", () => {
         },
       })),
     ).not.toThrow();
+    expect(() => assertCommandSchema(providerCommand({
+      eventId: "event-plan",
+      type: "plan.updated",
+      correlationId: "corr-event-plan",
+      payload: { content: "Draft", phase: "review", revision: 0, status: "draft" },
+    }))).not.toThrow();
   });
 
   test("rejects unknown event types and malformed known payloads", () => {

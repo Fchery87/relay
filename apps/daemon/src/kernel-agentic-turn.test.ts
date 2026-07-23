@@ -119,6 +119,45 @@ test("kernel agentic turns expose MCP tools and execute delegated tasks through 
   expect(result.events.map((event) => event.type)).toContain("turn.completed");
 });
 
+test("kernel planning turns refuse mutations through governance", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-kernel-plan-agentic-"));
+  try {
+    const decisions: string[] = [];
+    const provider = new ScriptedTurnProvider([
+      [
+        { kind: "tool_use", call: { content: "changed", kind: "edit", path: "blocked.txt" }, id: "edit-1" },
+        { kind: "stop", reason: "tool_use" },
+      ],
+      [
+        { kind: "text", text: "I produced a plan without editing." },
+        { kind: "stop", reason: "end_turn" },
+      ],
+    ]);
+    const result = await executeKernelAgenticTurn({
+      governance: {
+        recordDecision: async ({ decision }) => { decisions.push(decision); },
+        requestApproval: async () => "deny" as const,
+      },
+      messages: [{ content: "plan the change", role: "user" }],
+      planPhase: "planning",
+      platform: "linux",
+      policy: { rules: [{ capability: "edit", decision: "allow", risk: "low" }] },
+      provider,
+      root,
+      runId: "run-plan-agentic",
+      signal: new AbortController().signal,
+      system: "planning",
+      turnId: "turn-plan-agentic",
+    });
+
+    expect(decisions).toEqual(["deny"]);
+    expect(result.events.map((event) => event.type)).toContain("activity.completed");
+    expect(result.events.map((event) => event.type)).toContain("turn.completed");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("kernel agentic turns delegate MCP calls through the configured callback", async () => {
   const provider = new ScriptedTurnProvider([
     [

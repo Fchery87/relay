@@ -24,7 +24,7 @@ import {
   canonicalEventPayloadError,
   canonicalEventRequiresTurn,
 } from "@relay/contracts";
-import type { CanonicalEventDraft, ReviewCommentInput } from "@relay/contracts";
+import type { CanonicalEventDraft, PlanPhase, ReviewCommentInput } from "@relay/contracts";
 import { DEFAULT_MODEL_ID, type Capability } from "@relay/shared";
 import {
   createConvexCommandSource,
@@ -154,7 +154,7 @@ type CodexTurnExecution = {
   runtime: LocalHarnessRuntime;
   threadId?: string;
   cwd?: string;
-  onBeforeTerminal?: (succeeded: boolean) => Promise<void>;
+  onBeforeTerminal?: (succeeded: boolean, assistantText: string) => Promise<void>;
   onFirstToken?: (latencyMs: number) => void;
   onActive?: (threadId: string) => void;
   onInactive?: () => void;
@@ -202,6 +202,7 @@ async function executeTurnViaCodexExclusive({
   let expectedProviderThreadId: string | undefined;
   let expectedProviderTurnId: string | undefined;
   const pendingEvents: NormalizedEvent[] = [];
+  let assistantText = "";
   const terminalNotification = new Promise<boolean>((resolve, reject) => {
     settleTerminal = resolve;
     rejectTerminal = reject;
@@ -231,7 +232,8 @@ async function executeTurnViaCodexExclusive({
           ev.type === "turn.completed" ||
           ev.type === "turn.failed" ||
           ev.type === "turn.interrupted";
-        if (terminalEvent && onBeforeTerminal) await onBeforeTerminal(ev.type === "turn.completed");
+        if (ev.type === "assistant.delta" && typeof ev.payload.text === "string") assistantText += ev.payload.text;
+        if (terminalEvent && onBeforeTerminal) await onBeforeTerminal(ev.type === "turn.completed", assistantText);
         const result = await persistProviderEvent(runtime, runId, input);
         if (!result.ok) {
           throw new Error(
@@ -992,6 +994,7 @@ export class KernelDaemon {
     tools: McpModelTool[];
   }> {
     const mcp = this.config.adapterDeps?.mcp;
+    const mcpTaskActivities = new Set<string>();
     const onMcp = mcp
       ? async (call: Extract<ToolCall, { kind: "mcp" }>) => mcp.callTool({
           ...call,
@@ -1045,16 +1048,35 @@ export class KernelDaemon {
                 }
               }
             : undefined,
-          onTaskStatus: mcp.recordTaskStatus
-            ? async (task) => {
-                await mcp.recordTaskStatus!({
-                  serverId: call.serverId,
-                  status: task.status,
-                  taskId: task.id,
-                  threadId: input.runId,
+          onTaskStatus: async (task) => {
+            const taskId = requireBoundedString(task.id, "MCP task id", 200);
+            const status = requireBoundedString(task.status, "MCP task status", 200);
+            const activityId = `mcp-task-${input.runId}-${input.turnId}-${safeMcpTaskId(taskId)}`;
+            if (!mcpTaskActivities.has(activityId)) {
+              mcpTaskActivities.add(activityId);
+              const started = await appendAdapterEvent(this.runtime, input.runId, {
+                eventId: `${activityId}:started`,
+                type: "activity.started",
+                payload: { activityId, kind: "mcp:task", serverId: call.serverId, taskId, toolName: call.name },
+              });
+              if (!started.ok) throw new Error(`Failed to append MCP task start: ${started.reason}`);
+            }
+            const terminal = status === "completed" || status === "failed" || status === "cancelled";
+            const update = await appendAdapterEvent(this.runtime, input.runId, terminal
+              ? {
+                  eventId: `${activityId}:${status}`,
+                  type: status === "completed" ? "activity.completed" : "activity.failed",
+                  payload: status === "completed"
+                    ? { activityId, kind: "mcp:task", serverId: call.serverId, summary: "MCP task completed", taskId, toolName: call.name }
+                    : { activityId, error: `MCP task ${status}`, kind: "mcp:task", serverId: call.serverId, taskId, toolName: call.name },
+                }
+              : {
+                  eventId: `${activityId}:status:${status}`,
+                  type: "activity.delta",
+                  payload: { activityId, content: status, kind: "mcp:task", serverId: call.serverId, taskId, toolName: call.name },
                 });
-              }
-            : undefined,
+            if (!update.ok) throw new Error(`Failed to append MCP task status: ${update.reason}`);
+          },
         })
       : undefined;
     const resolveProjectRoot = this.config.adapterDeps?.resolveProjectRoot;
@@ -1139,8 +1161,15 @@ export class KernelDaemon {
           : undefined;
         const beforeCheckpoint = root ? await captureKernelCheckpoint({ root, runId, turnId, phase: "before" }) : undefined;
         const runSnapshot = await this.runtime.snapshot({ runId });
-        const modelId = runSnapshot.modelId ?? DEFAULT_MODEL_ID;
+        const planPhase = runSnapshot.planPhase;
+        const modelId = planPhase === "planning"
+          ? runSnapshot.planModelId ?? runSnapshot.modelId ?? DEFAULT_MODEL_ID
+          : planPhase === "building"
+            ? runSnapshot.buildModelId ?? runSnapshot.modelId ?? DEFAULT_MODEL_ID
+            : runSnapshot.modelId ?? DEFAULT_MODEL_ID;
         const thinkingLevel = runSnapshot.thinkingLevel ?? "none";
+        const planPrompt = kernelPlanPrompt({ phase: planPhase, approvedContent: runSnapshot.plan?.content });
+        const effectivePrompt = [planPrompt, providerPrompt].filter(Boolean).join("\n\n");
         const kernelToolContext = codexEnabled
           ? undefined
           : await this.createKernelToolContext({ modelId, projectPath, runId, turnId });
@@ -1153,13 +1182,13 @@ export class KernelDaemon {
           }
           await executeTurnViaCodex({
             codexAdapter: codex,
-            prompt: providerPrompt,
+            prompt: effectivePrompt,
             runId,
             runtime: this.runtime,
             turnId,
             cwd: root,
             threadId: runSnapshot.providerSession?.providerThreadId,
-            onBeforeTerminal: async (succeeded) => {
+            onBeforeTerminal: async (succeeded, assistantText) => {
               if (root) {
                 const afterCheckpoint = await captureKernelCheckpoint({ root, runId, turnId, phase: "after" });
                 const result = await persistProviderEvent(this.runtime, runId, {
@@ -1171,6 +1200,22 @@ export class KernelDaemon {
                 if (!diffResult.ok) throw new Error(`Failed to append Codex workspace diff: ${diffResult.reason}`);
               }
               if (succeeded) {
+                if (planPhase === "planning") {
+                  const planResult = await persistProviderEvent(this.runtime, runId, planEvent({
+                    buildModelId: runSnapshot.buildModelId,
+                    content: assistantText,
+                    phase: "review",
+                    planModelId: runSnapshot.planModelId,
+                    revision: 0,
+                    runId,
+                    status: "draft",
+                    turnId,
+                  }, "codex"));
+                  if (!planResult.ok) throw new Error(`Failed to append Codex plan artifact: ${planResult.reason}`);
+                } else if (planPhase === "building") {
+                  const planResult = await persistProviderEvent(this.runtime, runId, planEvent({ phase: "complete", runId, turnId }, "codex"));
+                  if (!planResult.ok) throw new Error(`Failed to complete Codex plan: ${planResult.reason}`);
+                }
                 for (const resolution of reviewCommentResolutionEvents({
                   commentIds: providerIntent.reviewCommentIds ?? reviewComments.map((comment) => comment.commentId),
                   runId,
@@ -1205,7 +1250,9 @@ export class KernelDaemon {
               root,
               runId,
               signal: signal.signal,
+              system: planPrompt,
               turnId,
+              planPhase,
               tools: kernelToolContext?.tools,
               onMcp: kernelToolContext?.onMcp,
               onTask: kernelToolContext?.onTask,
@@ -1215,6 +1262,20 @@ export class KernelDaemon {
             const afterCheckpoint = root && !result.pending ? await captureKernelCheckpoint({ root, runId, turnId, phase: "after" }) : undefined;
             const workspaceDiff = root && !result.pending ? await captureKernelDiff({ root, runId, turnId }) : undefined;
             const terminalEvent = result.events.at(-1);
+            const planEvents = terminalEvent?.type === "turn.completed" && planPhase === "planning"
+              ? [planEvent({
+                buildModelId: runSnapshot.buildModelId,
+                content: assistantTextFromEvents(result.events),
+                phase: "review",
+                planModelId: runSnapshot.planModelId,
+                revision: 0,
+                runId,
+                status: "draft",
+                turnId,
+              }, "local")]
+              : terminalEvent?.type === "turn.completed" && planPhase === "building"
+                ? [planEvent({ phase: "complete", runId, turnId }, "local")]
+                : [];
             const providerEvents = terminalEvent?.type === "turn.completed" || terminalEvent?.type === "turn.failed" || terminalEvent?.type === "turn.interrupted"
               ? result.events.slice(0, -1)
               : result.events;
@@ -1230,6 +1291,7 @@ export class KernelDaemon {
               ...providerEvents,
               ...(afterCheckpoint ? [afterCheckpoint] : []),
               ...(workspaceDiff ? [workspaceDiff] : []),
+              ...planEvents,
               ...reviewResolutions,
               ...(terminalEvent ? [terminalEvent] : []),
             ].map((normalizedEvent) => ({
@@ -1628,6 +1690,15 @@ export class KernelDaemon {
           // about can never be found by a later run.resume/turn.send that
           // references the same canonical ID.
           await this.runtime.createRun({ mode, permissionProfile, projectId, runId: runId as never, title });
+          if (mode === "plan") {
+            const initialPlan = await appendAdapterEvent(this.runtime, runId as string, planEvent({
+              buildModelId: DEFAULT_MODEL_ID,
+              phase: "planning",
+              planModelId: DEFAULT_MODEL_ID,
+              runId: runId as string,
+            }, "local"));
+            if (!initialPlan.ok) throw new Error(`Failed to initialize plan state: ${initialPlan.reason}`);
+          }
           if (this.config.adapterDeps?.resolveSlashCommands && projectPath) {
             const slashCommands = (await this.config.adapterDeps.resolveSlashCommands({ projectPath })).slice(0, 200).map((entry) => ({
               ...(entry.argumentHint ? { argumentHint: entry.argumentHint.slice(0, 200) } : {}),
@@ -1664,13 +1735,74 @@ export class KernelDaemon {
             if (payload.budgetUsd !== null && (typeof payload.budgetUsd !== "number" || !Number.isFinite(payload.budgetUsd) || payload.budgetUsd < 0)) throw new Error("budgetUsd is invalid");
             configuration.budgetUsd = payload.budgetUsd;
           }
-          if (Object.keys(configuration).length === 0) throw new Error("run.configure requires a configuration field");
-          const result = await appendAdapterEvent(this.runtime, rId, {
-            eventId: `ev-run-configuration-${externalCommandId}`,
-            type: "run.configuration.updated",
-            payload: configuration,
+          const planModelId = payload.planModelId === undefined ? undefined : requireBoundedString(payload.planModelId, "planModelId", 200);
+          const buildModelId = payload.buildModelId === undefined ? undefined : requireBoundedString(payload.buildModelId, "buildModelId", 200);
+          if (planModelId !== undefined || buildModelId !== undefined) {
+            const snapshot = await this.runtime.snapshot({ runId: rId as never });
+            if (snapshot.mode !== "plan" || snapshot.planPhase !== "planning" || snapshot.plan) throw new Error("Plan models can only change before planning starts");
+            const result = await appendAdapterEvent(this.runtime, rId, planEvent({
+              buildModelId: buildModelId ?? snapshot.buildModelId ?? DEFAULT_MODEL_ID,
+              phase: "planning",
+              planModelId: planModelId ?? snapshot.planModelId ?? DEFAULT_MODEL_ID,
+              runId: rId,
+            }, "local"));
+            if (!result.ok) throw new Error(`Failed to append plan configuration: ${result.reason}`);
+          }
+          if (Object.keys(configuration).length > 0) {
+            const result = await appendAdapterEvent(this.runtime, rId, {
+              eventId: `ev-run-configuration-${externalCommandId}`,
+              type: "run.configuration.updated",
+              payload: configuration,
+            });
+            if (!result.ok) throw new Error(`Failed to append run configuration: ${result.reason}`);
+          }
+          if (Object.keys(configuration).length === 0 && planModelId === undefined && buildModelId === undefined) throw new Error("run.configure requires a configuration field");
+          await complete("completed");
+          break;
+        }
+        case "plan.update": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("plan.update requires runId");
+          const snapshot = await this.runtime.snapshot({ runId: rId as never });
+          if (snapshot.mode !== "plan" || snapshot.planPhase !== "review" || !snapshot.plan) throw new Error("Plan is not editable");
+          const expectedRevision = requireNonNegativeInteger(payload.expectedRevision, "expectedRevision");
+          if (expectedRevision !== snapshot.plan.revision) throw new Error("Plan revision is stale");
+          const content = requireBoundedString(payload.content, "content", 100_000);
+          const result = await appendAdapterEvent(this.runtime, rId, planEvent({
+            content,
+            phase: "review",
+            revision: expectedRevision + 1,
+            runId: rId,
+            status: "draft",
+          }, "local"));
+          if (!result.ok) throw new Error(`Failed to update plan: ${result.reason}`);
+          await complete("completed");
+          break;
+        }
+        case "plan.approve": {
+          const rId = runId ?? (payload.runId as string);
+          if (!rId) throw new Error("plan.approve requires runId");
+          const snapshot = await this.runtime.snapshot({ runId: rId as never });
+          if (snapshot.mode !== "plan" || snapshot.planPhase !== "review" || !snapshot.plan) throw new Error("Plan is not awaiting approval");
+          const expectedRevision = requireNonNegativeInteger(payload.expectedRevision, "expectedRevision");
+          if (expectedRevision !== snapshot.plan.revision) throw new Error("Plan revision is stale");
+          const content = requireBoundedString(payload.content, "content", 100_000);
+          const updated = await appendAdapterEvent(this.runtime, rId, planEvent({
+            buildModelId: snapshot.buildModelId,
+            content,
+            phase: "building",
+            planModelId: snapshot.planModelId,
+            revision: expectedRevision + 1,
+            runId: rId,
+            status: "approved",
+          }, "local"));
+          if (!updated.ok) throw new Error(`Failed to approve plan: ${updated.reason}`);
+          await this.runtime.sendTurn({
+            commandId: externalCommandId as never,
+            prompt: `Execute the approved plan:\n\n${content}`,
+            runId: rId as never,
           });
-          if (!result.ok) throw new Error(`Failed to append run configuration: ${result.reason}`);
+          void this.runtime.drainEffects().catch((error) => console.error("Kernel daemon: plan build effect drain failed", rId, error));
           await complete("completed");
           break;
         }
@@ -2011,6 +2143,58 @@ function activeTurnKey(runId: string, turnId: string): string {
   return `${runId}\u0000${turnId}`;
 }
 
+function safeMcpTaskId(taskId: string): string {
+  return taskId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+}
+
+function kernelPlanPrompt(input: { phase?: PlanPhase; approvedContent?: string }): string {
+  if (input.phase === "planning") {
+    return "PLAN MODE — PLANNING PHASE: investigate the request with read-only tools, then return an ordered, verifiable implementation plan. Do not modify files, run mutating commands, delegate subagents, or call mutating MCP tools.";
+  }
+  if (input.phase === "building") {
+    return `PLAN MODE — BUILDING PHASE: execute the approved plan below step by step and verify each step.\n\nAPPROVED PLAN:\n${(input.approvedContent ?? "").slice(0, 100_000)}`;
+  }
+  return "";
+}
+
+function assistantTextFromEvents(events: ReadonlyArray<CanonicalEventDraft>): string {
+  return events
+    .filter((event) => event.type === "assistant.delta")
+    .map((event) => {
+      const text = event.payload && typeof event.payload === "object" ? (event.payload as { text?: unknown }).text : undefined;
+      return typeof text === "string" ? text : "";
+    })
+    .join("");
+}
+
+function planEvent(input: {
+  buildModelId?: string;
+  content?: string;
+  phase: PlanPhase;
+  planModelId?: string;
+  revision?: number;
+  runId: string;
+  status?: "draft" | "approved";
+  turnId?: string;
+}, source: "codex" | "local"): CanonicalEventDraft {
+  const suffix = input.turnId ?? "configuration";
+  return {
+    causationId: `plan-${source}-${input.runId}-${suffix}` as never,
+    correlationId: `corr-plan-${input.runId}` as never,
+    eventId: `ev-plan-${source}-${input.runId}-${suffix}-${input.phase}` as never,
+    ...(input.turnId === undefined ? {} : { turnId: input.turnId as never }),
+    type: "plan.updated",
+    payload: {
+      ...(input.buildModelId === undefined ? {} : { buildModelId: input.buildModelId }),
+      ...(input.content === undefined ? {} : { content: input.content }),
+      phase: input.phase,
+      ...(input.planModelId === undefined ? {} : { planModelId: input.planModelId }),
+      ...(input.revision === undefined ? {} : { revision: input.revision }),
+      ...(input.status === undefined ? {} : { status: input.status }),
+    },
+  } as CanonicalEventDraft;
+}
+
 function linkAbortSignals(primary: AbortSignal, secondary: AbortSignal): {
   readonly signal: AbortSignal;
   readonly dispose: () => void;
@@ -2076,6 +2260,11 @@ function requireBoundedString(value: unknown, label: string, maxLength: number):
 
 function requirePositiveInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1) throw new Error(`${label} must be a positive integer`);
+  return value;
+}
+
+function requireNonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error(`${label} must be a non-negative integer`);
   return value;
 }
 

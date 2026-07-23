@@ -5,7 +5,7 @@ import type {
   RunId,
   TurnId,
 } from "./ids";
-import type { CanonicalEvent } from "./events";
+import type { CanonicalEvent, PlanArtifactStatus, PlanPhase } from "./events";
 import type { PermissionProfile } from "./permissions";
 import type { WorkspaceRecord } from "./workspace";
 
@@ -48,6 +48,14 @@ export type RunSnapshot = {
   readonly modelId?: string;
   readonly thinkingLevel?: "none" | "low" | "medium" | "high";
   readonly budgetUsd?: number | null;
+  readonly planPhase?: PlanPhase;
+  readonly planModelId?: string;
+  readonly buildModelId?: string;
+  readonly plan?: {
+    readonly content: string;
+    readonly revision: number;
+    readonly status: PlanArtifactStatus;
+  };
   readonly workspace?: WorkspaceRecord;
   readonly providerSession?: {
     readonly providerInstanceId: ProviderInstanceId;
@@ -270,6 +278,22 @@ export function reduceRun(
         ...(event.payload.thinkingLevel === undefined ? {} : { thinkingLevel: event.payload.thinkingLevel }),
         ...(event.payload.permissionProfile === undefined ? {} : { permissionProfile: event.payload.permissionProfile }),
         ...(event.payload.budgetUsd === undefined ? {} : { budgetUsd: event.payload.budgetUsd }),
+        updatedAt: now,
+      };
+    case "plan.updated":
+      return {
+        planPhase: event.payload.phase,
+        ...(event.payload.planModelId === undefined ? {} : { planModelId: event.payload.planModelId }),
+        ...(event.payload.buildModelId === undefined ? {} : { buildModelId: event.payload.buildModelId }),
+        ...(event.payload.content === undefined
+          ? {}
+          : {
+              plan: {
+                content: event.payload.content,
+                revision: event.payload.revision ?? snapshot.plan?.revision ?? 0,
+                status: event.payload.status ?? snapshot.plan?.status ?? "draft",
+              },
+            }),
         updatedAt: now,
       };
     case "review.comment.created":
