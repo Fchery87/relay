@@ -209,8 +209,9 @@ export async function runQueuedTurn({
     (result) => (result ? "claimed" : "empty"),
   );
   if (!queued) return false;
+  const providerSelection = { modelId: queued.modelId ?? DEFAULT_MODEL_ID, thinkingLevel: queued.thinkingLevel ?? "none" };
   const turnProvider = isModelProviderRouter(provider)
-    ? provider.resolve({ modelId: queued.modelId ?? DEFAULT_MODEL_ID, thinkingLevel: queued.thinkingLevel ?? "none" })
+    ? provider.resolveTurn?.(providerSelection) ?? provider.resolve(providerSelection)
     : provider;
   const reviewComments = queued.reviewComments ?? [];
   const prompt = buildTurnPrompt({ content: queued.content, reviewComments });
@@ -509,6 +510,7 @@ async function runAgenticClaimedTurn({
   };
 
   const abortController = new AbortController();
+  let assistantText = "";
   let stopRequested = false;
   const stopMonitor = (async () => {
     while (!stopRequested) {
@@ -552,8 +554,9 @@ async function runAgenticClaimedTurn({
       return { content: toolResult.output, isError: toolResult.kind === "refused", toolUseId: call.kind };
     },
     onText: async (text) => {
-      // Forward text deltas to Convex (throttled)
-      await gateway.appendAssistantText({ content: text, messageId });
+      // Convex replaces the message body, so persist the accumulated reply.
+      assistantText += text;
+      await gateway.appendAssistantText({ content: assistantText, messageId });
     },
     claimSteering: async () => {
       const steering = await gateway.claimSteeringMessages({ deviceToken, threadId: queued.threadId });

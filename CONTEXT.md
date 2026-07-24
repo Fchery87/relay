@@ -47,8 +47,27 @@ Terms used throughout the codebase. When naming a concept in an issue title, ref
 
 - **ProviderDriver** — validates provider-instance configuration and creates scoped `ProviderSessionAdapter`s.
 - **ProviderSessionAdapter** — maps Relay lifecycle calls (startSession, resume, send, steer, interrupt, resolveApproval, stop) to provider-native methods.
+- **provider-native history** — the conversation state owned by a stateful provider session. Relay records its durable identifiers and canonical lifecycle without treating hidden provider state as reconstructable Relay history.
 - **normalization** — the table-driven mapping from provider-native notifications to canonical events. Unknown notifications → bounded diagnostics, never crashes.
 - **Codex app-server** — the first real provider adapter. Communicates over stable stdio JSON-RPC; Codex owns its native session and turn behavior.
+
+## Agents and tasks
+
+- **agent** — a durable execution identity with its own provider session, history, status, mailbox, resource ledger, parent edge, capabilities, and workspace assignment. A one-shot model response is not an agent.
+- **agent control plane** — the kernel subsystem that owns the agent tree and coordinates spawn, messaging, waiting, interruption, resumption, and closure.
+- **agent mailbox** — the durable FIFO queue of messages addressed to an agent, distinct from live steering and future user turns.
+- **task** — a durable unit of work with dependencies, attempts, and an outcome. An agent may perform multiple tasks, and a task may be reassigned without changing its identity.
+- **context fork** — the explicit selection of parent context supplied when a child agent is created: none, complete eligible history, a bounded recent window, or a structured artifact packet.
+- **agent residency** — whether a durable agent currently has a loaded provider runtime. Eviction changes residency, never agent identity.
+- **workspace ownership** — the durable assignment that determines which agent may mutate a worktree and how its result can be integrated.
+
+## Turn and tool runtime
+
+- **execution step** — one model-sampling cycle followed by governed tool execution, ordered result recording, mailbox or steering drainage, and an explicit continue-or-stop decision.
+- **context compiler** — the sole subsystem that constructs model-visible Relay context from canonical state while preserving history invariants and provenance.
+- **tool orchestrator** — the single path that combines a tool's executable handler, policy decision, approval, sandbox, resource limits, execution, and classified result.
+- **effect reconciliation** — recovery that determines the outcome of a previously dispatched external operation using durable identifiers. It never blindly repeats the original side effect.
+- **outcome unknown** — a durable blocked state used when an external operation may have occurred but cannot be reconciled safely.
 
 ## Sandbox
 

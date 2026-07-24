@@ -40,7 +40,7 @@ export const listForThread = queryGeneric({
     const machine = await ctx.db.get(project.machineId);
     if (!machine || machine.ownerId !== userId) return [];
 
-    const commands = await ctx.db.query("slashCommands").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).collect();
+    const commands = await ctx.db.query("slashCommands").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).take(200);
 
     // Sort: builtin → project → user → skill
     const order: Record<string, number> = { builtin: 0, project: 1, user: 2, skill: 3 };

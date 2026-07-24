@@ -26,7 +26,7 @@ export const record = mutation({
 
 export const listForThread = query({
   args: { threadId: v.id("threads") },
-  handler: async (ctx, args) => { await requireOwnedThread(ctx, await requireUser(ctx), args.threadId); return ctx.db.query("checkpoints").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect(); },
+  handler: async (ctx, args) => { await requireOwnedThread(ctx, await requireUser(ctx), args.threadId); return ctx.db.query("checkpoints").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).take(100); },
 });
 
 export const enqueueComparison = mutation({

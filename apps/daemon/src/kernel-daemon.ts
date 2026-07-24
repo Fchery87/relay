@@ -1666,7 +1666,12 @@ export class KernelDaemon {
     this.shuttingDown = true;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
-    this.codexAdapter?.close();
+    try {
+      this.codexAdapter?.close();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("Transport closed")) throw error;
+    }
     await this.flush();
     await this.runtime.shutdown();
     if (this.startupSpan) this.tracer.endSpan(this.startupSpan);

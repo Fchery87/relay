@@ -75,10 +75,16 @@ export const claim = mutation({
   handler: async (ctx, args) => {
     const machine = await requireActiveMachine(ctx, args.deviceToken);
     const now = Date.now();
-    // Use the by_machine index to scope the claim to this daemon's machine,
-    // avoiding per-candidate thread/project reads for work owned by other machines.
-    const queued = await ctx.db.query("subagentRuns").withIndex("by_machine", (q) => q.eq("machineId", machine._id).eq("status", "queued")).take(50);
-    const running = await ctx.db.query("subagentRuns").withIndex("by_machine", (q) => q.eq("machineId", machine._id).eq("status", "running")).take(50);
+    const depth = args.depth;
+    // Scope the claim to this daemon, status, and worker depth. The daemon
+    // has separate top-level and nested pollers, so scanning the other
+    // poller's queued/running runs makes empty claims exceed the 1s budget.
+    const queued = depth === undefined
+      ? await ctx.db.query("subagentRuns").withIndex("by_machine_and_status_and_depth", (q) => q.eq("machineId", machine._id).eq("status", "queued")).take(50)
+      : await ctx.db.query("subagentRuns").withIndex("by_machine_and_status_and_depth", (q) => q.eq("machineId", machine._id).eq("status", "queued").eq("depth", depth)).take(50);
+    const running = depth === undefined
+      ? await ctx.db.query("subagentRuns").withIndex("by_machine_and_status_and_depth", (q) => q.eq("machineId", machine._id).eq("status", "running")).take(50)
+      : await ctx.db.query("subagentRuns").withIndex("by_machine_and_status_and_depth", (q) => q.eq("machineId", machine._id).eq("status", "running").eq("depth", depth)).take(50);
     const candidates = [...queued, ...running];
     for (const run of candidates) {
       if (args.depth !== undefined && run.depth !== args.depth) continue;
@@ -107,7 +113,7 @@ export const complete = mutation({
   },
 });
 
-export const listTree = query({ args: { threadId: v.id("threads") }, handler: async (ctx, args) => { await requireOwnedThread(ctx, await requireUser(ctx), args.threadId); return ctx.db.query("subagentRuns").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect(); } });
+export const listTree = query({ args: { threadId: v.id("threads") }, handler: async (ctx, args) => { await requireOwnedThread(ctx, await requireUser(ctx), args.threadId); return ctx.db.query("subagentRuns").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).take(100); } });
 
 export const getResult = query({
   args: { deviceToken: v.string(), runId: v.id("subagentRuns") },

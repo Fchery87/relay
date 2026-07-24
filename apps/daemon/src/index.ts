@@ -128,7 +128,12 @@ const sandboxedResolveProjectRoot = async (input: { repoPath: string; threadId: 
 };
 
 async function collectOrphanedWorktrees() {
-  const activeThreadIds = new Set(await conversationGateway.listThreadIds());
+  const activeThreadIds = new Set<string>();
+  const trackedThreadIds = await worktrees.threadIds();
+  for (let index = 0; index < trackedThreadIds.length; index += 25) {
+    const activeIds = await conversationGateway.listThreadIds({ candidateThreadIds: trackedThreadIds.slice(index, index + 25) });
+    for (const threadId of activeIds) activeThreadIds.add(threadId);
+  }
   await worktrees.gc({ activeThreadIds });
 }
 await collectOrphanedWorktrees();

@@ -22,7 +22,7 @@ const appendCommandOutputMutation = makeFunctionReference<"mutation", { deviceTo
 const appendToolCompletedMutation = makeFunctionReference<"mutation", { deviceToken: string; summary: string; threadId: string; tool: string }>("events:appendToolCompleted");
 const compactThreadMutation = makeFunctionReference<"mutation", { deviceToken: string; summary: string; threadId: string }, null>("conversations:compactThread");
 const appendMcpTaskStatusMutation = makeFunctionReference<"mutation", { deviceToken: string; serverId: string; status: string; taskId: string; threadId: string }>("events:appendMcpTaskStatus");
-const listThreadIdsQuery = makeFunctionReference<"query", { deviceToken: string }, string[]>("conversations:listThreadIds");
+const listThreadIdsQuery = makeFunctionReference<"query", { candidateThreadIds?: string[]; deviceToken: string }, string[]>("conversations:listThreadIds");
 const snapshotDiffMutation = makeFunctionReference<"mutation", { content: string; deviceToken: string; threadId: string }>("diffs:snapshot");
 const claimGitActionMutation = makeFunctionReference<"mutation", { deviceToken: string }, { action: "stage" | "commit" | "push"; actionId: string; message?: string; projectPath: string; threadId: string } | null>("git_actions:claim");
 const completeGitActionMutation = makeFunctionReference<"mutation", { actionId: string; deviceToken: string; status: "complete" | "failed" }>("git_actions:complete");
@@ -121,7 +121,7 @@ export function createConvexConversationGateway({ deploymentUrl, deviceToken }: 
     enqueueSubagent: (input: { capabilities: Capability[]; depth: number; deviceToken: string; roleName: string; task: string; threadId: string }) => client.mutation(enqueueSubagentMutation, input),
     recordToolCompleted: (input: { summary: string; threadId: string; tool: string }) => client.mutation(appendToolCompletedMutation, { ...input, deviceToken }),
     compactThread: (input: { summary: string; threadId: string }) => client.mutation(compactThreadMutation, { ...input, deviceToken }),
-    listThreadIds: () => client.query(listThreadIdsQuery, { deviceToken }),
+    listThreadIds: ({ candidateThreadIds }: { candidateThreadIds?: string[] } = {}) => client.query(listThreadIdsQuery, { candidateThreadIds, deviceToken }),
     isStopRequested: async (input: { deviceToken: string; threadId: string }) => stopStateSchema.parse(await client.query(getStopStateQuery, input)).requested,
     recordCheckpoint: (input: { commit: string; deviceToken: string; messageId: string; ref: string; threadId: string }) => client.mutation(recordCheckpointMutation, input),
     recordMcpTaskStatus: (input: { serverId: string; status: string; taskId: string; threadId: string }) => client.mutation(appendMcpTaskStatusMutation, { ...input, deviceToken }),

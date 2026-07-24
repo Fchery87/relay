@@ -4,6 +4,7 @@ import {
   appendEvents,
   claimEffectBatch,
   getEffectsForCommand,
+  getExternalOperationByEffectId,
   getEventsAfter,
   getSnapshot,
   openMemoryStore,
@@ -303,6 +304,83 @@ describe("OrchestrationEngine durability", () => {
     expect(
       getEffectsForCommand(db, "cmd-workspace-settlement" as never)[0],
     ).toMatchObject({ status: "completed", attempts: 1 });
+  });
+
+  test("a dispatch persistence crash reconciles the prepared operation without a second provider send", async () => {
+    const db = openMemoryStore();
+    const setupEngine = new OrchestrationEngine(db, { maxConcurrentRuns: 1 });
+    const created = await setupEngine.createRun({ projectId: "project-operation-journal" });
+    await setupEngine.submit({
+      commandId: "cmd-resume-operation-journal" as never,
+      type: "run.resume",
+      runId: created.runId,
+      correlationId: "corr-resume-operation-journal" as never,
+      actor: { kind: "system", id: "test" },
+      issuedAt: 1,
+      payload: {},
+    });
+    await setupEngine.submit({
+      commandId: "cmd-turn-operation-journal" as never,
+      type: "turn.send",
+      runId: created.runId,
+      correlationId: "corr-turn-operation-journal" as never,
+      actor: { kind: "user", id: "test" },
+      issuedAt: 2,
+      payload: { prompt: "recover", turnId: "turn-operation-journal" as never },
+    });
+
+    let executeCalls = 0;
+    let recoverCalls = 0;
+    const crashingEngine = new OrchestrationEngine(db, {
+      maxConcurrentRuns: 1,
+      reactorMaxAttempts: 3,
+      reactorNow: () => 100,
+      reactorRetryBaseMs: 0,
+      reactors: {
+        "provider.send_turn": {
+          execute: async () => {
+            executeCalls++;
+            throw new Error("crashed after provider dispatch before result persistence");
+          },
+          recover: async (effect) => {
+            recoverCalls++;
+            if (effect.intent.kind !== "provider.send_turn") return [];
+            return [{
+              type: "provider.event",
+              payload: {
+                providerInstanceId: "provider-operation-journal" as never,
+                normalizedEvent: {
+                  eventId: "ev-operation-journal-terminal" as never,
+                  type: "turn.completed",
+                  turnId: effect.intent.turnId,
+                  providerInstanceId: "provider-operation-journal" as never,
+                  correlationId: "corr-operation-journal" as never,
+                  causationId: effect.commandId as never,
+                  payload: { summary: "reconciled" },
+                },
+              },
+            }];
+          },
+        },
+      },
+    });
+
+    const firstDrain = await crashingEngine.drainEffects();
+    const [effect] = getEffectsForCommand(db, "cmd-turn-operation-journal" as never);
+    if (!effect) throw new Error("expected a provider effect");
+    expect(executeCalls).toBe(1);
+    expect(recoverCalls).toBeLessThanOrEqual(1);
+    expect(firstDrain).toBeGreaterThanOrEqual(0);
+
+    // The retry is reconciliation only; execute is never called again.
+    if (recoverCalls === 0) {
+      expect(await crashingEngine.drainEffects()).toBe(1);
+    }
+    expect(executeCalls).toBe(1);
+    expect(recoverCalls).toBe(1);
+    expect(getExternalOperationByEffectId(db, effect.effectId)).toMatchObject({
+      state: "committed",
+    });
   });
 
   test("an expired retryable lease reconciles without executing twice", async () => {

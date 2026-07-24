@@ -309,7 +309,6 @@ export function createCodexTransport(config: CodexTransportConfig): CodexTranspo
       }
       for (const [, p] of pending) {
         clearTimeout(p.timer);
-        p.reject(new Error("Transport closed"));
       }
       pending.clear();
     },

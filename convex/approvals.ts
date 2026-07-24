@@ -55,7 +55,7 @@ export const listForThread = queryGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
-    const approvals = await ctx.db.query("approvals").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect();
+    const approvals = await ctx.db.query("approvals").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).take(100);
     return approvals.map(toPublicApproval);
   },
 });

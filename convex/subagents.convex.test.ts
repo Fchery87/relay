@@ -44,3 +44,32 @@ test("seeds editable roles and persists a machine-scoped subagent result", async
     capabilities: ["exec"], depth: 2, deviceToken, parentRunId: runId, roleId: explore._id, task: "Escalate", threadId,
   })).rejects.toThrow("capability");
 });
+
+test("claims a nested run behind a same-machine top-level backlog", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, machineId, owner, projectId } = await createAuthenticatedProject(t);
+  const threadId = await t.run(async (ctx) => {
+    await ctx.db.patch(machineId, { capabilityCeiling: ["read", "edit", "exec", "task"] });
+    return ctx.db.insert("threads", { projectId, status: "running", title: "parent" });
+  });
+  await t.mutation(api.subagents.seedDefaults, { deviceToken });
+  const explore = (await owner.query(api.subagents.listRoles, {})).find((role) => role.name === "explore")!;
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 50; index++) {
+      await ctx.db.insert("subagentRuns", {
+        capabilities: ["read"],
+        depth: 1,
+        machineId,
+        roleId: explore._id,
+        status: "queued",
+        task: `top-level-${index}`,
+        threadId,
+      });
+    }
+  });
+  const nestedRunId = await t.mutation(api.subagents.enqueue, {
+    capabilities: ["read"], depth: 2, deviceToken, roleId: explore._id, task: "nested", threadId,
+  });
+
+  expect(await t.mutation(api.subagents.claim, { depth: 2, deviceToken })).toMatchObject({ depth: 2, runId: nestedRunId });
+});

@@ -49,7 +49,7 @@ export const listForThread = queryGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
-    return ctx.db.query("auditLog").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect();
+    return ctx.db.query("auditLog").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).take(200);
   },
 });
 

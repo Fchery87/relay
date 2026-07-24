@@ -16,10 +16,16 @@ import type { Command, ExternalCommand } from "@relay/contracts";
 import type { StoreDatabase } from "@relay/local-store";
 import {
   claimEffectBatch,
+  commitExternalOperation,
   completeEffect,
   EffectLeaseLostError,
   fenceEffectForFailureRecovery,
+  getExternalOperationByEffectId,
   getNextEffectClaimAt,
+  markExternalOperationDispatched,
+  markExternalOperationOutcomeUnknown,
+  observeExternalOperation,
+  prepareExternalOperation,
   releaseEffect,
   renewEffectLease,
   transactCommand,
@@ -256,12 +262,32 @@ export class OrchestrationEngine {
     }, Math.max(1, Math.floor(leaseMs / 3)));
 
     try {
-      const operation =
-        effect.attempts === 1 ? reactor.execute : reactor.recover;
-      const commands = await operation(effect, {
+      const operationContext = {
         idempotencyKey: effect.idempotencyKey,
         signal: controller.signal,
+      };
+      const externalOperation = prepareExternalOperation(this.db, {
+        effectId: effect.effectId,
+        idempotencyKey: effect.idempotencyKey,
+        operationId: `operation-${effect.effectId}`,
+        operationKind: effect.intent.kind,
+        runId: effect.runId,
+        now: this.reactorNow(),
       });
+      // A row from pre-journal storage has no dispatch evidence. Its claimed
+      // retry is conservatively treated as an already-dispatched operation:
+      // reconcile it rather than risk a second external call.
+      const recovering =
+        effect.attempts > 1 && externalOperation.state !== "committed";
+      if (externalOperation.state === "prepared") {
+        markExternalOperationDispatched(this.db, {
+          effectId: effect.effectId,
+          now: this.reactorNow(),
+        });
+      }
+      const commands = await (recovering
+        ? reactor.recover(effect, operationContext)
+        : reactor.execute(effect, operationContext));
       if (leaseFailure) throw leaseFailure;
       if (
         !renewEffectLease(
@@ -275,6 +301,19 @@ export class OrchestrationEngine {
         throw new EffectLeaseLostError(effect.effectId, "result persistence");
       }
       assertReactorResult(effect, commands);
+      const dispatchedOperation = getExternalOperationByEffectId(
+        this.db,
+        effect.effectId,
+      );
+      if (
+        dispatchedOperation?.state === "dispatched" ||
+        dispatchedOperation?.state === "outcome_unknown"
+      ) {
+        observeExternalOperation(this.db, {
+          effectId: effect.effectId,
+          now: this.reactorNow(),
+        });
+      }
       let resultSnapshot: RunSnapshot | undefined;
       for (const command of commands) {
         resultSnapshot = await this.submitEffectCommand(
@@ -287,6 +326,10 @@ export class OrchestrationEngine {
         effect,
         toEffectSuccessCommand(effect),
       );
+      commitExternalOperation(this.db, {
+        effectId: effect.effectId,
+        now: this.reactorNow(),
+      });
       completeEffect(
         this.db,
         effect.effectId,
@@ -297,7 +340,20 @@ export class OrchestrationEngine {
     } catch (error) {
       if (leaseFailure || error instanceof EffectLeaseLostError) return false;
       const failure = classifyReactorFailure(effect, error);
+      const externalOperation = getExternalOperationByEffectId(
+        this.db,
+        effect.effectId,
+      );
+      if (externalOperation?.state === "dispatched") {
+        markExternalOperationOutcomeUnknown(this.db, {
+          effectId: effect.effectId,
+          error: failure.message,
+          now: this.reactorNow(),
+        });
+      }
+      const recoveredUnknownOutcome = externalOperation?.state === "outcome_unknown";
       const terminal =
+        recoveredUnknownOutcome ||
         failure.kind === "terminal" ||
         failure.kind === "approval_required" ||
         effect.attempts >= (this.config.reactorMaxAttempts ?? 5);

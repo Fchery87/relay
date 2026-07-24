@@ -6,7 +6,7 @@ export const list = queryGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
-    return ctx.db.query("events").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect();
+    return ctx.db.query("events").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).take(500);
   },
 });
 

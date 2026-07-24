@@ -72,6 +72,11 @@ export class ThreadWorktrees {
     return created;
   }
 
+  async threadIds(): Promise<string[]> {
+    await this.#load();
+    return [...this.#entries.keys()];
+  }
+
   async gc({ activeThreadIds }: { activeThreadIds: ReadonlySet<string> }): Promise<void> {
     await this.#load();
     for (const [threadId, entry] of this.#entries) {

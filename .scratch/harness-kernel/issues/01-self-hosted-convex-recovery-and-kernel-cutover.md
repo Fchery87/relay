@@ -1,7 +1,7 @@
 # Self-Hosted Convex Recovery and Kernel Cutover
 
 Type: task
-Status: ready-for-human
+Status: claimed
 
 ## Problem Statement
 

@@ -124,6 +124,11 @@ export type ReactorContext = {
  * `execute` is called at most once. Later attempts must reconcile external
  * state through `recover` using the same idempotency key; they never blindly
  * repeat the original side effect.
+ *
+ * Phase 1 retains these names for source compatibility. The durable
+ * external-operation journal records prepare → dispatch → observe → commit
+ * around them; reactors must make `recover` a reconciliation, never an alias
+ * for their side-effecting `execute` implementation.
  */
 export type EffectReactor = {
   readonly execute: (

@@ -22,6 +22,16 @@ export function createProviderReactors(sessions: ProviderSessionRegistry): React
     }
     return [];
   };
-  const reactor: EffectReactor = { execute, recover: execute };
+  const reconcile = async (effect: DurableEffect, context: { signal: AbortSignal }): Promise<ReadonlyArray<ReactorCommandDraft>> => {
+    if (context.signal.aborted) throw new Error("Provider reconciliation cancelled");
+    // Scoped adapters currently expose no provider-neutral read operation.
+    // Returning no result preserves the dispatched operation for the caller's
+    // durable reconciliation policy rather than issuing the native command a
+    // second time.
+    const provider = session(effect);
+    void provider;
+    return [];
+  };
+  const reactor: EffectReactor = { execute, recover: reconcile };
   return { "provider.start_session": reactor, "provider.resume_session": reactor, "provider.send_turn": reactor, "provider.steer_turn": reactor, "provider.interrupt_turn": reactor, "provider.resolve_approval": reactor, "provider.stop_session": reactor };
 }

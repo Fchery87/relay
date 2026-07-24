@@ -107,11 +107,14 @@ export default defineSchema({
   }).index("by_thread", ["threadId"]),
   messages: defineTable({
     content: v.string(),
+    // Populated for new messages so daemon claims can use a machine-scoped
+    // index instead of scanning every queued message in the deployment.
+    machineId: v.optional(v.id("machines")),
     queuedThreadId: v.optional(v.id("threads")),
     role: v.union(v.literal("assistant"), v.literal("user")),
     status: v.union(v.literal("complete"), v.literal("queued"), v.literal("streaming")),
     threadId: v.id("threads"),
-  }).index("by_thread", ["threadId"]).index("by_status", ["status"]).index("by_queued_thread", ["queuedThreadId"]),
+  }).index("by_thread", ["threadId"]).index("by_status", ["status"]).index("by_queued_thread", ["queuedThreadId"]).index("by_machine", ["machineId"]),
   events: defineTable({
     checkpointId: v.optional(v.id("checkpoints")),
     kind: v.union(v.literal("checkpoint.reverted"), v.literal("command.output"), v.literal("mcp.task"), v.literal("tool.completed")),
@@ -238,7 +241,7 @@ export default defineSchema({
     status: v.union(v.literal("queued"), v.literal("running"), v.literal("complete"), v.literal("failed")),
     task: v.string(),
     threadId: v.id("threads"),
-  }).index("by_status", ["status"]).index("by_thread", ["threadId"]).index("by_parent_run_id", ["parentRunId"]).index("by_machine", ["machineId", "status"]),
+  }).index("by_status", ["status"]).index("by_thread", ["threadId"]).index("by_parent_run_id", ["parentRunId"]).index("by_machine_and_status_and_depth", ["machineId", "status", "depth"]),
 
   // --- Kernel projection tables (widen-only — additive, no legacy changes) ---
 

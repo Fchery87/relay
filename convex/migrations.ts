@@ -121,3 +121,33 @@ export const cleanupLegacyPairings = internalMutation({
     };
   },
 });
+
+/**
+ * Populate the machine-scoped queue key for messages written before the
+ * machineId field was added. Run this in bounded pages after deploying the
+ * schema update; the daemon's claim fallback remains available while pages
+ * are being processed.
+ */
+export const backfillQueuedMessageMachineIds = internalMutation({
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.min(100, Math.max(1, Math.floor(args.limit)));
+    const page = await ctx.db
+      .query("messages")
+      .withIndex("by_status", (q) => q.eq("status", "queued"))
+      .paginate({ cursor: args.cursor, numItems: limit });
+    let updated = 0;
+    for (const message of page.page) {
+      if (message.machineId) continue;
+      const thread = await ctx.db.get(message.threadId);
+      const project = thread ? await ctx.db.get("projects", thread.projectId) : null;
+      if (!project) continue;
+      await ctx.db.patch(message._id, { machineId: project.machineId });
+      updated++;
+    }
+    return { cursor: page.continueCursor, isDone: page.isDone, scanned: page.page.length, updated };
+  },
+});

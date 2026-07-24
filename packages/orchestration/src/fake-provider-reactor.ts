@@ -52,5 +52,11 @@ export function createDeterministicProviderReactor(input: {
       payload: { providerInstanceId, normalizedEvent },
     }));
   };
-  return { execute: produce, recover: produce };
+  return {
+    execute: produce,
+    // The deterministic adapter has no hidden provider state, so replaying
+    // its canonical result is its reconciliation behavior—not a new
+    // external provider dispatch.
+    recover: produce,
+  };
 }

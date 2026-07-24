@@ -28,6 +28,63 @@ test("a queued user message becomes persisted assistant history", async () => {
   ]);
 });
 
+test("queued messages carry machine ownership for bounded daemon claims", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, machineId, owner, projectId } = await createAuthenticatedProject(t);
+  const threadId = await owner.mutation(api.conversations.createThread, { projectId, title: "indexed queue" });
+
+  await owner.mutation(api.conversations.sendUserMessage, { content: "hello", threadId });
+  const message = await t.run((ctx) => ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", threadId)).first());
+  expect(message).toMatchObject({ machineId, status: "queued" });
+});
+
+test("machine-scoped claims do not scan past another machine's queued backlog", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, machineId, owner, projectId, userId } = await createAuthenticatedProject(t);
+  const otherMachineId = await t.run((ctx) => ctx.db.insert("machines", {
+    daemonVersion: "test",
+    deviceTokenHash: "other-device-hash",
+    lastHeartbeatAt: Date.now(),
+    name: "other-machine",
+    ownerId: userId,
+    platform: "linux",
+  }));
+  const otherProjectId = await t.run((ctx) => ctx.db.insert("projects", { machineId: otherMachineId, name: "other", path: "/other" }));
+  const otherThreadId = await t.run((ctx) => ctx.db.insert("threads", { projectId: otherProjectId, status: "idle", title: "other" }));
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 30; index++) {
+      await ctx.db.insert("messages", { content: `other-${index}`, machineId: otherMachineId, queuedThreadId: otherThreadId, role: "user", status: "queued", threadId: otherThreadId });
+    }
+  });
+
+  const threadId = await owner.mutation(api.conversations.createThread, { projectId, title: "mine" });
+  await owner.mutation(api.conversations.sendUserMessage, { content: "mine", threadId });
+
+  expect(await t.mutation(api.conversations.claimQueuedMessage, { deviceToken })).toMatchObject({ content: "mine", threadId, projectId });
+});
+
+test("thread message history is bounded for the legacy document query", async () => {
+  const t = convexTest(schema, modules);
+  const { owner, projectId } = await createAuthenticatedProject(t);
+  const threadId = await owner.mutation(api.conversations.createThread, { projectId, title: "large history" });
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 205; index++) {
+      await ctx.db.insert("messages", { content: `message-${index}`, role: "assistant", status: "complete", threadId });
+    }
+  });
+
+  expect(await owner.query(api.conversations.listThreadMessages, { threadId })).toHaveLength(200);
+});
+
+test("worktree GC resolves only its locally tracked thread ids", async () => {
+  const t = convexTest(schema, modules);
+  const { deviceToken, projectId } = await createAuthenticatedProject(t);
+  const retainedThreadId = await t.run((ctx) => ctx.db.insert("threads", { projectId, status: "idle", title: "retained" }));
+  await t.run((ctx) => ctx.db.insert("threads", { projectId, status: "idle", title: "not-local" }));
+
+  expect(await t.query(api.conversations.listThreadIds, { candidateThreadIds: [retainedThreadId], deviceToken })).toEqual([retainedThreadId]);
+});
+
 test("creates threads with a permission profile, defaulting to workspace-write", async () => {
   const t = convexTest(schema, modules);
   const { owner, projectId } = await createAuthenticatedProject(t);

@@ -61,13 +61,15 @@ export const sendUserMessage = mutationGeneric({
   handler: async (ctx, args) => {
     const thread = await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
     if (thread.mode === "plan" && thread.planPhase === "review") throw new Error("Approve or edit the draft plan before sending another message");
+    const project = await ctx.db.get("projects", thread.projectId);
+    if (!project) throw new Error("Project not found");
     if (thread.mode === "plan" && thread.planPhase === "planning") {
       const queued = await ctx.db.query("messages").withIndex("by_queued_thread", (q) => q.eq("queuedThreadId", args.threadId)).take(100);
       if (queued.length >= 100) throw new Error("Plan follow-up queue is full");
       const queuedBytes = queued.reduce((total, message) => total + utf8Bytes(message.content), 0);
       if (queuedBytes + utf8Bytes(args.content) > MAX_PLAN_SECTION_BYTES) throw new Error("Plan follow-up queue exceeds its size limit");
     }
-    const messageId = await ctx.db.insert("messages", { ...args, queuedThreadId: args.threadId, role: "user", status: "queued" });
+    const messageId = await ctx.db.insert("messages", { ...args, machineId: project.machineId, queuedThreadId: args.threadId, role: "user", status: "queued" });
     if (thread.status !== "running" && thread.status !== "awaiting-approval" && thread.status !== "restoring") await ctx.db.patch(args.threadId, { status: "queued" });
     return messageId;
   },
@@ -125,7 +127,8 @@ export const listThreadMessages = queryGeneric({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     await requireOwnedThread(ctx, await requireUser(ctx), args.threadId);
-    return ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).collect();
+    const messages = await ctx.db.query("messages").withIndex("by_thread", (q) => q.eq("threadId", args.threadId)).order("desc").take(200);
+    return messages.reverse();
   },
 });
 
@@ -133,16 +136,25 @@ export const listProjectThreads = queryGeneric({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
     await requireOwnedProject(ctx, await requireUser(ctx), args.projectId);
-    return ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", args.projectId)).collect();
+    return ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", args.projectId)).take(100);
   },
 });
 
 export const listThreadIds = queryGeneric({
-  args: { deviceToken: v.string() },
+  args: { candidateThreadIds: v.optional(v.array(v.id("threads"))), deviceToken: v.string() },
   handler: async (ctx, args) => {
     const machine = await requireActiveMachine(ctx, args.deviceToken);
-    const projects = await ctx.db.query("projects").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).collect();
-    const threadIds = await Promise.all(projects.map(async (project) => (await ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", project._id)).collect()).map((thread) => thread._id)));
+    if (args.candidateThreadIds) {
+      const activeThreadIds = await Promise.all(args.candidateThreadIds.map(async (threadId) => {
+        const thread = await ctx.db.get("threads", threadId);
+        if (!thread) return null;
+        const project = await ctx.db.get("projects", thread.projectId);
+        return project?.machineId === machine._id ? threadId : null;
+      }));
+      return activeThreadIds.filter((threadId): threadId is NonNullable<typeof threadId> => threadId !== null);
+    }
+    const projects = await ctx.db.query("projects").withIndex("by_machine", (q) => q.eq("machineId", machine._id)).take(100);
+    const threadIds = await Promise.all(projects.map(async (project) => (await ctx.db.query("threads").withIndex("by_project", (q) => q.eq("projectId", project._id)).take(100)).map((thread) => thread._id)));
     return threadIds.flat();
   },
 });
@@ -187,10 +199,18 @@ export const claimQueuedMessage = mutationGeneric({
   handler: async (ctx, args) => {
     const machine = await requireActiveMachine(ctx, args.deviceToken);
 
-    let scanned = 0;
-    for await (const message of ctx.db.query("messages").withIndex("by_status", (q) => q.eq("status", "queued"))) {
-      scanned++;
-      if (scanned > 30) break;
+    const indexedMessages = await ctx.db.query("messages")
+      .withIndex("by_machine", (q) => q.eq("machineId", machine._id))
+      .filter((q) => q.eq(q.field("status"), "queued"))
+      .take(30);
+    // Compatibility fallback for queued messages created before machineId was
+    // added. Deploy migrations:backfillQueuedMessageMachineIds after the
+    // schema update; this bounded fallback prevents old rows from becoming
+    // permanently invisible while the migration is in progress.
+    const messages = indexedMessages.length > 0
+      ? indexedMessages
+      : await ctx.db.query("messages").withIndex("by_status", (q) => q.eq("status", "queued")).take(30);
+    for (const message of messages) {
       const thread = await ctx.db.get("threads", message.threadId);
       if (!thread) continue;
       if (thread.status === "running" || thread.status === "awaiting-approval" || thread.status === "restoring" || thread.status === "stopped") continue;
@@ -198,6 +218,7 @@ export const claimQueuedMessage = mutationGeneric({
       const project = await ctx.db.get("projects", thread.projectId);
       if (!project || project.machineId !== machine._id || project.archivedAt) continue;
       if (project.status === "pending" || project.status === "error") continue;
+      if (message.machineId !== machine._id) await ctx.db.patch(message._id, { machineId: machine._id });
       const reviewComments = await ctx.db.query("diffComments")
         .withIndex("by_thread", (q) => q.eq("threadId", thread._id))
         .filter((q) => q.eq(q.field("resolved"), false))

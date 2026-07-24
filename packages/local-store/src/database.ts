@@ -279,6 +279,32 @@ const MIGRATIONS: readonly Migration[] = [
       db.run(`CREATE INDEX idx_durable_tasks_frontier ON durable_tasks(state, lease_expires_at, updated_at);`);
     },
   },
+  {
+    version: 14,
+    up: (db) => {
+      db.run(`
+        CREATE TABLE external_operations (
+          operation_id         TEXT PRIMARY KEY,
+          effect_id            TEXT NOT NULL UNIQUE,
+          idempotency_key      TEXT NOT NULL UNIQUE,
+          run_id               TEXT NOT NULL,
+          operation_kind       TEXT NOT NULL,
+          state                TEXT NOT NULL,
+          provider_instance_id TEXT,
+          native_reference     TEXT,
+          prepared_at          INTEGER NOT NULL,
+          dispatched_at        INTEGER,
+          observed_at          INTEGER,
+          committed_at         INTEGER,
+          last_error           TEXT,
+          schema_version       INTEGER NOT NULL,
+          CHECK (state IN ('prepared', 'dispatched', 'observed', 'committed', 'outcome_unknown')),
+          CHECK (schema_version = 1)
+        );
+      `);
+      db.run(`CREATE INDEX idx_external_operations_recovery ON external_operations(state, run_id, prepared_at);`);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

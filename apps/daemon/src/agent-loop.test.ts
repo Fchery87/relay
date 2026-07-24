@@ -3,13 +3,14 @@ import { expect, test } from "bun:test";
 import { runQueuedTurn } from "./agent-loop";
 import { ScriptedModelProvider } from "./model-provider";
 import { join } from "node:path";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { commitChanges, stageAll } from "./git-review";
 import { runCommand } from "./tools";
 import type { GovernanceGateway } from "./governed-tool-executor";
 import type { Policy } from "./policy";
-import type { ModelProvider } from "./model-provider";
+import type { ModelProvider, ModelProviderRouter } from "./model-provider";
+import type { TurnModelProvider, TurnStreamEvent } from "./turn-loop";
 
 const governance: GovernanceGateway = { recordDecision: async () => undefined, requestApproval: async () => "allow" };
 const policy: Policy = { rules: [
@@ -388,6 +389,99 @@ test("resolves the model provider from the claimed thread selection", async () =
     },
   });
   expect(selections).toEqual([{ modelId: "openai/gpt-5-mini", thinkingLevel: "high" }]);
+});
+
+test("a routed legacy turn uses native tool events instead of streaming tool markup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-agent-router-turn-"));
+  const replies: string[] = [];
+  let legacyResolutions = 0;
+  let turnResolutions = 0;
+  let turnStreams = 0;
+  const turnProvider: TurnModelProvider = {
+    modelId: "deepseek/deepseek-v4-flash",
+    async *streamTurn(): AsyncIterable<TurnStreamEvent> {
+      turnStreams++;
+      if (turnStreams === 1) {
+        yield { call: { kind: "read", path: "README.md" }, id: "read-1", kind: "tool_use" };
+        yield { kind: "stop", reason: "tool_use" };
+        return;
+      }
+      yield { kind: "text", text: "Relay is a local coding-agent harness." };
+      yield { kind: "stop", reason: "end_turn" };
+    },
+  };
+  const router: ModelProviderRouter = {
+    kind: "model-router",
+    resolve: () => {
+      legacyResolutions++;
+      return new ScriptedModelProvider({ chunks: ["<tool_call>kind: read</tool_call>"] });
+    },
+    resolveTurn: () => {
+      turnResolutions++;
+      return turnProvider;
+    },
+  };
+
+  try {
+    await writeFile(join(root, "README.md"), "# Relay\n");
+    await runQueuedTurn({
+      deviceToken: "device",
+      governance,
+      gateway: {
+        acknowledgeStop: async () => undefined,
+        appendAssistantText: async ({ content }) => { replies.push(content); },
+        beginAssistantMessage: async () => "assistant-message",
+        claimQueuedMessage: async () => ({ content: "What is this project about?", projectPath: root, threadId: "thread" }),
+        claimSteeringMessages: async () => [],
+        completeAssistantMessage: async () => undefined,
+        isStopRequested: async () => false,
+        recordUsage: async () => undefined,
+      },
+      policy: { rules: [{ capability: "read", decision: "allow", risk: "low" }] },
+      provider: router,
+    });
+
+    expect(legacyResolutions).toBe(0);
+    expect(turnResolutions).toBe(1);
+    expect(turnStreams).toBe(2);
+    expect(replies).toEqual(["Relay is a local coding-agent harness."]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("a native turn persists cumulative streamed text for the legacy conversation projection", async () => {
+  const persisted: string[] = [];
+  const provider: ModelProviderRouter = {
+    kind: "model-router",
+    resolve: () => new ScriptedModelProvider({ chunks: [] }),
+    resolveTurn: () => ({
+      async *streamTurn(): AsyncIterable<TurnStreamEvent> {
+        yield { kind: "text", text: "Relay " };
+        yield { kind: "text", text: "streams replies." };
+        yield { kind: "stop", reason: "end_turn" };
+      },
+    }),
+  };
+
+  await runQueuedTurn({
+    deviceToken: "device",
+    governance,
+    gateway: {
+      acknowledgeStop: async () => undefined,
+      appendAssistantText: async ({ content }) => { persisted.push(content); },
+      beginAssistantMessage: async () => "assistant-message",
+      claimQueuedMessage: async () => ({ content: "Describe Relay", projectPath: "/tmp", threadId: "thread" }),
+      claimSteeringMessages: async () => [],
+      completeAssistantMessage: async () => undefined,
+      isStopRequested: async () => false,
+      recordUsage: async () => undefined,
+    },
+    policy,
+    provider,
+  });
+
+  expect(persisted).toEqual(["Relay ", "Relay streams replies."]);
 });
 
 test("a planning turn persists an editable plan instead of completing a chat turn", async () => {

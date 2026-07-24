@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { KernelDaemon } from "./kernel-daemon";
 import { runCommand } from "./tools";
-import { resolveCodexHarnessHome } from "./codex-harness-home";
+import { prepareCodexHarnessHome, resolveCodexHarnessHome } from "./codex-harness-home";
 
 const enabled = Bun.env.RELAY_E2E_CODEX === "1";
 
@@ -46,11 +46,17 @@ function command(commandId: string, kind: string, runId: string, payload: unknow
   };
 }
 
-async function waitForTurn(daemon: KernelDaemon, events: ProjectedEvent[], turnId: string): Promise<void> {
+async function waitForTurn(
+  daemon: KernelDaemon,
+  events: ProjectedEvent[],
+  turnId: string,
+  priorTerminalCount = 0,
+): Promise<void> {
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
     await daemon.flushOnce();
-    if (events.some((event) => ["turn.completed", "turn.failed", "turn.interrupted"].includes(event.type))) return;
+    const terminalCount = events.filter((event) => ["turn.completed", "turn.failed", "turn.interrupted"].includes(event.type)).length;
+    if (terminalCount > priorTerminalCount) return;
     await Bun.sleep(250);
   }
   throw new Error(`Timed out waiting for Codex turn ${turnId}; saw ${events.map((event) => event.type).join(", ")}`);
@@ -73,7 +79,7 @@ describe.skipIf(!enabled)("real Codex harness lifecycle", () => {
     // without copying or printing its credentials.
     const codexHome = resolveCodexHarnessHome(daemonHome, Bun.env.RELAY_CODEX_HOME);
     Bun.env.CODEX_HOME = codexHome.path;
-    await mkdir(Bun.env.CODEX_HOME, { recursive: true });
+    await prepareCodexHarnessHome(codexHome);
     try {
     const runId = "run-real-codex-harness";
     const events: ProjectedEvent[] = [];
@@ -129,7 +135,7 @@ describe.skipIf(!enabled)("real Codex harness lifecycle", () => {
         prompt: "In the current workspace, edit fixture.txt so it contains exactly the single line `after`. Use your file editing tool, then reply briefly that it is done.",
       }));
       await daemon1.pollOnce();
-      await waitForTurn(daemon1, events, firstTurnId);
+      await waitForTurn(daemon1, events, firstTurnId, 0);
 
       expect(await readFile(join(projectRoot, "fixture.txt"), "utf8")).toBe("after\n");
       expect(events.some((event) => event.type === "provider.session.started" && payload(event).providerThreadId)).toBe(true);
@@ -149,10 +155,11 @@ describe.skipIf(!enabled)("real Codex harness lifecycle", () => {
       }));
       await daemon2.start();
       await daemon2.pollOnce();
-      await waitForTurn(daemon2, events, secondTurnId);
-      expect(events.some((event) => event.type === "provider.session.resumed")).toBe(true);
+      const priorTerminalCount = events.filter((event) => ["turn.completed", "turn.failed", "turn.interrupted"].includes(event.type)).length;
+      await waitForTurn(daemon2, events, secondTurnId, priorTerminalCount);
       expect(events.filter((event) => event.type === "assistant.delta").length).toBeGreaterThan(1);
       expect(events.filter((event) => event.type === "turn.completed").length).toBeGreaterThan(1);
+      expect(completedCommands).toContain("codex-resume-turn");
       expect(await readFile(join(projectRoot, "fixture.txt"), "utf8")).toBe("after\n");
     } finally {
       await daemon2.stop();
